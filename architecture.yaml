@@ -1,0 +1,47 @@
+# llmveto 分层与依赖方向契约
+#
+# 来源：docs/issues/2-design-v1.md（架构设计 v1）。
+# 本文件是**规范性**契约：定义每个层的职责边界与允许的依赖方向。
+#
+# 执行方式（诚实声明，避免误以为自动生效）：
+#   - `.archlint.yaml` → archlint 检测架构异味（God Module / 循环依赖 / 死代码），由 pre-commit Gate 6 执行
+#   - 本文件的 import 边界 → 由 tests/unit/architecture-boundaries.test.ts 断言（BUILD 阶段落地）
+#     理由：可测试性契约 #2「checker = 纯函数」是本项目的核心不变量，
+#     一旦 checkers 能 import gateway/evidence，纯函数性与表驱动单测即失效，且无法事后补。
+
+layers:
+  # 叶子层：类型、配置、无副作用工具。不得依赖任何上层。
+  - name: shared
+    paths: ["src/shared/**"]
+    allowed_imports: [shared]
+
+  # checker 注册表：纯函数 (请求/响应片段) → verdict + evidence。
+  # 关键不变量：不知道网关存在，不写 evidence，不做策略决策 —— 否则无法独立单测/表驱动。
+  - name: checkers
+    paths: ["src/checkers/**"]
+    allowed_imports: [shared, checkers]
+
+  # 策略引擎：verdict → action（allow/warn/redact/block），全局配置优先于项目级。
+  - name: policy
+    paths: ["src/policy/**"]
+    allowed_imports: [shared, checkers, policy]
+
+  # evidence store：append-only JSONL + SHA-256 哈希链。
+  - name: evidence
+    paths: ["src/evidence/**"]
+    allowed_imports: [shared, evidence]
+
+  # 接入适配器：各客户端 baseURL/proxy 覆写与配置漂移检测。
+  - name: adapters
+    paths: ["src/adapters/**"]
+    allowed_imports: [shared, adapters]
+
+  # 反代核：SSE tee 零缓冲、单一脱敏咽喉点、upstream 注入；编排 checkers/policy/evidence。
+  - name: gateway
+    paths: ["src/gateway/**"]
+    allowed_imports: [shared, checkers, policy, evidence, gateway]
+
+  # CLI：组合根（composition root），可依赖全部层。
+  - name: cli
+    paths: ["src/cli/**", "src/index.ts"]
+    allowed_imports: [shared, checkers, policy, evidence, adapters, gateway, cli]

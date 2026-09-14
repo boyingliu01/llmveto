@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Test coverage (xp-gate pre-commit hook reads coverage/coverage-summary.json)
+coverage/
+
+# Local runtime state (gateway pid/log/state)
+.llmveto/
+
+# Evidence store (may contain sensitive request metadata) — never commit
+var/evidence/
+
+# Sprint worktrees (isolated dev branches)
+.worktrees/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Secrets — the gateway scans for these, it must never store them
+.env
+.env.*
+!.env.example
+*.pem
+*.key

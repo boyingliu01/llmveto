@@ -1,6 +1,6 @@
 param(
     [ValidateSet('A', 'B', 'C')] [string]$Expert = 'A',
-    [ValidateSet('r1', 'r2')] [string]$Round = 'r2'
+    [ValidateSet('r1', 'r2', 'r3')] [string]$Round = 'r3'
 )
 
 # Delphi 专家团调用封装。

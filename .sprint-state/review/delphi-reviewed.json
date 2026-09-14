@@ -1,0 +1,78 @@
+{
+  "_schema_version": 1,
+  "artifact": "delphi-reviewed",
+  "sprint_id": "sprint-20260914-49",
+  "phase": 2,
+  "gate": "R2 delphi-review (DESIGN → BUILD hard gate)",
+  "target_docs": [
+    "docs/issues/1-req-threat-model.md",
+    "docs/issues/2-design-v1.md",
+    "docs/issues/3-reuse-list.md",
+    "docs/issues/4-test-validation.md",
+    "docs/issues/5-roadmap.md",
+    "README.md",
+    "architecture.yaml"
+  ],
+  "panel": {
+    "provider": "example-provider",
+    "config_doc": "docs/delphi-panel.md",
+    "experts": [
+      { "id": "A", "role": "architecture", "agent": "delphi-reviewer-architecture", "model": "example-provider/g-deepseek-flash" },
+      { "id": "B", "role": "technical", "agent": "delphi-reviewer-technical", "model": "example-provider/g-glm-5.3-flash" },
+      { "id": "C", "role": "feasibility", "agent": "delphi-reviewer-feasibility", "model": "example-provider/g-qwen3.8-flash" }
+    ]
+  },
+  "consensus_threshold_percent": 91,
+  "zero_tolerance": ["Critical", "Major"],
+  "rounds": [
+    {
+      "round": 1,
+      "date": "2026-09-14",
+      "verdicts": { "A": "REQUEST_CHANGES", "B": "REQUEST_CHANGES", "C": "REQUEST_CHANGES" },
+      "issues_found": 22,
+      "issues_by_severity": { "Critical": 7, "Major": 7, "Minor": 8 },
+      "outcome": "not_passed",
+      "report": ".sprint-state/review/r1-consensus.md",
+      "fix_commit": "2545042"
+    },
+    {
+      "round": 2,
+      "date": "2026-09-14",
+      "verdicts": { "A": "REQUEST_CHANGES", "B": "REQUEST_CHANGES", "C": "APPROVED_WITH_CONDITIONS" },
+      "confidence": { "A": 7, "B": 8, "C": 8 },
+      "consensus_percent": 86.4,
+      "new_issues": { "Critical": 2, "Major": 7, "Minor": 5 },
+      "outcome": "not_passed_below_threshold",
+      "report": ".sprint-state/review/r2-consensus.md",
+      "fix_commit": "9af9633"
+    },
+    {
+      "round": 3,
+      "date": "2026-09-14",
+      "scope": "focused re-review of R2's 14 dispositions + fix-introduction check",
+      "verdicts": { "A": "APPROVED_WITH_CONDITIONS", "B": "APPROVED_WITH_CONDITIONS", "C": "APPROVED_WITH_CONDITIONS" },
+      "confidence": { "A": 9, "B": 8, "C": 8 },
+      "items_resolved": "14/14 (3/3 unanimous)",
+      "consensus_percent": 100,
+      "new_critical": 0,
+      "new_major": 1,
+      "new_major_resolution": "C-Major-1 (T1b excluded-auth-header blind spot unregistered) closed pre-commit; A independently raised same as Minor",
+      "minor_conditions_closed": [
+        "SSE payload shape single-source (REQ场景4 -> DESIGN组件1 wrapped form)",
+        "safety-class checker enumeration now by action=block (includes invisible-unicode-scan) + per-chunk budget",
+        "zero-buffer clarified as <=1-chunk transient hold",
+        "P2 forensics wording aligned (doctor -> CLI, not evidence)",
+        "expected.observables noted as fixture-only assertion container",
+        "E2E split into scenario-3 (delivered_chunks=0) and scenario-4 rows"
+      ],
+      "outcome": "passed",
+      "report": ".sprint-state/review/r3-consensus.md"
+    }
+  ],
+  "final_status": "APPROVED",
+  "final_consensus_percent": 100,
+  "unclosed_critical": 0,
+  "unclosed_major": 0,
+  "notes": "三专家全票 APPROVED_WITH_CONDITIONS；唯一新 Major 已在冻结前闭合，B/C 附带 Minor 条件全部落入文档。无未闭合 Critical/Major，满足零容忍与 ≥91% 阈值。",
+  "decisions_ref": ".sprint-state/decisions.md (DR-005..DR-010)"
+}

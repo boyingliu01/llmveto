@@ -46,7 +46,7 @@ expected:
     response_delivered: {partial: false, delivered_chunks: 0}   # 非流式，未转发
 ```
 
-   - 流式 block 样本必须带 `expected.observables`：`{terminated_after_delivery: true, delivered_chunks: N, error_event_code: "llmveto:veto-mid-stream"}` —— 使"已转发字节不可撤回"这一语义成为可断言对象，而非口号。
+   - 流式 block 样本必须带 `expected.observables`：`{terminated_after_delivery: true, delivered_chunks: N, error_event_code: "llmveto:veto-mid-stream"}` —— 使"已转发字节不可撤回"这一语义成为可断言对象，而非口号。**注**：`expected.observables` 是 **fixture-only 断言容器**，其键非 evidence 字段（故不受上文"键必须为契约 #4 已登记字段"约束），但其断言目标均映射到已登记项：`terminated_after_delivery`→`action_taken` 枚举值、`delivered_chunks`→`response_delivered.delivered_chunks`、`error_event_code`→DESIGN §组件1 客户端事件。
    - **每个内容型 checker 必须至少含 1 个跨 chunk 切分对抗样本**（如把 U+200B 的 `E2 80 8B` 三字节拆到相邻两个 chunk、把码点写成 SSE `\u200b` 转义形态），否则该 checker 的流式实现不予验收。
 4. **evidence schema（v1 冻结，`evidence_version: 1`）**：CI 与 Gate LS 直接查 JSONL 字段，故字段名/类型/必填性在此定案。
 
@@ -109,7 +109,8 @@ OpenCode + Delphi 穿 **mock-upstream** 全链路，逐项断言：
 |---|---|
 | 告警路径 | benign 流量全绿 + evidence `action_taken=allowed` |
 | 阻断路径（请求侧） | 含凭据请求 → 客户端收 `502 llmveto:rejected`，`blocked_before_forward`，mock-upstream **未收到**该请求（零出境证明） |
-| 阻断路径（流式） | chunk N 命中 → 前 N-1 chunk 已送达（断言客户端确实收到）+ `event: error` + 连接关闭 + `terminated_after_delivery` + `response_delivered.partial=true` |
+| 阻断路径（流式·场景4） | chunk N（N≥2）命中 → 前 N-1 chunk 已送达（断言客户端确实收到）+ `event: error`（`{"error":{"code":"llmveto:veto-mid-stream","delivered_chunks":N-1}}`）+ 连接关闭 + `terminated_after_delivery` + `response_delivered:{partial:true,delivered_chunks:N-1}` |
+| 阻断路径（流式·场景3） | chunk 1 即命中且 checker 在 tee 前返回 → **未转发任何字节**（断言客户端收到 0 个 data chunk）+ 直接 `event: error` + 关闭 + `response_delivered:{partial:false,delivered_chunks:0}`（等同非流式响应级阻断，验证 M2"零缓冲下场景3 可达"主张） |
 | 审计落盘 | `llmveto verify` 对演练产生的链返回 `ok`；篡改任一条中间记录 → `verify` 报 `first_bad_seq` |
 | doctor 漂移 | 把受管枚举内任一 provider 的 baseURL 改走 → `doctor` 必须 `FAIL` 并指出条目 id |
 | 受管枚举探测过闸（ROADMAP 验收 1(b) 落点） | harness 遍历 `MANAGED_CONFIG_IDS` 每条接入路径，各回放 ≥1 条探测请求经 mock-upstream，断言 evidence 中出现对应 `client` + `provider_id` 记录（时间窗口内）；枚举内任一条路径无记录 → 该验收 FAIL（探测由测试 harness 经该客户端适配器发起，非 doctor 自查） |

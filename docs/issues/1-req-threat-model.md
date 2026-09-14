@@ -79,7 +79,7 @@ GitHub 同类项目两极分化（2026-09 调研，详见 [REUSE] issue）：
 | 1 | 请求侧（非流式，转发前） | 原样转发 | 转发 + evidence 告警 | **v3**：改写命中字段后转发 | 不转发 upstream；返回 `502 llmveto:rejected`；evidence `action_taken=blocked_before_forward` |
 | 2 | 响应侧 非流式 | 原样返回 | 返回 + evidence 告警 | **v3**：整体缓冲后改写返回 | 不返回响应体；返回 `502`；evidence `action_taken=blocked_before_deliver` |
 | 3 | 响应侧 流式，命中发生在**首字节转发前** | 原样 | 原样 + evidence | **v3** | 等同场景 2（尚未有字节外泄） |
-| 4 | 响应侧 流式，命中发生在**已转发 N 个 chunk 后** | 继续 | 继续 + evidence + `response_delivered.partial=true` | **v3（流式不可执行，见下）** | **终止响应流**：注入 `event: error` `data:{code:"llmveto:veto-mid-stream",delivered_chunks:N}` 后关闭连接；evidence `action_taken=terminated_after_delivery` + `response_delivered:{partial:true,delivered_chunks:N}` |
+| 4 | 响应侧 流式，命中发生在**已转发 N 个 chunk 后** | 继续 | 继续 + evidence + `response_delivered.partial=true` | **v3（流式不可执行，见下）** | **终止响应流**：注入 `event: error` + `data:{"error":{"code":"llmveto:veto-mid-stream","delivered_chunks":N}}`（载荷形状以 DESIGN §组件1 为唯一权威）后关闭连接；evidence `action_taken=terminated_after_delivery` + `response_delivered:{partial:true,delivered_chunks:N}` |
 
 **场景 4 的明文承诺（不粉饰）**：
 - 已送达客户端的字节**不撤回、不可撤回**；v1 不承诺"客户端未接触到任何恶意内容"。
@@ -110,7 +110,7 @@ GitHub 同类项目两极分化（2026-09 调研，详见 [REUSE] issue）：
 | 威胁 | v1 状态 | v1 缓解手段 | 缺口理由 | 计划期次 | v1 取证可得性 |
 |---|---|---|---|---|---|
 | T1a prompt/上下文被记录转售 | **未缓解** | 无（金丝雀在 v2） | 金丝雀引擎排 v2；v1 无任何阳性检测手段 | v2 | `request_body_sha256`（仅证明发过该字节序列；默认 `metadata_only` 无原文不可读，亦无法证明"对方是否留存"） |
-| T1b 凭据窃取 | 部分 | `egress-secret-scan`（gitleaks 模式，阻断） | 仅覆盖**模式化**密钥；自写 token / 内网 URL / 客户数据一律漏检 | v2（+自定义模式库） | 命中/放行事件落 evidence（`findings[].rule_id` + `action_taken`；命中处明文受 `body_capture` 约束） |
+| T1b 凭据窃取 | 部分 | `egress-secret-scan`（gitleaks 模式，阻断） | 仅覆盖**模式化**密钥；自写 token / 内网 URL / 客户数据一律漏检。**另：为达致阻断类 FP=0，标准认证头（`Authorization`/`x-api-key`/`api-key`/`x-goog-api-key`/`Proxy-Authorization`/`Cookie`）被排除出扫描单元（DESIGN §扫描单元定义）→ 夹带/伪装在这些头里的额外凭据或追踪水印亦成 v1 扫描盲区（header 路径与 body 路径为两个独立缺口）。自定义头仍进扫描单元，凭据藏自定义头仍会被扫** | v2（+自定义模式库） | 命中/放行事件落 evidence（`findings[].rule_id` + `action_taken`；命中处明文受 `body_capture` 约束） |
 | T2a tool-call 篡改/恶意代码注入 | **未缓解** | 无（`tool-call-shape` 排 v2） | v1 不解析 tool-call 结构；流式已转发字节不可撤回 → 即便 v2 检出也无法阻止 agent 执行已收到的半截调用 | v2 | `response_body_sha256`（明文留存仅当 `body_capture≠metadata_only`，默认无明文，事后不可读回内容） |
 | T2b 响应夹带 prompt 注入 | **未缓解** | 无 | v1 拒绝引入无 FP 门槛的文本规则（大面积误报会摧毁"告警可信"） | v2 | 同上（`response_body_sha256`，默认无明文） |
 | T2c 隐形字符水印 | 部分 | `invisible-unicode-scan`（跨 chunk 滚动窗口；非流式 block / 流式终止流） | 归一化（NFKC 后同形）与自定义 PUA 编码变体不覆盖 | v2 扩展码点集 | `findings[].offsets`（命中偏移，码点为偏移处字节的派生值）；命中处样本明文受 `body_capture` 约束 |
@@ -120,7 +120,7 @@ GitHub 同类项目两极分化（2026-09 调研，详见 [REUSE] issue）：
 | T3c 路由波动 | 未缓解 | 无 | 需跨请求观测 + provider 信任分 | v2 | 无 |
 | T4a/b/c/d usage 虚报/假缓存/隐藏系统提示/倍率操纵 | 未缓解（仅取证） | 无判定逻辑 | 对账需官价基准与计费口径，属 v2 计费对账 | v2 | `usage` / `cache` 字段原样落 evidence，供人工对账 |
 | P1 模型目录投毒 | 部分 | `OPENCODE_MODELS_URL` 锁本地模型目录镜像（由 `llmveto doctor --write-managed-config` 负责写入，非用户手工步骤） | 只把上游目录注入移出实时路径，不校验镜像内容真伪 | v2 | doctor 配置快照哈希（v1 仅输出至 `doctor` 结果，不入 evidence 链；@v2 计划登记字段） |
-| P2 配置劫持绕过 | best-effort 部分 | 全局配置 > 项目级配置（v1 内置硬编码优先级）+ `doctor` 配置漂移检测（限定于受管配置封闭枚举） | 流量级"未过闸观测"（审计缺口检测）排 v3 → v1 **无法发现旁路** | v3 | doctor 输出落 evidence |
+| P2 配置劫持绕过 | best-effort 部分 | 全局配置 > 项目级配置（v1 内置硬编码优先级）+ `doctor` 配置漂移检测（限定于受管配置封闭枚举） | 流量级"未过闸观测"（审计缺口检测）排 v3 → v1 **无法发现旁路** | v3 | `doctor` 结果输出至 CLI（exit code + 条目 id），v1 不写 evidence 记录 |
 | P3 evidence 明文本地聚集（缓解手段自身派生面） | 部分 | `body_capture` 默认 `metadata_only`（仅哈希，明文不落盘）+ 单一 `redactSink()` 咽喉点 | 若用户主动开启 `full` 模式，evidence 文件本身成为凭据/上下文的本地聚集目标（T1b 的静态变体）；v1 无静态加密 | v2（静态加密/权限模板评估） | 文件权限依赖 OS；v1 不承诺 evidence-at-rest 机密性 |
 
 **v1 部署者须知的三句话**：

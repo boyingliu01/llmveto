@@ -80,7 +80,7 @@ v1 只实现 OpenCode 与 Delphi 两个适配器。**每个适配器必须导出
 
 **降级规则（区分安全类 / 观测类，消除原"绝不阻塞流"歧义）**：
 
-- **安全类 checker**（v1 = `egress-secret-scan`）：强制同步，**禁止**降级为异步放行；超 G3 预算 → 判 `verdict=error` → 按 REQ §术语定案映射为 `action=block`（超时=拒绝），evidence `reason="checker_timeout"`。
+- **安全类 checker**（按 action 属性圈定 = v1 中映射为 `block` 的 checker 集合：`egress-secret-scan`（请求侧）+ `invisible-unicode-scan`（响应侧））：强制同步，**禁止**降级为异步放行；超各自预算 → 判 `verdict=error` → 按 REQ §术语定案映射为 `action=block`（超时=拒绝），evidence `reason="checker_timeout"`。`egress-secret-scan` 走 G3 body 分档预算；`invisible-unicode-scan` 走**每 chunk 门预算**（单 chunk 扫描 p95 计入 G1，不设独立 G3 硬超时——因其作用于响应流，超时语义即"该 chunk 未在 G1 预算内返回"，命中即按 `error→block` 终止流）。
 - **观测类 checker**（v1 = 无；v2 起的 usage 落盘、provider 健康监测等）：超预算可降级为异步记录 + 告警，不阻塞流。
 - G1/G2 阈值为 v1 冻结承诺值；若 BUILD 期基准实测无法满足，**必须走 ADR 修订并公开记录**，禁止静默放宽。
 - **G2/G3 交叠判定口径（回应"合法慢扫描落在两门之间"）**：G2 是**统计门**（p95，衡量整体回归，超阈=性能回退，进回退阻断合并流程但不阻断单笔请求）；G3 是**单笔硬超时门**（单 checker 单次执行上限，超阈=`verdict=error`→`block`）。一次扫描若耗时落在 [G2 p95, G3) 区间：它是 G2 意义上的回退信号（计入基准、可能触发 PR 回退告警），但**不是** G3 超时，请求仍正常放行——两门口径独立，不互相覆盖。
@@ -90,7 +90,7 @@ v1 只实现 OpenCode 与 Delphi 两个适配器。**每个适配器必须导出
 
 - 回环段（客户端→网关）HTTP 明文可接受（loopback-only 监听，且监听地址硬绑 `127.0.0.1`，禁 0.0.0.0）；网关→upstream 必须 TLS
 - **零缓冲优先于字节级阻断**：流式命中违规时终止流而非缓冲后判定，理由与明文承诺见 REQ §行为矩阵 场景 4。
-- **块级阻塞语义定案（回应"零缓冲 vs 同步 checker 是否矛盾"）**：反代核对每个到达的 SSE chunk 执行**同一事件循环 tick 内**的"先扫描、后转发"——即 chunk N 必须先过同步窗口 checker，通过后立即 tee 给客户端，checker 未过则不转发该 chunk 并终止流。**这不是缓冲整段响应**（不持有 chunk N+1 及以后、不等待流结束），故仍是"零缓冲"；G1 度量的正是这道 per-chunk 门的增量。据此：
+- **块级阻塞语义定案（回应"零缓冲 vs 同步 checker 是否矛盾"）**：反代核对每个到达的 SSE chunk 执行**同一事件循环 tick 内**的"先扫描、后转发"——即 chunk N 必须先过同步窗口 checker，通过后立即 tee 给客户端，checker 未过则不转发该 chunk 并终止流。**这不是缓冲整段响应**（不持有 chunk N+1 及以后、不等待流结束），故仍是"零缓冲"；精确说，零缓冲指**不持有 >1 个 chunk**，而"当前正被 checker 判定的这一个 chunk"存在 **≤1 chunk 的瞬态持有窗口**（G1 度量的正是这道 per-chunk 门的增量）——实现者不得把该瞬态窗口当 bug 消除，也不得反向放宽成整段缓冲。据此：
   - **场景 3（首字节转发前命中）可达** ⟺ 命中发生在 chunk 1 且 checker 在 tee chunk 1 前返回 → 未转发任何字节 → `response_delivered.delivered_chunks=0`，等同场景 2。
   - **场景 4（已转发 N chunk 后命中）**：`delivered_chunks` 为命中前已成功 tee 的 chunk 数（N ≥ 1）；"已转发字节不可撤回"即指这 N 个已过门的 chunk。
   - fixture 的 `delivered_chunks: N` 断言因此是"实现是否被悄悄异步化/缓冲整段"的探测器：若实现改为异步扫描后再转发，N 会异常增大，被该断言抓住。

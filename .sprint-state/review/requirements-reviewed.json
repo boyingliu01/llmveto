@@ -1,0 +1,40 @@
+{
+  "_schema_version": 1,
+  "artifact": "requirements-reviewed",
+  "sprint_id": "sprint-20260914-49",
+  "phase": 2,
+  "gate": "R1 requirements review (threat model / REQ freeze)",
+  "scope": "docs/issues/1-req-threat-model.md (威胁模型 T1a..T4d/P1/P2 + 裁决与动作语义 + v1 残余风险登记表) 及其与 DESIGN/TEST/ROADMAP/README/architecture 的一致性",
+  "review_mode": "评审批准式 (user-confirmed DESIGN strength: R1+R2 must pass before BUILD)",
+  "panel": {
+    "provider": "example-provider",
+    "experts": ["A:example-provider/g-deepseek-flash", "B:example-provider/g-glm-5.3-flash", "C:example-provider/g-qwen3.8-flash"]
+  },
+  "r1_rounds": 1,
+  "r1_findings": { "total": 22, "Critical": 7, "Major": 7, "Minor": 8 },
+  "r1_resolution": {
+    "outcome": "all resolved via doc revisions",
+    "fix_commit": "2545042",
+    "verified_by": "Round 2 + Round 3 逐行证据核对（三专家一致判 resolved）"
+  },
+  "key_freeze_decisions": [
+    "verdict(clean|finding|error) 与 action(allow|warn|redact|block) 两层术语分离，redact 移出 v1 (DR-007)",
+    "受管配置封闭枚举 MANAGED_CONFIG_IDS 替换'全部流量过闸'不可证伪命题 (DR-008)",
+    "零缓冲 + 终止流：流式已转发字节不可撤回，阻断粒度=响应级/流终止级 (DR-006)",
+    "mock-upstream 进 v1，evil-relay 归 v2，v1 验收不依赖 v2/v3 (DR-009)",
+    "evidence 信任边界：SHA-256 链不抵抗本机同权限整链重写；llmveto verify 提入 v1",
+    "三台独立性能门 G1/G2/G3，G3 按 body 分档；超时=拒绝 (DR-010)",
+    "v1 残余风险登记表 (13 行威胁×6 列) 显式登记未缓解面"
+  ],
+  "final_status": "APPROVED",
+  "requirements_frozen": true,
+  "notes": "R1 需求评审经三专家 Round 1 → 修订 → Round 2/3 收敛，全部 7 Critical 做到可判定化而非措辞软化；需求层已冻结，与 R2 设计评审共用同一专家团与阈值。",
+  "related": {
+    "consensus_reports": [
+      ".sprint-state/review/r1-consensus.md",
+      ".sprint-state/review/r2-consensus.md",
+      ".sprint-state/review/r3-consensus.md"
+    ],
+    "delphi_reviewed": ".sprint-state/review/delphi-reviewed.json"
+  }
+}

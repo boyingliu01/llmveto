@@ -6,8 +6,8 @@
 # 执行方式（诚实声明，避免误以为自动生效）：
 #   - `.archlint.yaml` → archlint 检测架构异味（God Module / 循环依赖 / 死代码），由 pre-commit Gate 6 执行
 #   - 本文件的 import 边界 → 由 tests/unit/architecture-boundaries.test.ts 断言（BUILD 阶段落地）
-#     理由：可测试性契约 #2「checker = 纯函数」是本项目的核心不变量，
-#     一旦 checkers 能 import gateway/evidence，纯函数性与表驱动单测即失效，且无法事后补。
+#     理由：可测试性契约 #2「checker = 两态纯 reducer（无状态 / 窗口归约）」是本项目的核心不变量，
+#     一旦 checkers 能 import gateway/evidence/policy，纯函数性与表驱动单测即失效，且无法事后补。
 
 layers:
   # 叶子层：类型、配置、无副作用工具。不得依赖任何上层。
@@ -15,28 +15,36 @@ layers:
     paths: ["src/shared/**"]
     allowed_imports: [shared]
 
-  # checker 注册表：纯函数 (请求/响应片段) → verdict + evidence。
+  # checker 注册表：两态纯 reducer（TEST 可测试性契约 #2）
+  #   非流式 (unit) → {verdict, evidence}；流式 (window, chunk) → [{verdict, evidence}, window]
+  #   verdict ∈ clean|finding|error —— 不得出现 allow/warn/redact/block（那是 action 域）
   # 关键不变量：不知道网关存在，不写 evidence，不做策略决策 —— 否则无法独立单测/表驱动。
   - name: checkers
     paths: ["src/checkers/**"]
     allowed_imports: [shared, checkers]
 
-  # 策略引擎：verdict → action（allow/warn/redact/block），全局配置优先于项目级。
+  # 策略引擎：verdict → action（allow/warn/redact/block）。
+  #   v1 = 内置固定映射表（用户不可配置，见 DESIGN §组件3）；v3 = 可配置 + 全局 > 项目级。
+  #   redact 为 v3 能力；v1 不得产出 redact。
   - name: policy
     paths: ["src/policy/**"]
     allowed_imports: [shared, checkers, policy]
 
-  # evidence store：append-only JSONL + SHA-256 哈希链。
+  # evidence store：append-only JSONL + SHA-256 链（evidence_version: 1，字段表见 TEST 契约 #4）。
+  #   信任边界：链 = 内部一致性自检，不抵抗本机同权限对手整链重写（REQ §evidence 信任边界）。
   - name: evidence
     paths: ["src/evidence/**"]
     allowed_imports: [shared, evidence]
 
   # 接入适配器：各客户端 baseURL/proxy 覆写与配置漂移检测。
+  #   每个适配器必须导出 MANAGED_CONFIG_IDS（受管配置封闭枚举）—— doctor 的遍历域，
+  #   把"全部流量过闸"这一不可证伪命题替换为"枚举内每条路径过闸"的可判定命题。
   - name: adapters
     paths: ["src/adapters/**"]
     allowed_imports: [shared, adapters]
 
-  # 反代核：SSE tee 零缓冲、单一脱敏咽喉点、upstream 注入；编排 checkers/policy/evidence。
+  # 反代核：SSE tee 零缓冲、扫描单元规范化、单一脱敏咽喉点、upstream 注入；
+  # 编排 checkers/policy/evidence。v1 仅 baseURL 形态（TLS 拦截属 v3）。
   - name: gateway
     paths: ["src/gateway/**"]
     allowed_imports: [shared, checkers, policy, evidence, gateway]

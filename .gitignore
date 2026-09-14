@@ -21,6 +21,9 @@ var/evidence/
 .xp-gate/
 .quality-history.jsonl
 
+# Agent harness residue (local run continuation state, not project state)
+.omo/
+
 # Editor / OS
 .DS_Store
 Thumbs.db

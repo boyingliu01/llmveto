@@ -28,6 +28,8 @@ Agentic Coding 场景下，第三方 LLM API 中转站（relay/reseller）对 ag
 
 **理论边界（明确不承诺）**：检测"数据是否被用于训练"统计上不可行（MIA 接近随机）；"上游是否记录"无法证伪，只能靠金丝雀回流做阳性检测。本项目定位是**把每次交互变成可审计、可统计验证的证据流**，等待上游 provider-signed envelope 治本方案。
 
+> **v1 边界细化**：金丝雀引擎排 v2，因此 **v1 对 T1a 无任何检测能力**（详见 §v1 残余风险登记表）。本文"验证所需三件单件"中的金丝雀在 v1 **不在流量路径上**，不得据本节推断 v1 已具备外泄检测。
+
 ## 为什么是本项目（市场空白）
 
 GitHub 同类项目两极分化（2026-09 调研，详见 [REUSE] issue）：
@@ -36,24 +38,113 @@ GitHub 同类项目两极分化（2026-09 调研，详见 [REUSE] issue）：
 - **Agent 执行防火墙**（nah/airlock/AgentShield/nixis）：拦 tool 调用但**看不见 LLM 流量**
 - **模型真实性检测**（llm-fingerprint-detector/fpverify 等）：单件成熟但只是离线 CLI，不在流量路径上
 
-**空白 = LLM 流量层的确定性验证 + fail-closed 阻断。** 验证所需三件单件（指纹检测/金丝雀/usage 对账）都有成熟实现，缺的是组装到流量路径上并强制执行。
+**空白 = LLM 流量层的确定性验证 + fail-closed 阻断。** 验证所需三件单件（指纹检测/金丝雀/usage 对账）都有成熟实现，缺的是组装到流量路径上并强制执行。**期次归属**：v1 组装的是"字段一致性 + 隐形字符 + 出站凭据模式"三项最简检查 + 过闸 + evidence 留痕；指纹检测与金丝雀在 v2，usage 对账在 v2/v3（见 ROADMAP 与 §v1 残余风险登记表）。
 
 ## 目标
 
-在开发者本机运行一个安全网关 daemon，使 agent 与 LLM API 之间的**所有**流量：
+在开发者本机运行一个安全网关 daemon，使 agent 与 LLM API 之间**经由已支持接入路径重定向的**流量：
 
-1. **全量过闸**：通过各客户端的 baseURL/proxy 标准重定点接入（OpenCode/Claude Code/Codex/Delphi/promptfoo）
-2. **逐请求确定性验证**：checker 注册表，可插拔扩充，先覆盖已知威胁类型
-3. **违规可阻断**：fail-closed 策略（区别于质量门禁的 SKIP 语义——安全检查失败不允许放行）
-4. **全量审计留痕**：append-only 证据链，支撑门禁集成/计费对账/事后取证
+1. **受管路径全量过闸**：覆盖集合按版本声明（v1 = OpenCode + XP-Gate Delphi；v2 += Claude Code / Codex / promptfoo；v3 += HTTPS_PROXY+CA TLS 拦截以覆盖无法覆写 baseURL 的客户端）。**不使用"所有流量"这一全称承诺**：未接入客户端的流量在对应期次内属未覆盖暴露面，须在 §v1 残余风险登记表中登记。判定方法见 ROADMAP「受管配置封闭枚举」。
+2. **逐请求确定性验证**：checker 注册表，可插拔扩充，先覆盖已知威胁类型；每个 checker 的检测能力边界须成文（不默认"已挂编号即已覆盖"）
+3. **违规可阻断**：fail-closed 策略（区别于质量门禁的 SKIP 语义——安全检查失败或**超时**均不允许放行）。可阻断性的物理前提见下节 §裁决与动作语义：流式响应已开始转发的字节不可撤回，故 v1 的"阻断"粒度是**响应级**而非**字节级**。
+4. **全量审计留痕**：append-only 证据链，支撑门禁集成/计费对账/事后取证。其信任边界为"防意外损坏与单条改写，**不抵抗本机同权限对手整链重写**"（见 §裁决与动作语义 · evidence 信任边界）。
+
+## 裁决与动作语义（v1 冻结件）
+
+> 立节理由：本项目的对抗性是"已转发字节不可收回"，若不逐格定义，"fail-closed 阻断"在流式下就是一个无可满足定义的承诺。
+
+### 术语定案（两层，不得混用）
+
+| 层 | 产出 | 取值 | 归属 |
+|---|---|---|---|
+| checker（纯函数） | `verdict` | `clean` \| `finding` \| `error`（扫描器自身失败） | `src/checkers/**`，不做策略决策 |
+| 策略引擎 | `action` | `allow` \| `warn` \| `redact` \| `block` | `src/policy/**`，确定性映射 `verdict → action` |
+
+- checker **不再**输出 `block`/`redact`（历史文档中的 `expected.verdict: block` 属术语污染，已在 TEST issue 修正为 `expected.verdict` + `expected.action` 双断言）。
+- `verdict=error` 一律按 fail-closed 处理：安全类 checker 的 `error` 映射为 `block`（证据不足不产生 clean 判决，见 REUSE §llm-verify 借鉴）。
+- **v1 策略映射为内置固定表**（每 checker 一行，不可由用户配置）；v3 交付的是**可配置动作 + 全局>项目级优先级**，不是"v3 才有 action"。
+
+### v1 内置策略映射
+
+| checker | 作用侧 | 同步性 | v1 `finding → action` |
+|---|---|---|---|
+| `egress-secret-scan` | 请求 | 强制同步，不可降级 | `block` |
+| `model-label-consistency` | 响应（首块/完成块） | 同步预检 | `warn` + evidence（v2 起可配 block） |
+| `invisible-unicode-scan` | 响应（流式/非流式） | 同步（滚动窗口，零缓冲） | 非流式 `block`；流式 `block`=终止流 |
+
+### 行为矩阵（transport × action，网关对客户端的确切效果）
+
+| # | 场景 | `allow` | `warn` | `redact` | `block` |
+|---|---|---|---|---|---|
+| 1 | 请求侧（非流式，转发前） | 原样转发 | 转发 + evidence 告警 | **v3**：改写命中字段后转发 | 不转发 upstream；返回 `502 llmveto:rejected`；evidence `action_taken=blocked_before_forward` |
+| 2 | 响应侧 非流式 | 原样返回 | 返回 + evidence 告警 | **v3**：整体缓冲后改写返回 | 不返回响应体；返回 `502`；evidence `action_taken=blocked_before_deliver` |
+| 3 | 响应侧 流式，命中发生在**首字节转发前** | 原样 | 原样 + evidence | **v3** | 等同场景 2（尚未有字节外泄） |
+| 4 | 响应侧 流式，命中发生在**已转发 N 个 chunk 后** | 继续 | 继续 + evidence + `partial_response_delivered=true` | **v3（流式不可执行，见下）** | **终止响应流**：注入 `event: error` `data:{code:"llmveto:veto-mid-stream",delivered_chunks:N}` 后关闭连接；evidence `action_taken=terminated_after_delivery` |
+
+**场景 4 的明文承诺（不粉饰）**：
+- 已送达客户端的字节**不撤回、不可撤回**；v1 不承诺"客户端未接触到任何恶意内容"。
+- v1 承诺的可验证效果是：(a) 违规内容不再继续流入 agent 的 tool-call 解析路径（流被终止，`finish_reason` 非 `stop`）；(b) evidence 中该响应被标记 `delivered=true` + 命中偏移，供 `llmveto verify` 与人工取证。
+- 若 agent 已在终止前执行了半截 tool-call，该后果属 v1 未覆盖范围（登记在 §v1 残余风险登记表 T2a 行）。
+- 选择"零缓冲 + 终止流"而非"1-chunk 缓冲窗口 + 真阻断"的理由：本项目的威胁模型认定"网关变慢 → 用户绕过网关"是比"半截字节泄漏"更高概率的失效路径（性能即安全属性）。此取舍为 ADR 级决策，Round 2 复审需确认其成立。
+
+### `redact` 的期次声明
+
+`redact` 在流式响应上物理不可执行（需改写已转发字节），且 v1 三个 checker 无一能施加 redact。**`redact` 自 v1 交付范围移出**，声明为 v3 能力（配合策略引擎完善），仅保留在 action 枚举中作为前向兼容位。v1 的任何 fixture / 测试 / 验收均不得断言 `redact`。
+
+### evidence 信任边界与完整性等级
+
+| 属性 | v1 保证 | v1 **不**保证 |
+|---|---|---|
+| 单条记录被改写 / 中间记录被删除 | ✅ SHA-256 链可检测（`llmveto verify` 报 first_bad_seq） | — |
+| 整链删除或重置（本机同权限对手） | ❌ | ✅ 不提供任何保证（无外部锚定、无签名时间戳，且均未排期） |
+| 崩溃 / 并发写 | 单写者模型（daemon 内唯一追加协程）；每批追加后 `fsync` best-effort；崩溃残留只可能是**末行半行**，读取方按"末行解析失败即丢弃"处理 | 不承诺多进程并发追加安全；不承诺断电零丢失 |
+| 外部锚定（远程 witness / RFC3161） | ❌ 未排期 | 若需要走新 issue 立项 |
+
+**信任声明（须原样出现在 README 与 docs）**：evidence 链的对抗对象是"意外损坏与廉价篡改"，不是"能读写你磁盘的进程"。声称"防篡改"即为过度承诺。
+
+## v1 残余风险登记表（冻结件）
+
+> 立节理由：安全项目缺 risk register，等于让用户以为装上网关即被保护。本表与 ROADMAP v1 验收同级冻结。
+> 状态取值：`已缓解` / `部分`（仅检测或仅取证）/ `未缓解`。"取证"= v1 把相关字段原样写入 evidence，可事后人工对账，但不做判定、不阻断。
+
+| 威胁 | v1 状态 | v1 缓解手段 | 缺口理由 | 计划期次 | v1 取证可得性 |
+|---|---|---|---|---|---|
+| T1a prompt/上下文被记录转售 | **未缓解** | 无（金丝雀在 v2） | 金丝雀引擎排 v2；v1 无任何阳性检测手段 | v2 | 请求体摘要哈希（可对账"发过什么"，无法证明"对方是否留存"） |
+| T1b 凭据窃取 | 部分 | `egress-secret-scan`（gitleaks 模式，阻断） | 仅覆盖**模式化**密钥；自写 token / 内网 URL / 客户数据一律漏检 | v2（+自定义模式库） | 命中与放行均落 evidence |
+| T2a tool-call 篡改/恶意代码注入 | **未缓解** | 无（`tool-call-shape` 排 v2） | v1 不解析 tool-call 结构；流式已转发字节不可撤回 → 即便 v2 检出也无法阻止 agent 执行已收到的半截调用 | v2 | `response_body_ref` 落盘可事后取证 |
+| T2b 响应夹带 prompt 注入 | **未缓解** | 无 | v1 拒绝引入无 FP 门槛的文本规则（大面积误报会摧毁"告警可信"） | v2 | 同上 |
+| T2c 隐形字符水印 | 部分 | `invisible-unicode-scan`（跨 chunk 滚动窗口；非流式 block / 流式终止流） | 归一化（NFKC 后同形）与自定义 PUA 编码变体不覆盖 | v2 扩展码点集 | 命中码点 + 偏移 + 样本 |
+| T2d 条件投递（潜伏触发） | **未缓解** | 无 | v1 checker 全部为单请求作用域，无跨请求状态 | v2+（会话级统计） | 按 session 聚合的请求计数在 evidence 中 |
+| T3a 模型偷换 | **部分（弱）** | `model-label-consistency`：仅比对响应 `model` 字段与请求是否一致 | **只抓"忘改字段"的低级对手**；实证背景（`model_mapping` 静默替换且响应字段无回写校验）恰说明真替换会返回一致字段 → 本 checker 对定向替换无效 | v2 指纹巡检（`fingerprint-probe`） | 字段值 + 不一致事件 |
+| T3b 量化降级 | 未缓解 | 无 | 需指纹/探针，不在 v1 | v2 | 无 |
+| T3c 路由波动 | 未缓解 | 无 | 需跨请求观测 + provider 信任分 | v2 | 无 |
+| T4a/b/c/d usage 虚报/假缓存/隐藏系统提示/倍率操纵 | 未缓解（仅取证） | 无判定逻辑 | 对账需官价基准与计费口径，属 v2 计费对账 | v2 | `usage` / `cache` 字段原样落 evidence，供人工对账 |
+| P1 模型目录投毒 | 部分 | `OPENCODE_MODELS_URL` 锁本地模型目录镜像（由 `llmveto doctor --write-managed-config` 负责写入，非用户手工步骤） | 只把上游目录注入移出实时路径，不校验镜像内容真伪 | v2 | 目录快照哈希 |
+| P2 配置劫持绕过 | best-effort 部分 | 全局配置 > 项目级配置（v1 内置硬编码优先级）+ `doctor` 配置漂移检测（限定于受管配置封闭枚举） | 流量级"未过闸观测"（审计缺口检测）排 v3 → v1 **无法发现旁路** | v3 | doctor 输出落 evidence |
+
+**v1 部署者须知的三句话**：
+
+1. v1 提供的是"凭据出境拦截 + 隐形字符告警/终止 + 模型字段一致性告警 + 全量留痕"。
+2. v1 **不提供**：外泄检测（T1a）、tool-call 注入防护（T2a，RCE 级）、响应注入防护（T2b）、模型真实性证明（T3a 的实质）、usage 对账（T4x）、旁路检测。
+3. v1 的"阻断"在流式响应上是**终止流**，不是**撤回字节**。
 
 ## 非目标
 
-- 不阻止上游记录/训练数据（理论不可行；靠最小暴露 + 金丝雀检测缓解）
+- 不阻止上游记录/训练数据（理论不可行）；缓解手段是"最小暴露 + 金丝雀检测"，且**金丝雀在 v2** → v1 对此威胁零检测（见 §v1 残余风险登记表 T1a 行）
 - 不做模型路由/账号池/计费系统（那是中转站的事，本项目是它的对立面）
 - 不做通用 WAF/杀毒；范围限于 LLM API 流量
 - 不承诺检出所有条件投递（持续监测提高攻击成本，非根除）
 - 不防"完全沦陷的 agent 自改配置绕过网关"（best-effort 防绕过，见 DESIGN）
+- **不防本机同权限对手抹除/重写证据链**（链仅提供内部一致性自检，见 §evidence 信任边界）
+- **不承诺流式已转发字节的撤回**（阻断粒度=响应级）
+- v1 不做 `redact`（流式物理不可执行，见 §`redact` 的期次声明）
+
+## 评审修订记录
+
+| 轮次 | 日期 | 输入 | 本文档变更 |
+|---|---|---|---|
+| R1 | 2026-09-14 | delphi-review Round 1（三专家一致 REQUEST_CHANGES，见 `.sprint-state/review/r1-consensus.md`） | 目标#1 全称量词降级（P-15）；新增 §裁决与动作语义（P-01/P-06/P-07）；新增 §v1 残余风险登记表（P-05）；理论边界与"三件单件"补期次归属（P-05/A-C4）；非目标补三条硬边界（P-07/P-01） |
+
 
 ## 关联 issue
 

@@ -40,9 +40,10 @@ adversarial_note: "对手忘改响应 model 字段；字段回写一致的替换
 expected:
   verdict: finding           # clean | finding | error   ← 断言 checker 纯函数输出
   action: warn               # allow | warn | block      ← 断言 v1 固定映射结果（redact 属 v3，v1 fixture 禁用）
-  evidence:                  # 可选：断言 evidence 字段（对齐契约 #4）
-    codepoint: null
-    terminated_stream: false
+  evidence:                  # 可选：断言 evidence 字段（键必须为契约 #4 已登记字段）
+    findings:                # 契约 #4: {checker, threat, verdict, severity, offsets[], rule_id}
+      - {checker: model-label-consistency, threat: T3a, verdict: finding, rule_id: model-label-mismatch}
+    response_delivered: {partial: false, delivered_chunks: 0}   # 非流式，未转发
 ```
 
    - 流式 block 样本必须带 `expected.observables`：`{terminated_after_delivery: true, delivered_chunks: N, error_event_code: "llmveto:veto-mid-stream"}` —— 使"已转发字节不可撤回"这一语义成为可断言对象，而非口号。
@@ -61,7 +62,7 @@ expected:
    | `request_bytes` / `response_bytes` / `chunk_count` | int | ✅ | 体量观测 |
    | `latency` | object | ✅ | `{ttft_ms, total_ms, request_gate_ms, scan_ms}`（对齐 DESIGN §性能预算三台门） |
    | `findings` | array | ✅ | `{checker, threat, verdict, severity, offsets[], rule_id}` |
-   | `action_taken` | string | ✅ | `allowed` \| `warned` \| `blocked_before_forward` \| `blocked_before_deliver` \| `terminated_after_delivery` \| `degraded_observational` |
+   | `action_taken` | string | ✅ | `allowed` \| `warned` \| `blocked_before_forward` \| `blocked_before_deliver` \| `terminated_after_delivery` \| `degraded_observational`（末值 **@v2 起可达**：v1 无观测类 checker，verify schema 须允许该枚举但 v1 fixture 不覆盖） |
    | `reason` | string | ❌ | 如 `checker_timeout` / `scanner_error` |
    | `response_delivered` | object | ✅ | `{partial: bool, delivered_chunks: int}`（流式撤回边界的取证依据） |
    | `usage` / `cache_reported` | object | ❌ | 上游自报值原样落盘（仅取证，不判定；v1 无对账逻辑） |
@@ -94,8 +95,9 @@ expected:
 - **检出矩阵**：正样本 × checker → 预期 `verdict` + `action`。
   - **v1 门槛：fixture 集内检出率 = 100%**（逐条期望匹配，零漏报，无例外）。
 - **误报矩阵**：benign 语料全量过 checker → 误报率。
-  - **v1 门槛**：告警类 checker（`model-label-consistency` / `invisible-unicode-scan`）FP ≤ **2%**，且每条 FP 必须显式进 `tests/fixtures/false-positives.json` 并由人工裁决留痕；
-  - **阻断类 checker（`egress-secret-scan`）FP = 0**（阻断误报直接破坏可用性，白名单豁免须逐条写明理由与来源）。
+  - **v1 门槛**：告警类 checker（`model-label-consistency`，v1 唯一 action=warn 的 checker）FP ≤ **2%**，且每条 FP 必须显式进 `tests/fixtures/false-positives.json` 并由人工裁决留痕；
+  - **阻断类 checker（`egress-secret-scan` / `invisible-unicode-scan`）FP = 0**（二者 v1 策略映射均为 `action=block`，阻断误报直接破坏可用性，白名单豁免须逐条写明理由与来源）。
+  - **强制 benign 子集**：benign 语料必须含 ≥1 条带标准认证头（`Authorization: Bearer …` / `x-api-key: sk-…`）的真实形态请求，用于断言扫描单元已按 DESIGN §扫描单元定义排除认证头、`egress-secret-scan` 对其 FP=0（若实现未排除认证头，本条必然 FAIL——这是把"认证头不入扫描"锁为可回归约束）。
 - **合并门槛**：新增 checker 必须携带正负 fixture（含 ≥1 跨 chunk 样本），否则 PR 不合并。
 - **"回退"定义**（此前缺失，导致"回退阻断合并"不可判定）：同一 runner 连续 `n=200` 次，`p95_pr > p95_base × 1.2` **或** `p95_pr − p95_base > 2ms` → 判回退、阻断合并；`p95_base` 取 main 分支最近一次绿色基准（存 `bench/baseline.json`）。
 
@@ -110,6 +112,7 @@ OpenCode + Delphi 穿 **mock-upstream** 全链路，逐项断言：
 | 阻断路径（流式） | chunk N 命中 → 前 N-1 chunk 已送达（断言客户端确实收到）+ `event: error` + 连接关闭 + `terminated_after_delivery` + `response_delivered.partial=true` |
 | 审计落盘 | `llmveto verify` 对演练产生的链返回 `ok`；篡改任一条中间记录 → `verify` 报 `first_bad_seq` |
 | doctor 漂移 | 把受管枚举内任一 provider 的 baseURL 改走 → `doctor` 必须 `FAIL` 并指出条目 id |
+| 受管枚举探测过闸（ROADMAP 验收 1(b) 落点） | harness 遍历 `MANAGED_CONFIG_IDS` 每条接入路径，各回放 ≥1 条探测请求经 mock-upstream，断言 evidence 中出现对应 `client` + `provider_id` 记录（时间窗口内）；枚举内任一条路径无记录 → 该验收 FAIL（探测由测试 harness 经该客户端适配器发起，非 doctor 自查） |
 | Delphi 路径 | `.delphi-config.json` 覆写后 Delphi 请求在 evidence 中 `client="delphi"` 可观测 |
 
 ### 5. 性能与防绕过回归

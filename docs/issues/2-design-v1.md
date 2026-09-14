@@ -21,11 +21,11 @@ Delphi/XP-Gate(.delphi-config) ─────┤→ [反代核] → [checker �
   + NODE_EXTRA_CA_CERTS TLS 拦截
 ```
 
-> **期次标注**：v1 反代核**只有 baseURL 反向代理形态**。TLS 拦截（CONNECT/HTTPS_PROXY + CA）为 v3 交付物，v1 不实现、不监听、不在 doctor 检查项内（避免"检查项空转"）。
+> **期次标注**：v1 反代核**只有 baseURL 反向代理形态**。TLS 拦截（CONNECT/HTTPS_PROXY + CA）为 v3 交付物，v1 不实现、不监听；对应地 TLS/CA 信任**不在 `doctor` v1 检查项枚举内**（见 §组件 5 的 doctor 检查项封闭清单，避免"检查项空转"）。
 
 ### 组件
 
-1. **反代核**（v1 形态 = baseURL 反向代理）：SSE 流式 tee（零缓冲——客户端立即收字节）；**单一脱敏咽喉点**（所有日志 sink 前统一脱敏，见 §脱敏与留痕范围）；upstream 端点配置注入（可测试性契约 #1）；扫描单元规范化（见 §扫描单元定义）。v3 增加：TLS 拦截形态。
+1. **反代核**（v1 形态 = baseURL 反向代理）：SSE 流式 tee（零缓冲——客户端立即收字节；per-chunk 先扫描后转发语义见 §关键决策）；**单一脱敏咽喉点**（所有日志 sink 前统一脱敏，见 §脱敏与留痕范围）；upstream 端点配置注入（可测试性契约 #1）；扫描单元规范化（见 §扫描单元定义）。**流式阻断的对外可观测契约**：命中已转发 N chunk 后，反代核向客户端注入单条 SSE 事件 `event: error` + `data: {"error":{"code":"llmveto:veto-mid-stream","delivered_chunks":N}}` 后关闭连接（这是面向客户端的冻结契约，与 evidence 侧 `action_taken=terminated_after_delivery` 对应）。v3 增加：TLS 拦截形态。
 2. **checker 注册表**：checker 分两态签名（可测试性契约 #2，见 TEST issue），声明同步/异步、作用于流式/非流式。v1 内置三个：
    - `model-label-consistency`：响应 `model` 字段 vs 请求 `model` 字段的一致性（T3a 的 **label-mismatch 子集**）。**能力边界**：对"定向替换模型但回写一致字段"的对手无效（该情形恰是背景实证所述）；模型真实性证明属 v2 `fingerprint-probe`。v1 默认动作 `warn`。
    - `invisible-unicode-scan`：隐形字符扫描（U+200B/U+200C/U+200D/U+FEFF/RTL override U+202E/U+2066-2069），**跨 chunk 滚动窗口**（U+200B 的 UTF-8 编码 `E2 80 8B` 可被 chunk 边界切开 → 逐 chunk 独立扫描会系统性漏检，故窗口必须携带未完成多字节序列与跨 chunk 字符游标）。同步执行，不引入缓冲。
@@ -34,6 +34,7 @@ Delphi/XP-Gate(.delphi-config) ─────┤→ [反代核] → [checker �
 3. **策略引擎**：`verdict → action` 的**确定性映射表**。v1 = 内置固定表（每 checker 一行，用户不可配置）；v3 = 可配置动作 + 全局配置 > 项目级配置（防仓库级劫持）。action 语义与 transport 组合的完整行为见 REQ §行为矩阵；`redact` 为 v3 能力，v1 不可达。
 4. **evidence store**：append-only JSONL + SHA-256 链式哈希；字段表见 TEST 契约 #4（v1 冻结）；信任边界与崩溃/并发等级见 REQ §evidence 信任边界；`llmveto verify` 为 v1 交付的校验提供者。
 5. **CLI**：v1 冻结为 5 个命令 —— `start` / `stop` / `status` / `doctor` / `verify`（证据链校验 + JSONL schema 断言）。`report`（计费对账/provider 健康趋势）与 `canary rotate` 属 v2，**v1 不注册 stub**（未实现的命令比缺失的命令更有害）。
+   - **`doctor` v1 检查项 = 冻结封闭枚举（本清单为唯一权威，README 引用之）**：① 受管配置覆写/漂移断言（遍历 `MANAGED_CONFIG_IDS`）；② 网关端口连通（`127.0.0.1` 监听探活）；③ `--write-managed-config` 写入托管配置（`experimental.policies` 写入失败仅告警）；④ evidence 链 `verify` 可跑通。**TLS/CA 信任检查项不在 v1 doctor 检查集内**（v1 不实现 TLS 拦截，放一个恒 `not-applicable` 的检查项 = 检查项空转，故 v1 直接不注册；该检查项随 TLS 拦截能力于 v3 一并引入）。
 
 ### 扫描单元定义（可测试性前置，v1 冻结）
 
@@ -43,11 +44,11 @@ Delphi/XP-Gate(.delphi-config) ─────┤→ [反代核] → [checker �
 
 | 方向 | 单元 | 内容 |
 |---|---|---|
-| 请求 | `request_body` | 已解析 JSON 的规范化文本投影：`messages[*].content`、`tools[*]`、`system`、`extra_headers` 的拼接（不可解析时为原始 body 文本） |
+| 请求 | `request_body` | 已解析 JSON 的规范化文本投影：`messages[*].content`、`tools[*]`、`system`、`extra_headers` 的拼接（不可解析时为原始 body 文本）。**`extra_headers` = 排除认证类头后的自定义头集合**：`Authorization`、`x-api-key`、`api-key`、`x-goog-api-key`、`Proxy-Authorization` 及 `Cookie` 一律不进扫描单元（其值天然是高置信凭据模式，若入扫描则 benign 流量必然命中，阻断类 FP=0 不可达——见 TEST §3 强制 benign 认证头 fixture） |
 | 响应 非流式 | `response_body` | 已解析 JSON 的 `choices[*].message.content` + `tool_calls[*].arguments` 拼接 |
 | 响应 流式 | `sse_event` | 每个 SSE 事件 `data:` 字段解析后的 `choices[0].delta.content` / `delta.tool_calls[].arguments` 文本；解析失败的事件按原始 `data` 文本传递并置 `malformed: true` |
 
-- **一律为 UTF-8 解码后的文本**（不是字节缓冲、不是原始 socket 分片）。字节级检查（如未决多字节序列）由流式窗口的 `pending_bytes` 状态承载，对 checker 透明。
+- **一律为 UTF-8 解码后的文本**（不是字节缓冲、不是原始 socket 分片）。字节级检查（如未决多字节序列）由流式窗口的 `pendingBytes` 状态承载（字段名对齐 TEST 契约 #2 `ScanWindow.pendingBytes`），对 checker 透明。
 - 结构性字段（`model`、`usage`、`finish_reason`）由反代核解析后作为 `meta` 随单元传入，因此 `model-label-consistency` 不必自行解析 JSON。
 
 ### 接入适配器与受管配置清单
@@ -75,18 +76,24 @@ v1 只实现 OpenCode 与 Delphi 两个适配器。**每个适配器必须导出
 |---|---|---|---|
 | G1 `ttft_delta` | 流式响应首字节到达时延增量（网关启用 vs 网关旁路，同 mock upstream） | p95 < 5ms 且 p99 < 12ms | 响应侧 tee + 同步 checker 窗口 |
 | G2 `request_gate_delta` | 请求侧端到端增量（收到客户端请求 → 发出 upstream 请求），**含 `egress-secret-scan` 全量扫描** | body ≤ 8KB：p95 < 3ms；≤ 64KB：p95 < 10ms；≤ 512KB：p95 < 40ms | 出站扫描门禁 |
-| G3 `checker_timeout` | 单 checker 在安全类作用路径上的执行上限 | `egress-secret-scan` 50ms/请求 | 超时行为 |
+| G3 `checker_timeout` | 单 checker 在安全类作用路径上的执行上限，**按 body 分档**（每档 ≥ 对应 G2 p95 的 3 倍余量，防慢机正常大请求即触发超时阻断） | `egress-secret-scan`：body ≤8KB→20ms / ≤64KB→50ms / ≤512KB→120ms | 超时行为 |
 
 **降级规则（区分安全类 / 观测类，消除原"绝不阻塞流"歧义）**：
 
 - **安全类 checker**（v1 = `egress-secret-scan`）：强制同步，**禁止**降级为异步放行；超 G3 预算 → 判 `verdict=error` → 按 REQ §术语定案映射为 `action=block`（超时=拒绝），evidence `reason="checker_timeout"`。
 - **观测类 checker**（v1 = 无；v2 起的 usage 落盘、provider 健康监测等）：超预算可降级为异步记录 + 告警，不阻塞流。
 - G1/G2 阈值为 v1 冻结承诺值；若 BUILD 期基准实测无法满足，**必须走 ADR 修订并公开记录**，禁止静默放宽。
+- **G2/G3 交叠判定口径（回应"合法慢扫描落在两门之间"）**：G2 是**统计门**（p95，衡量整体回归，超阈=性能回退，进回退阻断合并流程但不阻断单笔请求）；G3 是**单笔硬超时门**（单 checker 单次执行上限，超阈=`verdict=error`→`block`）。一次扫描若耗时落在 [G2 p95, G3) 区间：它是 G2 意义上的回退信号（计入基准、可能触发 PR 回退告警），但**不是** G3 超时，请求仍正常放行——两门口径独立，不互相覆盖。
+- **慢环境已知运行时行为（登记，不粉饰）**：在远慢于 CI 基准的开发机上，接近 G3 上限的大请求可能被超时判定为 `block`。G-BENCH 前置门**必须报告 G3 口径的 p99（非仅 p95）**，且 512KB 档须满足 `p99_scan < G3 × 0.6`，否则按 ADR 同步上调 G3 分档值——把"超时阻断率"作为可测量、有退出条件的验收项，而非假设不存在。
 
 ### 关键决策
 
 - 回环段（客户端→网关）HTTP 明文可接受（loopback-only 监听，且监听地址硬绑 `127.0.0.1`，禁 0.0.0.0）；网关→upstream 必须 TLS
-- **零缓冲优先于字节级阻断**：流式命中违规时终止流而非缓冲后判定，理由与明文承诺见 REQ §行为矩阵 场景 4
+- **零缓冲优先于字节级阻断**：流式命中违规时终止流而非缓冲后判定，理由与明文承诺见 REQ §行为矩阵 场景 4。
+- **块级阻塞语义定案（回应"零缓冲 vs 同步 checker 是否矛盾"）**：反代核对每个到达的 SSE chunk 执行**同一事件循环 tick 内**的"先扫描、后转发"——即 chunk N 必须先过同步窗口 checker，通过后立即 tee 给客户端，checker 未过则不转发该 chunk 并终止流。**这不是缓冲整段响应**（不持有 chunk N+1 及以后、不等待流结束），故仍是"零缓冲"；G1 度量的正是这道 per-chunk 门的增量。据此：
+  - **场景 3（首字节转发前命中）可达** ⟺ 命中发生在 chunk 1 且 checker 在 tee chunk 1 前返回 → 未转发任何字节 → `response_delivered.delivered_chunks=0`，等同场景 2。
+  - **场景 4（已转发 N chunk 后命中）**：`delivered_chunks` 为命中前已成功 tee 的 chunk 数（N ≥ 1）；"已转发字节不可撤回"即指这 N 个已过门的 chunk。
+  - fixture 的 `delivered_chunks: N` 断言因此是"实现是否被悄悄异步化/缓冲整段"的探测器：若实现改为异步扫描后再转发，N 会异常增大，被该断言抓住。
 - **fail-closed 语义**仅安全类 checker 适用（含超时）；观测类失败降级为记录，不阻断
 - **防绕过（best-effort，军备竞赛性质）**：v1 = `doctor` 配置漂移检测（遍历域 = 受管配置封闭枚举）；v3 = 审计缺口检测（会话声称有 LLM 工作但网关无对应流量 → 告警）。**v1 不具备发现旁路的能力**，此点写入 REQ 登记表 P2 行，不得在文档中暗示 v1 已覆盖
 - 技术栈：TypeScript + Bun（开发/打包）；**运行时代码仅使用 Node 标准库 API**（`node:http` / `node:crypto` / Web Streams），禁 Bun-only API → 因此"兼容 Node ≥ 18"的含义是"用户可用自带 Node ≥18 运行源码，官方分发为 Bun compile 单二进制"，二者不是同一承诺（见 README §分发）

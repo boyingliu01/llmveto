@@ -45,6 +45,9 @@ layers:
 
   # 反代核：SSE tee 零缓冲、扫描单元规范化、单一脱敏咽喉点、upstream 注入；
   # 编排 checkers/policy/evidence。v1 仅 baseURL 形态（TLS 拦截属 v3）。
+  # 依赖边界说明（回应"gateway 未列 adapters"）：adapters 是**配置写入/漂移检测**层，
+  #   由 CLI（composition root）在 doctor/--write-managed-config 路径装配，gateway 运行时只消费
+  #   已解析的 upstream 端点（经 shared 类型传递），不直接 import adapters —— 故此处不含 adapters 是有意约束，非遗漏。
   - name: gateway
     paths: ["src/gateway/**"]
     allowed_imports: [shared, checkers, policy, evidence, gateway]

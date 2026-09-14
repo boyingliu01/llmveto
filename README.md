@@ -79,7 +79,7 @@ bun run src/cli/index.ts doctor     # 受管配置枚举的覆写/漂移断言 +
 bun run src/cli/index.ts verify     # evidence 链完整性 + schema 断言
 ```
 
-`report`（计费对账）与 `canary rotate`（金丝雀轮换）属 v2。`doctor` 的 CA 信任检查项随 TLS 拦截（v3）才有意义，v1 输出 `not-applicable@v1` 而非"通过"。
+`report`（计费对账）与 `canary rotate`（金丝雀轮换）属 v2。`doctor` 的 v1 检查项为**封闭枚举**（受管配置覆写/漂移断言 + 端口连通 + `--write-managed-config` + evidence 链可验证），权威清单见 DESIGN §组件 5；TLS/CA 信任检查项随 TLS 拦截能力（v3）才引入，**v1 不注册该检查项**（不放恒空的检查项）。
 
 ## 状态
 

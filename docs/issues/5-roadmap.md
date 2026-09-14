@@ -42,7 +42,7 @@ v1 先保证**受管路径流量 100% 过闸**（哪怕验证逻辑最简），v
 3. **checker 有效性门槛**：fixture 集内检出率 100%；benign ≥50 条上告警类 FP ≤2%、阻断类 FP = 0（判据见 TEST §3）。
 4. **fail-closed 端到端**（载体 = mock-upstream，非 evil-relay）：请求侧阻断（零出境证明）+ 流式阻断（前 N-1 chunk 确实已送达 + `event: error` + 连接终止 + `terminated_after_delivery`）两条路径均通过；外加 G3 超时 → `block` 用例。
 5. **evidence 可验证性**：`llmveto verify` 对正常链返回 `ok`；篡改任一中间记录必报 `first_bad_seq`；daemon 重启/崩溃后为纯追加、无覆盖写；schema 字段断言（TEST 契约 #4）全绿。
-6. **性能三台门**：G1 `ttft_delta` p95 < 5ms；G2 `request_gate_delta` 按 body 分档达标；均按 TEST §5 测量协议在每 PR 运行并按 §3 回退公式判定。
+6. **性能三台门**：G1 `ttft_delta` **p95 < 5ms 且 p99 < 12ms**（对齐 DESIGN §性能预算，两值同为验收门）；G2 `request_gate_delta` 按 body 分档（≤8KB:3ms / ≤64KB:10ms / ≤512KB:40ms）达标；G3 扫描超时=block 用例见验收 #4。均按 TEST §5 测量协议在每 PR 运行并按 §3 回退公式判定；G-BENCH 须报告 G3 口径 p99（见 DESIGN §性能预算 慢环境登记条）。
 
 > **v1 交付后仍存在的暴露面**以 [REQ] §v1 残余风险登记表为准（T1a/T2a/T2b/T2d/T3b/T3c/T4x 未缓解）。README 必须引用该表，禁止暗示"装上网关即被保护"。
 

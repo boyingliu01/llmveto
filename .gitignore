@@ -17,6 +17,10 @@ var/evidence/
 # Sprint worktrees (isolated dev branches)
 .worktrees/
 
+# xp-gate hook artifacts (local quality-gate reports/history, not project state)
+.xp-gate/
+.quality-history.jsonl
+
 # Editor / OS
 .DS_Store
 Thumbs.db

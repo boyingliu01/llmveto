@@ -1,0 +1,17 @@
+id: honest-baseline
+upstream: honest
+description: "诚实上游：请求 gpt-4o-mini，响应 model=gpt-4o-mini，字段一致。"
+response:
+  id: chatcmpl-honest-0001
+  object: chat.completion
+  model: gpt-4o-mini
+  choices:
+    - index: 0
+      message:
+        role: assistant
+        content: "hello"
+      finish_reason: stop
+  usage:
+    prompt_tokens: 5
+    completion_tokens: 1
+    total_tokens: 6

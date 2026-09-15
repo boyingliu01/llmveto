@@ -1,0 +1,43 @@
+{
+  "_comment": "G-BENCH 前置门骨架。SL-13 首次实测后回填真实值；未回填前 v1 门槛仍按 DESIGN §性能预算。",
+  "schema_version": 1,
+  "generated_at": null,
+  "runner": null,
+  "platform": null,
+  "notes": [
+    "p95_base 语义：main 分支最近一次绿色基准。回退公式见 TEST §3。",
+    "G-BENCH 前置门须同时报告 512KB 档 G3 口径的 p99_scan，且须满足 p99_scan < G3 × 0.6，否则触发 ADR 上调 G3 分档值。"
+  ],
+  "gates": {
+    "G1_ttft_delta": {
+      "threshold_p95_ms": 5,
+      "threshold_p99_ms": 12,
+      "measured_p50_ms": null,
+      "measured_p95_ms": null,
+      "measured_p99_ms": null,
+      "sample_size": null
+    },
+    "G2_request_gate_delta": {
+      "tiers": {
+        "le_8kb":   { "threshold_p95_ms": 3,  "measured_p50_ms": null, "measured_p95_ms": null, "measured_p99_ms": null },
+        "le_64kb":  { "threshold_p95_ms": 10, "measured_p50_ms": null, "measured_p95_ms": null, "measured_p99_ms": null },
+        "le_512kb": { "threshold_p95_ms": 40, "measured_p50_ms": null, "measured_p95_ms": null, "measured_p99_ms": null }
+      }
+    },
+    "G3_checker_timeout": {
+      "tiers": {
+        "le_8kb":   { "budget_ms": 20 },
+        "le_64kb":  { "budget_ms": 50 },
+        "le_512kb": { "budget_ms": 120, "measured_p99_scan_ms": null, "must_satisfy_p99_below_ms": 72 }
+      }
+    }
+  },
+  "regression_formula": {
+    "n": 200,
+    "warmup": 50,
+    "block_if": [
+      "p95_pr > p95_base * 1.2",
+      "p95_pr - p95_base > 2 (ms)"
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+id: swap-label-mismatch
+upstream: swap
+description: |
+  定向替换模型但**忘改**响应 model 字段的低级对手 → v1 model-label-consistency 可检出。
+  注意：若对手回写了一致的 model 字段（`swap-with-rewrite`），v1 **无法**检出，
+  属 T3a 已登记部分（REQ 登记表 / DESIGN §组件2 能力边界）。
+request:
+  model: gpt-4o-mini
+response:
+  id: chatcmpl-swap-0001
+  object: chat.completion
+  model: gpt-3.5-turbo
+  choices:
+    - index: 0
+      message:
+        role: assistant
+        content: "i am gpt-3.5-turbo pretending to be newer"
+      finish_reason: stop

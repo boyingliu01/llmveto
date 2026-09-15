@@ -1,0 +1,104 @@
+{
+  "alignment_status": "PASS",
+  "phase": "1",
+  "score": 96.0,
+  "sprint_id": "sprint-20260914-49",
+  "head_commit": "5947e8bf5419a284af1a0b851086db8fc6ed7f34",
+  "specification_sha256": "a51d25048460ac84a9882291b96451e4a5139a9a2e814b02024ffdd67641a3bc",
+  "spec_hash": "a51d25048460ac84a9882291b96451e4a5139a9a2e814b02024ffdd67641a3bc",
+  "generated_at": "2026-09-15T22:30:00Z",
+  "summary": {
+    "total_requirements": 14,
+    "requirements_requiring_tests": 13,
+    "requirements_covered": 13,
+    "requirement_coverage_pct": 100.0,
+    "total_acceptance_criteria": 59,
+    "acceptance_criteria_requiring_tests": 56,
+    "acceptance_criteria_covered": 56,
+    "acceptance_criteria_coverage_pct": 100.0,
+    "test_files": 25,
+    "test_cases": 146,
+    "test_cases_passing": 146
+  },
+  "dimension_scores": [
+    {
+      "dimension": "Requirement Coverage",
+      "score_pct": 100.0,
+      "weight_pct": 30,
+      "weighted": 30.0,
+      "note": "13/13 REQs with @test annotation (REQ-VETO-001 exempt per test_coverage_requirements all-false)"
+    },
+    {
+      "dimension": "Acceptance Criteria Coverage",
+      "score_pct": 100.0,
+      "weight_pct": 25,
+      "weighted": 25.0,
+      "note": "56/56 ACs with @covers annotation (AC-VETO-001-XX exempt)"
+    },
+    {
+      "dimension": "Test Intent Correctness",
+      "score_pct": 95.0,
+      "weight_pct": 20,
+      "weighted": 19.0,
+      "note": "Every test file has @intent header; some describe behavior at file scope rather than per-`it` (acceptable)"
+    },
+    {
+      "dimension": "Edge Case Coverage",
+      "score_pct": 90.0,
+      "weight_pct": 15,
+      "weighted": 13.5,
+      "note": "SSE chunk split (E2 80 8B across two chunks) / malformed JSON / empty chain / tampered seq / non-loopback host / auth-header benign set / >512KB fallback — all covered"
+    },
+    {
+      "dimension": "Test Data Validity",
+      "score_pct": 85.0,
+      "weight_pct": 10,
+      "weighted": 8.5,
+      "note": "Threat fixtures (T1b/T2c/T3a) + 50 benign corpus + adversarial fixtures committed via SL-12; bench baseline real-measured via SL-13"
+    }
+  ],
+  "misaligned_tests": [],
+  "exempt_requirements": [
+    {
+      "id": "REQ-VETO-001",
+      "reason": "specification.yaml.test_coverage_requirements = { unit: false, integration: false, e2e: false }; 前置决策门 G-LIC/G-FP/G-BENCH 是文档 + 工具类门禁，非可测代码",
+      "evidence": "docs/licenses.md + bench/baseline.json (SL-01)"
+    }
+  ],
+  "anti_pattern_detected": false,
+  "anti_pattern_notes": [
+    "无 test.skip / xit / 空 expect 断言",
+    "无永远通过的断言（所有断言绑定具体行为，SL-14 e2e 直接暴露 core.ts getter bug）",
+    "mock 密度 < 30%（vitest 主要用真实 evidence file + spawn ephemeral server；仅 upstream 是 mock，per TDD skill mock 边界）"
+  ],
+  "errors": [],
+  "phase2_execution": {
+    "status": "PASS",
+    "test_command": "COVERAGE_ALL=1 npx vitest run --coverage",
+    "exit_code": 0,
+    "tests_passed": 146,
+    "tests_failed": 0,
+    "duration_seconds": 4.79,
+    "coverage": {
+      "statements_pct": 92.21,
+      "branches_pct": 83.46,
+      "functions_pct": 95.94,
+      "lines_pct": 95.16,
+      "threshold_pct": 80,
+      "all_above_threshold": true
+    },
+    "typecheck": { "command": "npx tsc --noEmit", "exit_code": 0 },
+    "freeze_status": {
+      "pre_phase2_locked": true,
+      "violations_during_phase2": 0,
+      "post_phase2_unlocked": true,
+      "note": "Per Qoder platform adaptation (sprint-flow Pre-Edit Gate)：orchestrator 期间未修改任何 tests/*.test.ts 文件"
+    }
+  },
+  "gate_367_verdict": {
+    "status": "PASS",
+    "reason": "alignment_score 96.0% >= 80% threshold; 全部 REQ/AC 硬映射完整；Phase 2 执行无冻结违规；146/146 tests green；覆盖率 4 项 >=80%"
+  }
+}
+
+

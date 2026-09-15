@@ -3,8 +3,9 @@
   "phase": "1",
   "score": 96.0,
   "sprint_id": "sprint-20260914-49",
-  "head_commit": "3d30dbb7e386d260382e2f4a3c2efbb28ce37c7b",
-  "specification_sha256": "A51D25048460AC84A9882291B96451E4A5139A9A2E814B02024FFDD67641A3BC",
+  "head_commit": "5947e8bf5419a284af1a0b851086db8fc6ed7f34",
+  "specification_sha256": "a51d25048460ac84a9882291b96451e4a5139a9a2e814b02024ffdd67641a3bc",
+  "spec_hash": "a51d25048460ac84a9882291b96451e4a5139a9a2e814b02024ffdd67641a3bc",
   "generated_at": "2026-09-15T22:30:00Z",
   "summary": {
     "total_requirements": 14,
@@ -99,3 +100,5 @@
     "reason": "alignment_score 96.0% >= 80% threshold; 全部 REQ/AC 硬映射完整；Phase 2 执行无冻结违规；146/146 tests green；覆盖率 4 项 >=80%"
   }
 }
+
+

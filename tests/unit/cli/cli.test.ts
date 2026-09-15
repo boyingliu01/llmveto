@@ -98,4 +98,55 @@ describe("SL-11 CLI (REQ-VETO-008)", () => {
     expect(r.exitCode).toBe(1);
     expect(r.stderr).toContain("first_bad_seq=1");
   });
+
+  it("verify：evidence_version ≠ 1 → unsupported_version 分支", async () => {
+    const p = join(dir, "badver.jsonl");
+    writeFileSync(p, JSON.stringify({ evidence_version: 2 }) + "\n", "utf8");
+    const r = await runCli("verify", { stateDir: dir, args: ["-f", p] });
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain("unsupported evidence_version");
+  });
+
+  it("verify：schema 违约 → schema_violation 分支（缺必填 client）", async () => {
+    const p = join(dir, "badschema.jsonl");
+    // evidence_version=1 但缺必填字段 → validateEvidence 报 schema_violation
+    writeFileSync(p, JSON.stringify({ evidence_version: 1, seq: 0 }) + "\n", "utf8");
+    const r = await runCli("verify", { stateDir: dir, args: ["-f", p] });
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toMatch(/schema violation at seq=\d+/);
+  });
+
+  it("status：未运行（pid 文件缺失）→ exit=1 'not running'", async () => {
+    const emptyDir = mkdtempSync(join(tmpdir(), "llmveto-status-idle-"));
+    const r = await runCli("status", { stateDir: emptyDir });
+    expect(r.exitCode).toBe(1);
+    expect(r.stdout).toBe("not running\n");
+    rmSync(emptyDir, { recursive: true, force: true });
+  });
+
+  it("status：运行中（有 pid + url）→ exit=0 'running pid=... url=...'", async () => {
+    const d = mkdtempSync(join(tmpdir(), "llmveto-status-run-"));
+    writeFileSync(join(d, "gateway.pid"), "4242", "utf8");
+    writeFileSync(join(d, "gateway.url"), "http://127.0.0.1:9999", "utf8");
+    const r = await runCli("status", { stateDir: d });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("running pid=4242");
+    expect(r.stdout).toContain("url=http://127.0.0.1:9999");
+    rmSync(d, { recursive: true, force: true });
+  });
+
+  it("status：pid 存在但 url 缺失 → url=unknown 分支", async () => {
+    const d = mkdtempSync(join(tmpdir(), "llmveto-status-nourl-"));
+    writeFileSync(join(d, "gateway.pid"), "7777", "utf8");
+    const r = await runCli("status", { stateDir: d });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("url=unknown");
+    rmSync(d, { recursive: true, force: true });
+  });
+
+  it("stop：noop → exit=0 'stop: signal sent'", async () => {
+    const r = await runCli("stop", { stateDir: dir });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("stop: signal sent");
+  });
 });

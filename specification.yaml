@@ -1,0 +1,564 @@
+# llmveto v1 MVP — Specification
+# 权威来源：docs/issues/1-req-threat-model.md / 2-design-v1.md / 3-reuse-list.md / 4-test-validation.md / 5-roadmap.md
+# 状态：R1 需求评审 APPROVED + R2 delphi-review APPROVED (100% ≥ 91% 阈值)
+#       + 用户设计文档 APPROVAL（见 .sprint-state/decisions.md DR-011+）
+# 冻结件字段表以 TEST 契约 #4 为准；术语与行为矩阵以 REQ §裁决与动作语义 为准。
+
+specification:
+  id: "SPEC-VETO-001"
+  name: "llmveto v1 MVP — Local LLM Traffic Security Gateway"
+  version: "1.0.0"
+  sprint_ref: "sprint-20260914-49"
+  review_gate:
+    r1_requirements: ".sprint-state/review/requirements-reviewed.json (APPROVED, requirements_frozen=true)"
+    r2_design: ".sprint-state/review/delphi-reviewed.json (APPROVED, final_consensus_percent=100)"
+    panel: "example-provider / g-deepseek-flash + g-glm-5.3-flash + g-qwen3.8-flash (docs/delphi-panel.md)"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Requirements（v1 冻结范围，按 ROADMAP §v1 交付 + 验收 + TEST §可测试性契约）
+  # ─────────────────────────────────────────────────────────────────────────
+  requirements:
+
+    # ── 前置决策门（ROADMAP §v1 前置决策门，BUILD 开始前必须关闭）
+    - id: "REQ-VETO-001"
+      description: "前置决策门 G-LIC / G-FP / G-BENCH 关闭并留痕"
+      priority: "MUST"
+      acceptance_criteria:
+        - id: "AC-VETO-001-01"
+          given: "v1 BUILD 即将开始"
+          when: "审计 docs/licenses.md"
+          then: "gitleaks 规则集许可逐文件结论已记录；若不可合规复用，则改为自建 top-N 高置信凭据模式（OpenAI sk-…/Anthropic sk-ant-…/GitHub ghp_…/PEM/AWS AKIA），并在 REQ 登记表 T1b 行标注覆盖面缩小"
+        - id: "AC-VETO-001-02"
+          given: "fpverify（Python）为对手样本来源"
+          when: "生成 v1 CI 消费的 fixture"
+          then: "fpverify 作为离线 fixture 生成器（开发者机器跑一次）产出 YAML 入 tests/fixtures/adversarial/；v1 测试栈不引入 Python 运行时"
+        - id: "AC-VETO-001-03"
+          given: "G1/G2 阈值为承诺值"
+          when: "骨架基准首次实测"
+          then: "实测数据落入 bench/baseline.json；若超阈值则有对应 ADR 修订记录（禁止静默放宽）"
+      edge_cases:
+        - "G-LIC 结论为『不通过』→ 自建模式覆盖缩小，T1b 登记表须同步更新"
+        - "G-BENCH 慢环境实测 p99_scan ≥ G3 × 0.6 → 触发 ADR 上调 G3 分档"
+      test_coverage_requirements:
+        unit: false
+        integration: false
+        e2e: false
+
+    # ── 反代核
+    - id: "REQ-VETO-002"
+      description: "反代核（baseURL 形态）：SSE tee 零缓冲 + 扫描单元规范化 + 单一脱敏咽喉点 + veto-mid-stream 契约"
+      priority: "MUST"
+      acceptance_criteria:
+        - id: "AC-VETO-002-01"
+          given: "daemon 启动"
+          when: "监听地址解析"
+          then: "硬绑 127.0.0.1；配置 0.0.0.0 直接拒绝启动并给出可读错误"
+        - id: "AC-VETO-002-02"
+          given: "SSE 流式响应到达"
+          when: "每个 chunk 进入网关"
+          then: "在同一事件循环 tick 内完成『先扫描、后转发』；不缓冲整段响应；当前被 checker 判定的 chunk 存在 ≤1 chunk 瞬态持有窗口"
+        - id: "AC-VETO-002-03"
+          given: "流式响应已转发 N 个 chunk 后 checker 命中违规"
+          when: "网关执行 block"
+          then: "向客户端注入单条 SSE 事件 `event: error` + `data: {\"error\":{\"code\":\"llmveto:veto-mid-stream\",\"delivered_chunks\":N}}` 后关闭连接；已转发字节不撤回"
+        - id: "AC-VETO-002-04"
+          given: "测试需要指向恶意上游"
+          when: "注入 upstream 端点"
+          then: "网关通过配置注入使用 mock-upstream 地址（TEST 可测试性契约 #1）"
+        - id: "AC-VETO-002-05"
+          given: "任何 sink（evidence / stdout / 未来 report）即将落盘"
+          when: "写入前"
+          then: "统一经单一 redactSink()；各组件禁止自行打印请求体"
+        - id: "AC-VETO-002-06"
+          given: "网关组装扫描单元"
+          when: "从 HTTP 请求生成 request_body"
+          then: "扫描单元为 UTF-8 解码后的文本投影（messages/tools/system/extra_headers 拼接），认证类头（Authorization / x-api-key / api-key / x-goog-api-key / Proxy-Authorization / Cookie）一律被排除出扫描单元；结构性字段（model/usage/finish_reason）解析后作为 meta 随单元传入"
+      edge_cases:
+        - "SSE chunk 边界切开多字节 UTF-8（例 U+200B `E2 80 8B` 分两片）→ ScanWindow.pendingBytes 承载未完成序列，checker 透明"
+        - "SSE data 无法解析 JSON → 按原始 data 文本传递并置 malformed: true"
+        - "upstream 在 tee 前抛错 → 走 HTTP 错误路径，不计入 veto-mid-stream"
+      security_considerations:
+        - "回环段 HTTP 明文可接受（loopback-only）；网关→upstream 必须 TLS"
+        - "认证类头不入扫描 → 夹带/伪装在这些头里的凭据或水印属 v1 已登记盲区（T1b）"
+      test_coverage_requirements:
+        unit: true
+        integration: true
+        e2e: true
+
+    # ── checker: egress-secret-scan
+    - id: "REQ-VETO-003"
+      description: "egress-secret-scan（请求侧，强制同步，阻断，T1b）"
+      priority: "MUST"
+      acceptance_criteria:
+        - id: "AC-VETO-003-01"
+          given: "request_body 含模式化凭据（sk-/sk-ant-/ghp_/PEM/AKIA 之一）"
+          when: "checker 执行"
+          then: "返回 verdict=finding，evidence.findings[] 至少一条含 {checker:'egress-secret-scan', threat:'T1b', verdict:'finding', rule_id:<匹配规则 id>}；策略引擎映射为 action=block；HTTP 返回 502 llmveto:rejected；evidence action_taken=blocked_before_forward"
+        - id: "AC-VETO-003-02"
+          given: "benign 语料含带标准认证头（Authorization: Bearer …/x-api-key: sk-…）的真实形态请求"
+          when: "checker 执行"
+          then: "FP=0（因认证头已在扫描单元排除，见 AC-VETO-002-06）"
+        - id: "AC-VETO-003-03"
+          given: "扫描执行时间超过 G3 对应 body 档预算（≤8KB→20ms / ≤64KB→50ms / ≤512KB→120ms）"
+          when: "超时判定触发"
+          then: "verdict=error → action=block；evidence reason=checker_timeout；禁止降级为异步放行"
+        - id: "AC-VETO-003-04"
+          given: "checker 单元测试"
+          when: "同输入调用两次"
+          then: "输出严格相同；不 import gateway/evidence/policy；不读配置/时钟/网络/环境变量"
+      edge_cases:
+        - "扫描单元内 base64/hex 编码变形 → v1 明确不做归一化（T1b 已登记）"
+        - "空 request_body → clean"
+      security_considerations:
+        - "阻断类 checker 强制 FP=0（一误报即破坏可用性）"
+        - "禁止对未知模式做『看起来像密钥』的启发式，须以 rule_id 白名单驱动"
+      test_coverage_requirements:
+        unit: true
+        integration: true
+        e2e: true
+
+    # ── checker: invisible-unicode-scan
+    - id: "REQ-VETO-004"
+      description: "invisible-unicode-scan（响应侧，跨 chunk 滚动窗口，非流式 block / 流式终止流，T2c）"
+      priority: "MUST"
+      acceptance_criteria:
+        - id: "AC-VETO-004-01"
+          given: "响应文本含 U+200B/U+200C/U+200D/U+FEFF/U+202E/U+2066-2069 任一码点"
+          when: "checker 执行"
+          then: "verdict=finding，evidence.findings[].offsets 给出命中偏移"
+        - id: "AC-VETO-004-02"
+          given: "一个隐形字符的 UTF-8 字节被切分到相邻两个 SSE chunk"
+          when: "跨 chunk 滚动窗口归约"
+          then: "仍检出，不因分片漏检（ScanWindow.pendingBytes + cursor 由 fixture 注入/回传）"
+        - id: "AC-VETO-004-03"
+          given: "响应形态 = 非流式"
+          when: "verdict=finding 经策略映射"
+          then: "action=block（返回 502 无响应体，evidence action_taken=blocked_before_deliver）"
+        - id: "AC-VETO-004-04"
+          given: "响应形态 = 流式，命中发生在已转发 N chunk 后"
+          when: "策略映射"
+          then: "action=block 表现为终止流（走 AC-VETO-002-03 契约），evidence action_taken=terminated_after_delivery + response_delivered={partial:true, delivered_chunks:N}"
+      edge_cases:
+        - "SSE `\\u200b` 转义形态而非真实字节 → 检出（SSE 解析后为文本码点）"
+        - "NFKC 归一化后同形变体 → v1 明确不覆盖（T2c 登记表）"
+        - "自定义 PUA 码点 → v1 不覆盖"
+      security_considerations:
+        - "作用于响应流，per-chunk 门预算计入 G1，不设独立 G3 硬超时；单 chunk 未在 G1 预算内返回 = 该 chunk 命中 error→block"
+      test_coverage_requirements:
+        unit: true
+        integration: true
+        e2e: true
+
+    # ── checker: model-label-consistency
+    - id: "REQ-VETO-005"
+      description: "model-label-consistency（响应字段一致性告警，T3a label-mismatch 子集）"
+      priority: "MUST"
+      acceptance_criteria:
+        - id: "AC-VETO-005-01"
+          given: "response.meta.model_responded != request.meta.model_requested"
+          when: "checker 执行"
+          then: "verdict=finding，rule_id=model-label-mismatch；策略引擎映射为 action=warn；evidence 记录告警，响应仍原样返回"
+        - id: "AC-VETO-005-02"
+          given: "checker 输入"
+          when: "网关已解析 meta"
+          then: "checker 从 meta 直接读取 model 字段，不自行解析 JSON"
+        - id: "AC-VETO-005-03"
+          given: "文档 / 注释 / README"
+          when: "描述本 checker"
+          then: "必须显式声明能力边界：对『定向替换模型但回写一致字段』的对手无效（属 v2 fingerprint-probe 覆盖范围）"
+      edge_cases:
+        - "流式首块 vs 完成块 model 字段：v1 取『任一块不一致即 finding』"
+        - "响应 model 字段缺失 → verdict=error → 观测类？否，v1 定为 finding（不阻断，仅告警）"
+      test_coverage_requirements:
+        unit: true
+        integration: true
+        e2e: false
+
+    # ── 策略引擎
+    - id: "REQ-VETO-006"
+      description: "策略引擎：v1 内置固定 verdict → action 映射表（不可配置，fail-closed）"
+      priority: "MUST"
+      acceptance_criteria:
+        - id: "AC-VETO-006-01"
+          given: "v1 三个内置 checker"
+          when: "策略解析"
+          then: "映射表逐行为 egress-secret-scan.finding → block / invisible-unicode-scan.finding → block / model-label-consistency.finding → warn；用户不可通过任何配置文件覆写"
+        - id: "AC-VETO-006-02"
+          given: "安全类 checker（v1 中映射为 block 的集合）返回 verdict=error"
+          when: "策略映射"
+          then: "action=block（证据不足不产生 clean 判决）"
+        - id: "AC-VETO-006-03"
+          given: "任何 fixture 或测试用例"
+          when: "断言 action"
+          then: "禁止出现 action=redact（v1 不可达，v3 才引入）"
+        - id: "AC-VETO-006-04"
+          given: "行为矩阵（transport × action）"
+          when: "策略引擎输出后"
+          then: "反代核按 REQ §行为矩阵 场景 1/2/3/4 执行；术语与预期严格对齐"
+      edge_cases:
+        - "多 checker 同时命中：action 取最严（block > warn > allow）"
+        - "观测类降级：v1 无观测类 checker，action_taken=degraded_observational 枚举存在于 verify schema 但 v1 fixture 不覆盖"
+      test_coverage_requirements:
+        unit: true
+        integration: true
+        e2e: false
+
+    # ── evidence store
+    - id: "REQ-VETO-007"
+      description: "evidence store：append-only JSONL + SHA-256 链（evidence_version:1 字段表冻结）"
+      priority: "MUST"
+      acceptance_criteria:
+        - id: "AC-VETO-007-01"
+          given: "网关处理任何一次交互"
+          when: "落盘 evidence"
+          then: "输出 JSONL 单行记录，含 TEST 契约 #4 全部 ✅ 必填字段（evidence_version/event_id/seq/ts/session_id/turn_id/request_id/client/provider_id/endpoint_host/model_requested/model_responded/transport/request_bytes/response_bytes/chunk_count/latency/findings/action_taken/response_delivered/request_body_sha256/response_body_sha256/prev_hash/record_hash/canary）"
+        - id: "AC-VETO-007-02"
+          given: "任一新记录"
+          when: "写入前"
+          then: "record_hash = SHA256(prev_hash ‖ canonical_json(record_minus_hashes))；链上前一条 record_hash 即本条 prev_hash"
+        - id: "AC-VETO-007-03"
+          given: "配置 evidence.body_capture 未设置"
+          when: "落盘"
+          then: "默认 metadata_only（仅哈希，不写明文）；redacted/full 为可选，文档必须标注 full 模式的 T1b 本地聚集风险"
+        - id: "AC-VETO-007-04"
+          given: "daemon 崩溃后重启"
+          when: "读取已有 JSONL"
+          then: "末行解析失败即丢弃（单写者 + 每批 fsync best-effort 允许的唯一残留），重启后为纯追加、无覆盖写"
+        - id: "AC-VETO-007-05"
+          given: "v1 无金丝雀"
+          when: "写 evidence"
+          then: "canary 字段恒 null（占位），README 与文档禁止因字段存在而声称 v1 具备金丝雀能力"
+      edge_cases:
+        - "并发写：v1 单写者模型（daemon 内唯一追加协程），不承诺多进程安全"
+        - "断电：不承诺零丢失"
+        - "本机同权限对手整链重写：v1 不提供任何保证（信任边界明示）"
+      security_considerations:
+        - "evidence 链对抗对象是『意外损坏与廉价篡改』，不是『能读写你磁盘的进程』"
+      test_coverage_requirements:
+        unit: true
+        integration: true
+        e2e: true
+
+    # ── CLI
+    - id: "REQ-VETO-008"
+      description: "CLI 冻结 5 命令：start / stop / status / doctor / verify（无 stub）"
+      priority: "MUST"
+      acceptance_criteria:
+        - id: "AC-VETO-008-01"
+          given: "CLI 命令集合"
+          when: "列举可用命令"
+          then: "仅 start / stop / status / doctor / verify；report、canary 等未实现命令不注册 stub"
+        - id: "AC-VETO-008-02"
+          given: "执行 `llmveto doctor`"
+          when: "无 --write-managed-config 参数"
+          then: "遍历 MANAGED_CONFIG_IDS 检查项封闭枚举：① 受管配置覆写/漂移断言 ② 网关端口连通（127.0.0.1 探活） ④ evidence 链 verify 可跑通；任一 FAIL 输出条目 id + 非零退出码"
+        - id: "AC-VETO-008-03"
+          given: "执行 `llmveto doctor --write-managed-config`"
+          when: "写入托管配置"
+          then: "检查项 ③ 触发；experimental.policies 写入失败仅降级为告警，不作为 doctor FAIL"
+        - id: "AC-VETO-008-04"
+          given: "v1 不实现 TLS 拦截"
+          when: "doctor 检查项枚举"
+          then: "TLS/CA 信任检查项不在 v1 doctor 集合内（避免恒 not-applicable 的空转项）；该检查项随 v3 TLS 拦截能力一并引入"
+      test_coverage_requirements:
+        unit: true
+        integration: true
+        e2e: true
+
+    # ── adapters + MANAGED_CONFIG_IDS
+    - id: "REQ-VETO-009"
+      description: "接入适配器：OpenCode + Delphi；每适配器导出 MANAGED_CONFIG_IDS 封闭枚举"
+      priority: "MUST"
+      acceptance_criteria:
+        - id: "AC-VETO-009-01"
+          given: "v1 只实现两适配器"
+          when: "构建 src/adapters/**"
+          then: "OpenCode（provider.<id>.options.baseURL + OPENCODE_MODELS_URL）与 Delphi（.delphi-config.json endpoint 覆写）各自导出 `MANAGED_CONFIG_IDS: readonly string[]`"
+        - id: "AC-VETO-009-02"
+          given: "受管配置的写入责任方"
+          when: "用户执行 doctor --write-managed-config"
+          then: "网关负责写入；用户手工步骤仅为可选复核；不引入 v2/v3 客户端（Claude Code / Codex / promptfoo）"
+        - id: "AC-VETO-009-03"
+          given: "doctor 配置漂移断言"
+          when: "遍历域"
+          then: "由 MANAGED_CONFIG_IDS 决定（把『全部流量过闸』不可证伪命题替换为『枚举内每条路径过闸』可判定命题）；枚举外的路径不进断言"
+      edge_cases:
+        - "自定义头 vs 认证类头分类（extra_headers 排除集合见 AC-VETO-002-06）"
+      security_considerations:
+        - "枚举外路径属未覆盖暴露面，须在 REQ §v1 残余风险登记表中登记"
+      test_coverage_requirements:
+        unit: true
+        integration: true
+        e2e: true
+
+    # ── llmveto verify
+    - id: "REQ-VETO-010"
+      description: "llmveto verify：证据链完整性 + JSONL schema 断言（v1 内交付）"
+      priority: "MUST"
+      acceptance_criteria:
+        - id: "AC-VETO-010-01"
+          given: "正常链"
+          when: "执行 `llmveto verify`"
+          then: "返回 ok（退出码 0）"
+        - id: "AC-VETO-010-02"
+          given: "任一条中间记录被改写（record_hash 与内容不匹配或 prev_hash 断裂）"
+          when: "执行 verify"
+          then: "报 first_bad_seq=<序号>（非零退出码）"
+        - id: "AC-VETO-010-03"
+          given: "字段缺失或类型不符"
+          when: "执行 verify"
+          then: "schema 断言逐条列出违约字段路径，非零退出码"
+        - id: "AC-VETO-010-04"
+          given: "evidence_version != 1"
+          when: "verify 启动"
+          then: "拒绝校验并提示不识别的 evidence_version（消费方须先校验此值）"
+      edge_cases:
+        - "整链被本机同权限对手删除 → verify 报『无文件』而非『链完好』（这是 v1 明确不抵抗的场景）"
+      test_coverage_requirements:
+        unit: true
+        integration: true
+        e2e: true
+
+    # ── mock-upstream
+    - id: "REQ-VETO-011"
+      description: "mock-upstream：纯 TS 声明式脚本回放（v1 全部集成/E2E 的恶意上游载体）"
+      priority: "MUST"
+      acceptance_criteria:
+        - id: "AC-VETO-011-01"
+          given: "fixture 提供 upstream_response 定义"
+          when: "网关向 mock-upstream 发请求"
+          then: "按定义逐 chunk 吐出（stream 形态）或整体返回（non-stream 形态）"
+        - id: "AC-VETO-011-02"
+          given: "跨 chunk 切分对抗样本"
+          when: "fixture 声明自定义 chunk 边界"
+          then: "mock-upstream 按该边界切片（例把 U+200B 三字节拆两片）"
+        - id: "AC-VETO-011-03"
+          given: "CI 环境"
+          when: "运行测试"
+          then: "零 Python 依赖；evil-relay 属 v2，v1 不引用不阻塞"
+      test_coverage_requirements:
+        unit: false
+        integration: true
+        e2e: true
+
+    # ── 威胁样本库 + benign 语料
+    - id: "REQ-VETO-012"
+      description: "威胁样本库与 benign 语料（双矩阵回归的输入）"
+      priority: "MUST"
+      acceptance_criteria:
+        - id: "AC-VETO-012-01"
+          given: "v1 已缓解/部分缓解威胁 T1b / T2c / T3a-label-mismatch"
+          when: "清点 tests/fixtures"
+          then: "每个威胁 ≥3 个正样本；未缓解威胁（T2a/T2b/T4x 等）样本入库但标注 @v2 预留，v1 CI 不对其断言"
+        - id: "AC-VETO-012-02"
+          given: "benign 语料"
+          when: "计数"
+          then: "≥50 条；至少含 1 条带标准认证头（Authorization: Bearer …/x-api-key: sk-…）的真实形态请求（锁定 AC-VETO-003-02）"
+        - id: "AC-VETO-012-03"
+          given: "每个内容型 checker"
+          when: "流式实现验收前"
+          then: "至少 1 个跨 chunk 切分对抗样本，否则不予验收"
+        - id: "AC-VETO-012-04"
+          given: "每条告警类 FP"
+          when: "出现在 benign 全量回归中"
+          then: "写入 tests/fixtures/false-positives.json 并由人工裁决留痕"
+      edge_cases:
+        - "录制会话经 redactSink() + 人工复核后方可作 benign 负样本"
+      test_coverage_requirements:
+        unit: true
+        integration: true
+        e2e: true
+
+    # ── 性能三台门
+    - id: "REQ-VETO-013"
+      description: "性能三台门 G1/G2/G3 基准 + 回退公式 + bench/baseline.json"
+      priority: "MUST"
+      acceptance_criteria:
+        - id: "AC-VETO-013-01"
+          given: "同 mock-upstream、网关启用 vs 旁路"
+          when: "n=200 采样、50 次预热后"
+          then: "G1 ttft_delta p95 < 5ms 且 p99 < 12ms"
+        - id: "AC-VETO-013-02"
+          given: "请求侧端到端（含 egress-secret-scan 全量扫描）"
+          when: "按 body 分档"
+          then: "G2 p95：≤8KB → <3ms；≤64KB → <10ms；≤512KB → <40ms"
+        - id: "AC-VETO-013-03"
+          given: "单 checker 执行上限"
+          when: "G3 body 分档（≤8KB→20ms / ≤64KB→50ms / ≤512KB→120ms）"
+          then: "超时 → verdict=error → action=block；G-BENCH 报告 512KB 档 p99_scan 且须满足 p99_scan < G3 × 0.6，否则触发 ADR 上调"
+        - id: "AC-VETO-013-04"
+          given: "回退判定"
+          when: "同一 runner 连续 n=200 次"
+          then: "p95_pr > p95_base × 1.2 或 p95_pr − p95_base > 2ms → 判回退、阻断合并；p95_base 取 main 分支最近一次绿色基准（存 bench/baseline.json）"
+        - id: "AC-VETO-013-05"
+          given: "G2 vs G3 交叠"
+          when: "耗时落在 [G2 p95, G3) 区间"
+          then: "计入 G2 回退信号但不触发 G3 超时，请求正常放行（两门口径独立）"
+      edge_cases:
+        - "慢开发机大请求接近 G3 上限 → 已知运行时行为，登记不粉饰（见 AC-VETO-013-03 尾条件）"
+      test_coverage_requirements:
+        unit: false
+        integration: false
+        e2e: true
+
+    # ── E2E 端到端
+    - id: "REQ-VETO-014"
+      description: "端到端演练（受管路径过闸 + Delphi 路径 + fail-closed 场景 1/2/3/4 + doctor 漂移）"
+      priority: "MUST"
+      acceptance_criteria:
+        - id: "AC-VETO-014-01"
+          given: "harness 遍历 MANAGED_CONFIG_IDS 每条接入路径"
+          when: "各回放 ≥1 条探测请求经 mock-upstream"
+          then: "evidence 中出现对应 client + provider_id 记录（时间窗口内）；任一条无记录 → 该验收 FAIL（探测由 harness 经该客户端适配器发起，非 doctor 自查）"
+        - id: "AC-VETO-014-02"
+          given: ".delphi-config.json 覆写生效"
+          when: "触发一次 Delphi 请求"
+          then: "evidence 中可观测 client=\"delphi\""
+        - id: "AC-VETO-014-03"
+          given: "含凭据的请求命中 egress-secret-scan"
+          when: "客户端发起"
+          then: "客户端收 502 llmveto:rejected；evidence action_taken=blocked_before_forward；mock-upstream 未收到该请求（零出境证明）"
+        - id: "AC-VETO-014-04"
+          given: "流式场景 4：chunk N（N ≥ 2）命中"
+          when: "网关执行终止流"
+          then: "前 N-1 chunk 客户端确实收到 + event:error 载荷 {\"error\":{\"code\":\"llmveto:veto-mid-stream\",\"delivered_chunks\":N-1}} + 连接关闭 + evidence action_taken=terminated_after_delivery + response_delivered={partial:true, delivered_chunks:N-1}"
+        - id: "AC-VETO-014-05"
+          given: "流式场景 3：chunk 1 即命中且 checker 在 tee 前返回"
+          when: "网关执行 block"
+          then: "客户端收到 0 个 data chunk + event:error + 连接关闭 + response_delivered={partial:false, delivered_chunks:0}（等同非流式响应级阻断，验证 M2『零缓冲下场景 3 可达』主张）"
+        - id: "AC-VETO-014-06"
+          given: "把受管枚举内任一 provider 的 baseURL 改走"
+          when: "执行 doctor"
+          then: "必须 FAIL 并输出被改走的条目 id"
+        - id: "AC-VETO-014-07"
+          given: "演练产生的证据链"
+          when: "执行 llmveto verify"
+          then: "返回 ok；篡改任一条中间记录 → verify 报 first_bad_seq"
+      edge_cases:
+        - "半截 tool-call 已被 agent 执行 → 属 v1 未覆盖范围（T2a 登记表）"
+      security_considerations:
+        - "所有阻断/E2E 载体 = mock-upstream；不依赖 v2 evil-relay"
+      test_coverage_requirements:
+        unit: false
+        integration: true
+        e2e: true
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Design decisions（源自 .sprint-state/decisions.md DR-005..DR-010 + R1 冻结件）
+  # ─────────────────────────────────────────────────────────────────────────
+  design_decisions:
+    - id: "DD-VETO-001"
+      description: "术语两层分离：checker 只产出 verdict(clean|finding|error)；策略引擎产出 action(allow|warn|redact|block)"
+      rationale: "避免历史『expected.verdict: block』类术语污染；纯函数与策略解耦，checker 可表驱动单测"
+      alternatives_considered:
+        - "单层（checker 直接产 action）：无法通过 AC-VETO-003-04 纯函数约束"
+    - id: "DD-VETO-002"
+      description: "零缓冲 + 终止流：流式已转发字节不可撤回；『零缓冲』精化为『不持有 >1 个 chunk，被判定 chunk 存在 ≤1 chunk 瞬态持有窗口』"
+      rationale: "威胁模型认定『网关变慢 → 用户绕过网关』概率高于『半截字节泄漏』（性能即安全属性）；块级门保证不反向放宽为整段缓冲"
+      alternatives_considered:
+        - "1-chunk 缓冲窗口 + 真阻断：延迟敏感，会推动用户绕过"
+        - "整段缓冲后判定：TTFT 崩溃"
+    - id: "DD-VETO-003"
+      description: "受管配置封闭枚举 MANAGED_CONFIG_IDS 替换『全部流量过闸』不可证伪命题"
+      rationale: "使 doctor 与 E2E 断言可判定；枚举外路径明确登记为未覆盖暴露面"
+    - id: "DD-VETO-004"
+      description: "mock-upstream 进 v1；evil-relay 归 v2；v1 验收不依赖 v2/v3"
+      rationale: "分期纪律：v1 验收只能引用 v1 交付物；缺口走 REQ §v1 残余风险登记表"
+    - id: "DD-VETO-005"
+      description: "evidence 信任边界：SHA-256 链不抵抗本机同权限对手整链重写；llmveto verify 提入 v1"
+      rationale: "『可审计』承诺必须给出 v1 内的校验者；无外部锚定则不假装抗强对手"
+    - id: "DD-VETO-006"
+      description: "三台独立性能门 G1 / G2 / G3；G3 按 body 分档，超时=拒绝"
+      rationale: "TTFT 是响应指标；出站扫描发生在请求转发前，不进 TTFT。分门避免『扫描很慢但 TTFT 全绿』的口径混用"
+    - id: "DD-VETO-007"
+      description: "v1 策略映射为内置固定表（用户不可配）；可配置 + 全局 > 项目级 + redact 属 v3"
+      rationale: "v1 只交付可达的最小闭环；redact 在流式上物理不可执行"
+    - id: "DD-VETO-008"
+      description: "扫描单元排除标准认证头（Authorization/x-api-key/api-key/x-goog-api-key/Proxy-Authorization/Cookie）"
+      rationale: "这些头的值天然命中凭据模式，若入扫描则 benign 流量必然命中 → 阻断类 FP=0 不可达；副作用（header 路径盲区）已在 T1b 行登记"
+    - id: "DD-VETO-009"
+      description: "运行时仅用 Node 标准库 API；官方分发为 Bun compile 单二进制"
+      rationale: "'兼容 Node ≥ 18' 指源码可由用户自带 Node 运行；不承诺单二进制；两条承诺不混用"
+    - id: "DD-VETO-010"
+      description: "单一脱敏咽喉点 redactSink()；body_capture 默认 metadata_only"
+      rationale: "缓解『全量留存本身构成 T1b 本地聚集风险』；开启 full 时文档明示加密/备份责任"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # API contracts
+  # ─────────────────────────────────────────────────────────────────────────
+  api_contracts:
+    - endpoint: "POST /v1/chat/completions (或客户端配置的任意 baseURL 路径)"
+      description: "反向代理入口：转发到 upstream 前经 egress-secret-scan；响应经策略映射后按场景 1/2/3/4 处理"
+      request:
+        headers:
+          Authorization: "Bearer <token> — 排除出扫描单元（DD-VETO-008）"
+          x-api-key: "同上"
+        body:
+          model: "string"
+          messages: "array"
+          stream: "bool (optional)"
+      response:
+        success_non_stream:
+          status: 200
+          body: "upstream 原样 JSON（可能伴随 evidence warn）"
+        success_stream:
+          status: 200
+          body: "SSE 流，per-chunk tee"
+        failure_request_side_block:
+          status: 502
+          body:
+            error: "llmveto:rejected"
+        failure_stream_terminated:
+          status: "200 (headers 已发送，不可撤回)"
+          sse_event:
+            type: "error"
+            data: '{"error":{"code":"llmveto:veto-mid-stream","delivered_chunks":<N>}}'
+          action: "关闭连接"
+
+    - endpoint: "CLI: llmveto start | stop | status | doctor | verify"
+      description: "5 命令冻结集合（REQ-VETO-008）"
+      request:
+        cli_args:
+          doctor: "[--write-managed-config]"
+          verify: "[-f <evidence.jsonl>]"
+      response:
+        success:
+          exit_code: 0
+          stdout: "摘要，无 body（redactSink 咽喉点）"
+        failure:
+          exit_code: "非 0"
+          stdout: "doctor 输出条目 id / verify 输出 first_bad_seq / 违约字段路径"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Non-goals（引 REQ §非目标，v1 明确不承诺）
+  # ─────────────────────────────────────────────────────────────────────────
+  non_goals:
+    - "阻止上游记录/训练数据（理论不可行；金丝雀 v2 才有阳性检测）"
+    - "模型路由 / 账号池 / 计费系统"
+    - "通用 WAF / 杀毒"
+    - "检出所有条件投递（T2d 未缓解）"
+    - "防『完全沦陷的 agent 自改配置绕过网关』（best-effort 防绕过）"
+    - "防本机同权限对手抹除/重写证据链"
+    - "承诺流式已转发字节的撤回"
+    - "v1 交付 redact"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # v1 residual risk register pointer（REQ §v1 残余风险登记表的镜像）
+  # ─────────────────────────────────────────────────────────────────────────
+  residual_risks_v1:
+    unmitigated:
+      - "T1a prompt/上下文被记录转售（金丝雀属 v2）"
+      - "T2a tool-call 篡改/恶意代码注入（RCE 级）"
+      - "T2b 响应夹带 prompt 注入"
+      - "T2d 条件投递（潜伏触发）"
+      - "T3b 量化降级"
+      - "T3c 路由波动"
+      - "T4a/b/c/d usage 虚报/假缓存/隐藏系统提示/倍率操纵（仅取证）"
+    partial:
+      - "T1b 凭据窃取：egress-secret-scan 仅覆盖模式化密钥；标准认证头路径为盲区"
+      - "T2c 隐形字符水印：跨 chunk 滚动窗口，NFKC 归一化后同形变体不覆盖"
+      - "T3a 模型偷换：仅字段一致性，对回写一致的定向替换无效"
+      - "P1 模型目录投毒：OPENCODE_MODELS_URL 锁本地镜像，不校验镜像内容真伪"
+      - "P2 配置劫持绕过：doctor 漂移检测限枚举内；审计缺口检测属 v3"
+      - "P3 evidence 明文本地聚集：body_capture 默认 metadata_only；full 模式责任在用户"
+    doc_source: "docs/issues/1-req-threat-model.md §v1 残余风险登记表"

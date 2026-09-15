@@ -1,0 +1,307 @@
+{
+  "_schema_version": 1,
+  "sprint_id": "sprint-20260914-49",
+  "specification_ref": "specification.yaml",
+  "generated_at": "2026-09-15",
+  "review_gate": {
+    "r1_requirements_reviewed": ".sprint-state/review/requirements-reviewed.json",
+    "r2_delphi_reviewed": ".sprint-state/review/delphi-reviewed.json",
+    "consensus_percent": 100,
+    "threshold_percent": 91
+  },
+  "notes": "1 slice ↔ 1 REQ，按 architecture.yaml 分层依赖拓扑排序：shared → checkers → policy → evidence → adapters → gateway → cli → 测试夹具与 E2E。ralph-loop 按此序 dispatch subagent。",
+  "slices": [
+    {
+      "id": "SL-01",
+      "req": "REQ-VETO-001",
+      "title": "前置决策门 G-LIC / G-FP / G-BENCH 关闭",
+      "layer": "docs + tooling",
+      "files": [
+        "docs/licenses.md",
+        "docs/adr/ (若 G-BENCH 触发阈值 ADR)",
+        "tests/fixtures/adversarial/*.yaml (fpverify 离线产物)",
+        "bench/baseline.json (骨架)"
+      ],
+      "depends_on": [],
+      "verify": [
+        "docs/licenses.md 存在且每条复用条目有许可结论",
+        "CI 依赖树 grep 无 Python 依赖",
+        "bench/baseline.json 存在（骨架可先空值 + TODO）"
+      ],
+      "priority": "MUST"
+    },
+    {
+      "id": "SL-02",
+      "req": "REQ-VETO-003",
+      "title": "checker: egress-secret-scan",
+      "layer": "checkers",
+      "files": [
+        "src/shared/types.ts (ScanUnit / ScanWindow / CheckerResult 定义)",
+        "src/checkers/egress-secret-scan.ts",
+        "tests/unit/checkers/egress-secret-scan.test.ts"
+      ],
+      "depends_on": ["SL-01"],
+      "verify": [
+        "npx vitest run tests/unit/checkers/egress-secret-scan.test.ts",
+        "npx vitest run tests/unit/architecture-boundaries.test.ts (checker 不 import gateway/evidence/policy)"
+      ],
+      "covers_ac": ["AC-VETO-003-01","AC-VETO-003-02","AC-VETO-003-03","AC-VETO-003-04"],
+      "priority": "MUST"
+    },
+    {
+      "id": "SL-03",
+      "req": "REQ-VETO-004",
+      "title": "checker: invisible-unicode-scan (跨 chunk 滚动窗口)",
+      "layer": "checkers",
+      "files": [
+        "src/checkers/invisible-unicode-scan.ts",
+        "src/shared/scan-window.ts",
+        "tests/unit/checkers/invisible-unicode-scan.test.ts",
+        "tests/fixtures/threats/T2c-*.yaml (含跨 chunk 切分样本)"
+      ],
+      "depends_on": ["SL-02"],
+      "verify": [
+        "npx vitest run tests/unit/checkers/invisible-unicode-scan.test.ts",
+        "至少 1 个把 U+200B 的 E2 80 8B 拆两片的 fixture 通过"
+      ],
+      "covers_ac": ["AC-VETO-004-01","AC-VETO-004-02","AC-VETO-004-03","AC-VETO-004-04"],
+      "priority": "MUST"
+    },
+    {
+      "id": "SL-04",
+      "req": "REQ-VETO-005",
+      "title": "checker: model-label-consistency",
+      "layer": "checkers",
+      "files": [
+        "src/checkers/model-label-consistency.ts",
+        "tests/unit/checkers/model-label-consistency.test.ts",
+        "tests/fixtures/threats/T3a-*.yaml"
+      ],
+      "depends_on": ["SL-02"],
+      "verify": [
+        "npx vitest run tests/unit/checkers/model-label-consistency.test.ts"
+      ],
+      "covers_ac": ["AC-VETO-005-01","AC-VETO-005-02","AC-VETO-005-03"],
+      "priority": "MUST"
+    },
+    {
+      "id": "SL-05",
+      "req": "REQ-VETO-006",
+      "title": "策略引擎：内置固定 verdict → action 映射表",
+      "layer": "policy",
+      "files": [
+        "src/policy/mapping.ts",
+        "src/policy/engine.ts",
+        "tests/unit/policy/engine.test.ts"
+      ],
+      "depends_on": ["SL-02","SL-03","SL-04"],
+      "verify": [
+        "npx vitest run tests/unit/policy/engine.test.ts",
+        "grep 断言：v1 映射表内不出现 'redact'"
+      ],
+      "covers_ac": ["AC-VETO-006-01","AC-VETO-006-02","AC-VETO-006-03","AC-VETO-006-04"],
+      "priority": "MUST"
+    },
+    {
+      "id": "SL-06",
+      "req": "REQ-VETO-007",
+      "title": "evidence store：append-only JSONL + SHA-256 链",
+      "layer": "evidence",
+      "files": [
+        "src/evidence/schema.ts (契约 #4 字段表)",
+        "src/evidence/writer.ts (单写者 + fsync best-effort)",
+        "src/evidence/chain.ts (record_hash = H(prev_hash ‖ canonical_json))",
+        "src/evidence/redact-sink.ts",
+        "tests/unit/evidence/*.test.ts"
+      ],
+      "depends_on": ["SL-02"],
+      "verify": [
+        "npx vitest run tests/unit/evidence",
+        "契约 #4 必填字段全断言（缺任一必填字段 → 抛错）",
+        "崩溃残留测试：末行半行丢弃"
+      ],
+      "covers_ac": ["AC-VETO-007-01","AC-VETO-007-02","AC-VETO-007-03","AC-VETO-007-04","AC-VETO-007-05"],
+      "priority": "MUST"
+    },
+    {
+      "id": "SL-07",
+      "req": "REQ-VETO-010",
+      "title": "llmveto verify：链完整性 + schema 断言",
+      "layer": "cli + evidence",
+      "files": [
+        "src/evidence/verify.ts",
+        "src/cli/verify.ts",
+        "tests/unit/evidence/verify.test.ts"
+      ],
+      "depends_on": ["SL-06"],
+      "verify": [
+        "npx vitest run tests/unit/evidence/verify.test.ts",
+        "fixture：正常链 → ok；中间改写 → first_bad_seq；schema 违约 → 列出路径"
+      ],
+      "covers_ac": ["AC-VETO-010-01","AC-VETO-010-02","AC-VETO-010-03","AC-VETO-010-04"],
+      "priority": "MUST"
+    },
+    {
+      "id": "SL-08",
+      "req": "REQ-VETO-009",
+      "title": "接入适配器：OpenCode + Delphi，MANAGED_CONFIG_IDS 封闭枚举",
+      "layer": "adapters",
+      "files": [
+        "src/adapters/opencode.ts",
+        "src/adapters/delphi.ts",
+        "src/adapters/index.ts (导出类型 + 枚举)",
+        "tests/unit/adapters/*.test.ts"
+      ],
+      "depends_on": ["SL-02"],
+      "verify": [
+        "npx vitest run tests/unit/adapters",
+        "grep 断言：每适配器 export const MANAGED_CONFIG_IDS: readonly string[]"
+      ],
+      "covers_ac": ["AC-VETO-009-01","AC-VETO-009-02","AC-VETO-009-03"],
+      "priority": "MUST"
+    },
+    {
+      "id": "SL-09",
+      "req": "REQ-VETO-002",
+      "title": "反代核：baseURL 形态 + SSE tee + 扫描单元 + veto-mid-stream",
+      "layer": "gateway",
+      "files": [
+        "src/gateway/server.ts (127.0.0.1 硬绑)",
+        "src/gateway/scan-unit.ts",
+        "src/gateway/sse-tee.ts (per-chunk 先扫描后转发)",
+        "src/gateway/upstream-inject.ts",
+        "src/gateway/veto-stream.ts (event:error + delivered_chunks)",
+        "tests/unit/gateway/*.test.ts"
+      ],
+      "depends_on": ["SL-05","SL-06","SL-08"],
+      "verify": [
+        "npx vitest run tests/unit/gateway",
+        "配置 0.0.0.0 → 启动失败",
+        "认证头不出现在扫描单元（AC-VETO-002-06 单测）"
+      ],
+      "covers_ac": ["AC-VETO-002-01","AC-VETO-002-02","AC-VETO-002-03","AC-VETO-002-04","AC-VETO-002-05","AC-VETO-002-06"],
+      "priority": "MUST"
+    },
+    {
+      "id": "SL-10",
+      "req": "REQ-VETO-011",
+      "title": "mock-upstream：纯 TS 声明式脚本回放",
+      "layer": "test-utils",
+      "files": [
+        "tests/utils/mock-upstream.ts",
+        "tests/utils/fixture-loader.ts",
+        "tests/unit/utils/mock-upstream.test.ts"
+      ],
+      "depends_on": ["SL-02"],
+      "verify": [
+        "npx vitest run tests/unit/utils/mock-upstream.test.ts",
+        "自定义 chunk 边界：把 U+200B 三字节拆两片可用"
+      ],
+      "covers_ac": ["AC-VETO-011-01","AC-VETO-011-02","AC-VETO-011-03"],
+      "priority": "MUST"
+    },
+    {
+      "id": "SL-11",
+      "req": "REQ-VETO-008",
+      "title": "CLI：start / stop / status / doctor（4 命令；verify 由 SL-07 已交付，此处装配）",
+      "layer": "cli",
+      "files": [
+        "src/cli/index.ts (composition root)",
+        "src/cli/start.ts",
+        "src/cli/stop.ts",
+        "src/cli/status.ts",
+        "src/cli/doctor.ts (4 检查项封闭枚举)",
+        "src/index.ts (入口，替换现有 stub)",
+        "tests/unit/cli/*.test.ts"
+      ],
+      "depends_on": ["SL-07","SL-08","SL-09"],
+      "verify": [
+        "npx vitest run tests/unit/cli",
+        "grep 断言：不注册 report / canary 等 stub",
+        "doctor 遍历 MANAGED_CONFIG_IDS；experimental.policies 写入失败仅告警"
+      ],
+      "covers_ac": ["AC-VETO-008-01","AC-VETO-008-02","AC-VETO-008-03","AC-VETO-008-04"],
+      "priority": "MUST"
+    },
+    {
+      "id": "SL-12",
+      "req": "REQ-VETO-012",
+      "title": "威胁样本库 + benign 语料 + 双矩阵",
+      "layer": "test-fixtures",
+      "files": [
+        "tests/fixtures/threats/T1b/*.yaml (≥3)",
+        "tests/fixtures/threats/T2c/*.yaml (≥3，含跨 chunk)",
+        "tests/fixtures/threats/T3a/*.yaml (≥3)",
+        "tests/fixtures/benign/*.yaml (≥50，含 ≥1 认证头 benign)",
+        "tests/fixtures/false-positives.json",
+        "tests/integration/detection-matrix.test.ts",
+        "tests/integration/false-positive-matrix.test.ts"
+      ],
+      "depends_on": ["SL-02","SL-03","SL-04","SL-10"],
+      "verify": [
+        "检出矩阵：v1 门槛 fixture 集内检出率 = 100%",
+        "误报矩阵：model-label-consistency FP ≤ 2%；egress-secret-scan + invisible-unicode-scan FP = 0",
+        "认证头 benign 子集必然通过 AC-VETO-003-02"
+      ],
+      "covers_ac": ["AC-VETO-012-01","AC-VETO-012-02","AC-VETO-012-03","AC-VETO-012-04"],
+      "priority": "MUST"
+    },
+    {
+      "id": "SL-13",
+      "req": "REQ-VETO-013",
+      "title": "性能三台门 G1/G2/G3 + bench/baseline.json",
+      "layer": "bench",
+      "files": [
+        "bench/g1-ttft.ts",
+        "bench/g2-request-gate.ts",
+        "bench/g3-checker-timeout.ts",
+        "bench/baseline.json",
+        "bench/regression-formula.ts",
+        ".github/workflows/bench.yml (或等价 CI 步骤)"
+      ],
+      "depends_on": ["SL-09","SL-10","SL-12"],
+      "verify": [
+        "预热 50 次 + n=200/档 + 报告 p50/p95/p99",
+        "G1 p95<5ms && p99<12ms；G2 三档 3/10/40ms；G3 分档超时→block 用例",
+        "512KB 档 p99_scan < G3 × 0.6，否则触发 ADR 记录"
+      ],
+      "covers_ac": ["AC-VETO-013-01","AC-VETO-013-02","AC-VETO-013-03","AC-VETO-013-04","AC-VETO-013-05"],
+      "priority": "MUST"
+    },
+    {
+      "id": "SL-14",
+      "req": "REQ-VETO-014",
+      "title": "端到端演练：受管路径过闸 + fail-closed 场景 1/2/3/4 + doctor 漂移",
+      "layer": "e2e",
+      "files": [
+        "tests/e2e/managed-path-probe.test.ts",
+        "tests/e2e/delphi-path.test.ts",
+        "tests/e2e/fail-closed-request.test.ts",
+        "tests/e2e/fail-closed-stream-scenario3.test.ts",
+        "tests/e2e/fail-closed-stream-scenario4.test.ts",
+        "tests/e2e/doctor-drift.test.ts",
+        "tests/e2e/verify-chain.test.ts"
+      ],
+      "depends_on": ["SL-07","SL-09","SL-10","SL-11","SL-12","SL-13"],
+      "verify": [
+        "harness 遍历 MANAGED_CONFIG_IDS 每条回放 ≥1 探测：evidence 出现 client+provider_id",
+        "Delphi 覆写 → client='delphi' 可观测",
+        "请求侧阻断：mock-upstream 未收到请求（零出境证明）",
+        "流式场景 4：前 N-1 已送达 + event:error + terminated_after_delivery",
+        "流式场景 3：delivered_chunks=0",
+        "doctor 漂移：FAIL + 条目 id",
+        "verify：正常 ok；篡改 → first_bad_seq"
+      ],
+      "covers_ac": ["AC-VETO-014-01","AC-VETO-014-02","AC-VETO-014-03","AC-VETO-014-04","AC-VETO-014-05","AC-VETO-014-06","AC-VETO-014-07"],
+      "priority": "MUST"
+    }
+  ],
+  "regression_gates": {
+    "per_slice": ["npx vitest run", "npx tsc --noEmit", "npx xp-gate check --all"],
+    "architecture": ["tests/unit/architecture-boundaries.test.ts (TEST 契约 #2 双重断言)"]
+  },
+  "traceability": {
+    "uncovered_reqs": [],
+    "note": "14 个 REQ ↔ 14 个 slice 一一对应；BUILD-ENTRY-CONTRACT 断言 slices ↔ REQ 全覆盖 specification.yaml.requirements"
+  }
+}

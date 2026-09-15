@@ -202,15 +202,16 @@ export async function handleChatCompletions(
       yield pending;
     }
   }
-  const actionTaken: ActionTaken = terminated ? "terminated_after_delivery" : "allowed";
+  // 用 getter 而不是快照：sse() 是惰性 generator，调用方 server.ts 在 `for await` 完成后才写 evidence；
+  // 届时 actionTaken / deliveredChunks / scenario 需要反映终止时的真值（AC-VETO-014-05 场景 4）。
   return {
     status: 200,
     body: "",
     sse: sse(),
-    actionTaken,
+    get actionTaken(): ActionTaken { return terminated ? "terminated_after_delivery" : "allowed"; },
     findings: allFindings,
-    deliveredChunks,
-    scenario: pickScenario({ side: "response", transport: "stream", deliveredChunks }),
+    get deliveredChunks(): number { return deliveredChunks; },
+    get scenario(): BehaviorScenario { return pickScenario({ side: "response", transport: "stream", deliveredChunks }); },
   };
 }
 

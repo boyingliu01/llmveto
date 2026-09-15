@@ -1,0 +1,5 @@
+{
+  "generated_at": "2026-09-15T00:00:00.000Z",
+  "note": "AC-VETO-012-04：人工裁决记录。v1 门槛内 FP=0（阻断类）；告警类 model-label-consistency ≤ 2%。若 CI 检出 FP，追加至此文件并留裁决原因。",
+  "fps": []
+}

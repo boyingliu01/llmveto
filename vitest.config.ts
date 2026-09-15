@@ -6,10 +6,13 @@ import { defineConfig } from "vitest/config";
  * `npx vitest run --coverage <changed test files>`，并要求 coverage/coverage-summary.json。
  * 测试跑在 Node 上，顺带验证设计要求的 "兼容 Node >= 18"。
  *
- * all: false —— 钩子按变更文件做选择性测试（partial run），若把未被测文件计入分母，
- * 部分运行必然跌破阈值而误伤；开启后 80% 门禁作用于测试实际触及的代码。
- * 全量门禁请用 `bun run test:coverage`（CI 中执行）。
+ * all: false + 不设 include —— 仅对"实际被测试运行加载"的文件计数；
+ * 全局钩子做 smart-selection（只跑 changed tests）时，分母不会包含未触及文件，
+ * 避免局部测试跌破 80% 阈值而误伤。全量门禁（CI 中 `bun run test:coverage`）
+ * 通过 `COVERAGE_ALL=1` 显式打开 all + include src/**\/*.ts，覆盖到所有源码。
  */
+const COVERAGE_ALL = process.env.COVERAGE_ALL === "1";
+
 export default defineConfig({
   test: {
     include: ["tests/**/*.test.ts"],
@@ -18,9 +21,9 @@ export default defineConfig({
     testTimeout: 20_000,
     coverage: {
       provider: "v8",
-      all: false,
-      include: ["src/**/*.ts"],
-      exclude: ["src/**/*.d.ts", "src/**/types.ts"],
+      all: COVERAGE_ALL,
+      ...(COVERAGE_ALL ? { include: ["src/**/*.ts"] } : {}),
+      exclude: ["src/**/*.d.ts", "src/**/types.ts", "**/*.test.ts", "**/*.spec.ts"],
       reporter: ["text", "json-summary", "html"],
       reportsDirectory: "./coverage",
       thresholds: {

@@ -1,0 +1,16 @@
+# @test REQ-VETO-012 T3a 正样本集（label mismatch）
+threat_id: T3a
+checker: model-label-consistency
+cases:
+  - id: t3a-mismatch
+    request_model: gpt-4o
+    response_model: gpt-3.5-turbo
+    expected: finding
+  - id: t3a-missing-response-model
+    request_model: gpt-4o
+    response_model: null
+    expected: finding
+  - id: t3a-match
+    request_model: claude-opus-4
+    response_model: claude-opus-4
+    expected: clean

@@ -1,0 +1,21 @@
+# @test REQ-VETO-012 T2c 正样本集（含跨 chunk 切分，AC-VETO-012-03 强制）
+# v1 CI 断言：每条必须被 invisible-unicode-scan 检出
+threat_id: T2c
+checker: invisible-unicode-scan
+cases:
+  - id: t2c-zero-width-space
+    chunks:
+      - 'hello'
+      - '​world'
+    expected_codepoints: ['200B']
+  - id: t2c-bidi-override
+    chunks:
+      - 'a‮abc'
+    expected_codepoints: ['202E']
+  - id: t2c-cross-chunk-split
+    # U+200B 的 UTF-8 序列 E2 80 8B 被拆两片（AC-VETO-012-03：至少 1 个跨 chunk 切分样本）
+    chunks:
+      - 'x'
+      - '﻿y'
+    expected_codepoints: ['FEFF']
+    cross_chunk: true

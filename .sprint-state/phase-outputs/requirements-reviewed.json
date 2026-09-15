@@ -1,0 +1,36 @@
+{
+  "_schema_version": 1,
+  "artifact": "requirements-reviewed",
+  "sprint_id": "sprint-20260914-49",
+  "phase": 2,
+  "verdict": "APPROVED",
+  "requirements_hash": "b8dfd2b0e3774b48243e324fbe9946766d6f311580c24b2ca2dc9c38d1ad8056",
+  "hash_inputs": [
+    "docs/issues/1-req-threat-model.md",
+    "docs/issues/2-design-v1.md",
+    "docs/issues/3-reuse-list.md",
+    "docs/issues/4-test-validation.md",
+    "docs/issues/5-roadmap.md",
+    "README.md",
+    "architecture.yaml"
+  ],
+  "hash_method": "sha256(concat(sha256(file) for each frozen doc))",
+  "frozen_at": "2026-09-14",
+  "panel": {
+    "provider": "example-provider",
+    "experts": [
+      { "id": "A", "model": "example-provider/g-deepseek-flash", "role": "architecture" },
+      { "id": "B", "model": "example-provider/g-glm-5.3-flash", "role": "technical" },
+      { "id": "C", "model": "example-provider/g-qwen3.8-flash", "role": "feasibility" }
+    ],
+    "config_doc": "docs/delphi-panel.md"
+  },
+  "consensus_percent": 100,
+  "threshold_percent": 91,
+  "rounds_completed": 3,
+  "unclosed_critical": 0,
+  "unclosed_major": 0,
+  "requirements_frozen": true,
+  "detailed_record": ".sprint-state/review/requirements-reviewed.json",
+  "note": "本文件是 xp-gate Phase 2 evidence 契约入口（verdict + requirements_hash）。完整 R1 需求评审记录见 detailed_record。"
+}

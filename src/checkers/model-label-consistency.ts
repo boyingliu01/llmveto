@@ -51,13 +51,6 @@ export const modelLabelConsistency: NonStreamChecker = (unit: ScanUnit): Checker
   return { verdict: "clean", evidence: [] };
 };
 
-/**
- * 流式：首块 vs 完成块 model 字段（AC-VETO-005-01 + edge_case：任一块不一致即 finding）。
- * 每次 runStream 仅对当前 chunk 的 meta 做检查；不跨 chunk 累积（网关在 tee 层
- * 对每 chunk 都调用，任一次 finding 即视为整体 finding，与 policy 层严者胜规则一致）。
- */
-export const modelLabelConsistencyStream = modelLabelConsistency;
-
 export const MODEL_LABEL_CONSISTENCY_SPEC = {
   id: CHECKER_ID,
   side: "response",

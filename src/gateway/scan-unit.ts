@@ -1,4 +1,4 @@
-import type { Direction, ScanUnit, Transport } from "../shared/types.ts";
+import type { ScanUnit, Transport } from "../shared/types.ts";
 
 /**
  * @test REQ-VETO-002
@@ -97,8 +97,4 @@ export function buildResponseScanUnit(
     }
   }
   return { direction: "response", transport, text: parts.join(""), meta };
-}
-
-export function directionToSide(d: Direction): "request" | "response" {
-  return d;
 }

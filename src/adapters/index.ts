@@ -14,12 +14,6 @@ export interface ConfigId {
   readonly description: string;
 }
 
-export interface ManagedProbe {
-  readonly config_id: string;
-  /** 探测请求：网关侧收到的 model_requested 应包含此值。 */
-  readonly expected_model: string;
-}
-
 export interface Adapter {
   readonly name: "opencode" | "delphi";
   readonly MANAGED_CONFIG_IDS: readonly ConfigId[];

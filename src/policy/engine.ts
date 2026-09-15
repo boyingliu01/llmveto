@@ -24,7 +24,7 @@ const SEVERITY: Record<Action, number> = { allow: 0, warn: 1, redact: 1, block: 
 
 export function decide(inputs: readonly PolicyInput[]): PolicyDecision {
   let worst: Action = "allow";
-  const reasons: PolicyDecision["reasons"] = [];
+  const reasons: { checker: string; verdict: CheckerResult["verdict"]; action: Action }[] = [];
   for (const { checkerId, safetyClass, result } of inputs) {
     const action = mapBySpec({ id: checkerId, safetyClass }, result.verdict);
     reasons.push({ checker: checkerId, verdict: result.verdict, action });

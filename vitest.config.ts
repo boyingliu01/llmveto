@@ -15,7 +15,7 @@ const COVERAGE_ALL = process.env.COVERAGE_ALL === "1";
 
 export default defineConfig({
   test: {
-    include: ["tests/**/*.test.ts"],
+    include: ["tests/**/*.test.ts", "bench/**/*.test.ts"],
     environment: "node",
     globals: false,
     testTimeout: 20_000,

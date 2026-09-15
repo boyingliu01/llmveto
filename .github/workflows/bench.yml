@@ -1,0 +1,38 @@
+name: bench
+
+# G-BENCH 性能三台门（REQ-VETO-013）
+# - PR 与 main push 各跑一次
+# - 与 bench/baseline.json 中的 p95 比较；命中回退公式 -> 阻断合并
+# - 512KB 档 p99_scan >= G3 * 0.6 触发 ADR 提示
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: latest }
+      - run: bun install --frozen-lockfile
+      - name: Run G1 TTFT
+        run: bun run bench/g1-ttft.ts | tee bench-g1.log
+      - name: Run G2 request gate
+        run: bun run bench/g2-request-gate.ts | tee bench-g2.log
+      - name: Run G3 checker timeout
+        run: bun run bench/g3-checker-timeout.ts | tee bench-g3.log
+      - name: Regression check vs baseline
+        run: bun run bench/check-regression.ts
+      - name: Upload bench logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-logs
+          path: bench-g*.log

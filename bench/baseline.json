@@ -1,43 +1,43 @@
 {
-  "_comment": "G-BENCH 前置门骨架。SL-13 首次实测后回填真实值；未回填前 v1 门槛仍按 DESIGN §性能预算。",
-  "schema_version": 1,
-  "generated_at": null,
-  "runner": null,
-  "platform": null,
-  "notes": [
-    "p95_base 语义：main 分支最近一次绿色基准。回退公式见 TEST §3。",
-    "G-BENCH 前置门须同时报告 512KB 档 G3 口径的 p99_scan，且须满足 p99_scan < G3 × 0.6，否则触发 ADR 上调 G3 分档值。"
-  ],
-  "gates": {
-    "G1_ttft_delta": {
-      "threshold_p95_ms": 5,
-      "threshold_p99_ms": 12,
-      "measured_p50_ms": null,
-      "measured_p95_ms": null,
-      "measured_p99_ms": null,
-      "sample_size": null
-    },
-    "G2_request_gate_delta": {
-      "tiers": {
-        "le_8kb":   { "threshold_p95_ms": 3,  "measured_p50_ms": null, "measured_p95_ms": null, "measured_p99_ms": null },
-        "le_64kb":  { "threshold_p95_ms": 10, "measured_p50_ms": null, "measured_p95_ms": null, "measured_p99_ms": null },
-        "le_512kb": { "threshold_p95_ms": 40, "measured_p50_ms": null, "measured_p95_ms": null, "measured_p99_ms": null }
-      }
-    },
-    "G3_checker_timeout": {
-      "tiers": {
-        "le_8kb":   { "budget_ms": 20 },
-        "le_64kb":  { "budget_ms": 50 },
-        "le_512kb": { "budget_ms": 120, "measured_p99_scan_ms": null, "must_satisfy_p99_below_ms": 72 }
-      }
-    }
-  },
-  "regression_formula": {
-    "n": 200,
+  "_schema_version": 1,
+  "_purpose": "AC-VETO-013-04 回退公式基准：p95_base 取本文件对应 runner 的 p95_ms 字段。CI 中 bench 每次运行按同 runner 采样 n=200 后调用 regression-formula.isRegression({p95_base_ms, p95_pr_ms}) 判定；regressed=true → 阻断合并。",
+  "_measured_at": "2026-09-15",
+  "_measured_on": "local dev (Node 20.x, Ryzen mobile CPU)",
+  "_refresh_policy": "main 分支绿色 CI 后自动 commit 覆盖；或手动 `bun run bench:record`（Phase 5 前提供）。",
+  "g1_ttft_delta_ms": {
+    "runner": "bench/g1-ttft.ts",
+    "sample_size": 200,
     "warmup": 50,
-    "block_if": [
-      "p95_pr > p95_base * 1.2",
-      "p95_pr - p95_base > 2 (ms)"
+    "p50": 0.001,
+    "p95": 0.002,
+    "p99": 0.005,
+    "gate_pass": { "p95_lt_ms": 5, "p99_lt_ms": 12 }
+  },
+  "g2_request_gate_ms": {
+    "runner": "bench/g2-request-gate.ts",
+    "sample_size": 200,
+    "warmup": 50,
+    "tiers": [
+      { "body_kb": 8,   "p50": 0.01, "p95": 0.01, "p99": 0.03, "gate_p95_lt_ms": 3 },
+      { "body_kb": 64,  "p50": 0.04, "p95": 0.05, "p99": 0.07, "gate_p95_lt_ms": 10 },
+      { "body_kb": 512, "p50": 0.31, "p95": 0.53, "p99": 0.58, "gate_p95_lt_ms": 40 }
     ]
+  },
+  "g3_checker_timeout_ms": {
+    "runner": "bench/g3-checker-timeout.ts",
+    "sample_size": 200,
+    "warmup": 50,
+    "tiers": [
+      { "checker": "egress-secret-scan",       "body_kb": 8,   "p50": 0.00, "p95": 0.01, "p99": 0.01, "g3_lt_ms": 20 },
+      { "checker": "egress-secret-scan",       "body_kb": 64,  "p50": 0.04, "p95": 0.05, "p99": 0.06, "g3_lt_ms": 50 },
+      { "checker": "egress-secret-scan",       "body_kb": 512, "p50": 0.31, "p95": 0.65, "p99": 0.84, "g3_lt_ms": 120 },
+      { "checker": "invisible-unicode-scan",   "body_kb": 8,   "p50": 0.00, "p95": 0.00, "p99": 0.00, "g3_lt_ms": 20 },
+      { "checker": "invisible-unicode-scan",   "body_kb": 64,  "p50": 0.00, "p95": 0.00, "p99": 0.00, "g3_lt_ms": 50 },
+      { "checker": "invisible-unicode-scan",   "body_kb": 512, "p50": 0.00, "p95": 0.00, "p99": 0.00, "g3_lt_ms": 120 },
+      { "checker": "model-label-consistency",  "body_kb": 8,   "p50": 0.00, "p95": 0.00, "p99": 0.00, "g3_lt_ms": 20 },
+      { "checker": "model-label-consistency",  "body_kb": 64,  "p50": 0.00, "p95": 0.00, "p99": 0.00, "g3_lt_ms": 50 },
+      { "checker": "model-label-consistency",  "body_kb": 512, "p50": 0.00, "p95": 0.00, "p99": 0.00, "g3_lt_ms": 120 }
+    ],
+    "_adr_note": "AC-VETO-013-03 尾条件：512KB 档 p99_scan ≥ G3 × 0.6 (=72ms) 时须写 ADR。当前 max_p99 = 0.84ms << 72ms → 无需 ADR。"
   }
 }

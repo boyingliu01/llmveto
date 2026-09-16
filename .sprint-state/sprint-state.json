@@ -3,7 +3,7 @@
   "evidence_schema_version": 2,
   "id": "sprint-20260914-49",
   "task_description": "llmveto v1 MVP: local LLM traffic security gateway (reverse-proxy core + checker registry + fail-closed policy + append-only evidence hash chain + CLI), per issues #1-#5",
-  "phase": 4,
+  "phase": 6,
   "status": "in_progress",
   "started_at": "2026-09-14T11:24:24.098Z",
   "phase_history": [
@@ -38,6 +38,20 @@
       "started_at": "2026-09-15T14:24:15.618Z",
       "completed_at": "2026-09-15T14:34:00.623Z",
       "duration_seconds": 585
+    },
+    {
+      "phase": 5,
+      "phase_name": "SHIP",
+      "status": "completed",
+      "started_at": "2026-09-15T14:37:55.180Z",
+      "completed_at": "2026-09-15T15:34:36.147Z",
+      "duration_seconds": 3401
+    },
+    {
+      "phase": 6,
+      "phase_name": "CLOSE",
+      "status": "paused",
+      "started_at": "2026-09-15T15:34:47.093Z"
     }
   ],
   "isolation": {

@@ -30,6 +30,7 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+.qoder/
 
 # Secrets — the gateway scans for these, it must never store them
 .env

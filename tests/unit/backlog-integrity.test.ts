@@ -11,7 +11,10 @@ import { describe, expect, it } from "vitest";
  *      另在 `.github/workflows/bench.yml` 的 bench job 加独立阻断步，使强制面覆盖到"绕过本地钩子直接进入
  *      main 的提交"这一升级前唯一的空档。该步由 R10R2-A-m2/B-2/C-m1 从"只跑本文件"扩为单测面，
  *      再由 R10R3-A-M1 定形为 `find` 三个根目录产出的**逐个文件路径**列表（判据公式与估计量口径的
- *      同源测试一并纳入；用例数随批次漂移故不在此写死，本机墙钟 <2s）。
+ *      同源测试一并纳入；用例数随批次漂移故不在此写死，本机墙钟 <2s）。R10R4-B-M1 又补上该步的
+ *      fail-loud 另一半：三个锚点目录任一缺失、或 find/sort 任一步非零退出，即刻 exit 1 并指名成因，
+ *      不再以缩减后的文件集静默变绿。本步的文件集由 `find` 动态产出，故新增受测文件（如 R10R4-C-m4 的
+ *      `bench/out-path-guard.test.ts`）自动进入 CI 阻断面，无需改本测试或改 workflow。
  *   ② 合法删除 vs 静默丢失：显式 ID 锁清单 + **超集**断言（比对表行 ID 列，不做整文件 substring 匹配，
  *      否则"行被删、ID 仍在正文他处被提及"会漏判）。本表惯例是"行不删、只改状态列"，
  *      因此锁清单等于全集；静默丢失（脚本自毁、误 revert、写截断）直接 fail，而**合法**裁剪某行必须
@@ -27,7 +30,7 @@ import { describe, expect, it } from "vitest";
  *   - "被 git 跟踪"一步在**环境缺件**时退化为跳过（warn）而非 fail：git 可执行文件缺失（spawn 失败），
  *     或整棵树没有 `.git`（status 128 + "not a git repository"）。两者都不是登记处丢失。与"git 在、仓在、
  *     文件未跟踪"（status 1）严格区分，后者必须 fail。
- *   - 本 parser 有两处与 GFM 的**有意偏差**，方向皆为"少认一张表 → 少一条断言"，不会造假红（R10R2-B-Minor-5
+ *   - 本 parser 有两处与 GFM 的**有意偏差**，方向皆为"少认一张表 → 少一条断言"，不会造假红（R10R2-B-5
  *     成文）：分隔线单元含内部空格（`| -- -- |` 型）的 `|` 块不认作表格；`\\|`（双反斜杠紧跟竖线）被折叠进
  *     同一格，而 GFM 认作"转义反斜杠 + 列分隔符"而拆两格。两者当前登记处均无实例（`grep '^```'` = 0、
  *     分隔线一律 `|---|`），ID 丢失仍由锁清单兜底。
@@ -128,6 +131,15 @@ const LOCKED_IDS = [
   "R10R3-C-m1",
   "R10R3-C-m2",
   "R10R3-C-m3",
+  "R10R4-B-M1",
+  "R10R4-A-m1",
+  "R10R4-C-m2",
+  "R10R4-A-m2",
+  "R10R4-B-m1",
+  "R10R4-B-m2",
+  "R10R4-C-m1",
+  "R10R4-C-m3",
+  "R10R4-C-m4",
 ] as const;
 
 /** 规范 ID 记号；`R2-A-M2 / R2-C-M1` 型合写行按 `/` 拆开，`（并入 R8-B-M1）` 型说明格不入选。 */
@@ -186,7 +198,7 @@ function fenceMarker(raw: string, role: "open" | "close"): string | null {
 /**
  * 按块解析 markdown 表格：连续 `|` 开头行构成一块，且第二行必须是全 `-`/`:` 分隔线，否则不视为表格
  * （正文里以 `|` 起始的引用行、ASCII 竖排段都不入表）。**代码围栏内的 `|` 行一律不入表**
- * （R10R2-A-m1/B-Minor-1：文档示例表格会虚增棘轮行数——幻影行可掩护真实行被删，还会把缺「状态」列的
+ * （R10R2-A-m1/R10R2-B-1：文档示例表格会虚增棘轮行数——幻影行可掩护真实行被删，还会把缺「状态」列的
  * 示例表变成假红源）。围栏按 GFM：开启/闭合行的缩进均限 ≤3 空格（tab 记 4），闭合行须为同字符、
  * 不小于开启长度的**纯**标记串（带 info string 的行按 GFM 只是内容，R10R3-A-m2/B-m1/B-m2 收口）。
  */
@@ -290,10 +302,10 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
   it("每条数据行的格数与该表表头一致，且 ID/状态两格非空（拦截写截断与半行覆盖）", () => {
     const rows = allRows(readFileSync(path, "utf8"));
     // 行数棘轮：只增不减。裁剪行须同步下调本常量——与下调锁清单同样是刻意且进 diff 的动作。
-    // 下界**恒取实测行数**（历史 55=55、68=68、当前 81=81）：这不是假红，而是设计（"合法裁剪必须同批
+    // 下界**恒取实测行数**（历史 55=55、68=68、当前 90=90）：这不是假红，而是设计（"合法裁剪必须同批
     // 改常量"的机器化）；见文件头「能力边界」末条与登记处「状态列约定」（R10R3-A-m3/C-m1 成文）。
-    // 81 = R10 R3 批次后的实测行数（9 张 ID 表）。
-    const MIN_BACKLOG_ROWS = 81;
+    // 90 = R10 R4 批次后的实测数据行数（10 张 ID 表，新增的 9 行即 `R10R4-*` 一批）。
+    const MIN_BACKLOG_ROWS = 90;
     expect(rows.length, `${BACKLOG_REL} 表行数低于棘轮下界 ${String(MIN_BACKLOG_ROWS)}（当前 ${String(rows.length)}）`).toBeGreaterThanOrEqual(
       MIN_BACKLOG_ROWS,
     );
@@ -340,7 +352,7 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
     expect(idColumn(fixture)).toEqual(new Set(["R9-Z-1"]));
   });
 
-  it("解析器自检（防空转）：代码围栏内的示例表格不入表（R10R2-A-m1/B-Minor-1）", () => {
+  it("解析器自检（防空转）：代码围栏内的示例表格不入表（R10R2-A-m1/R10R2-B-1）", () => {
     const fixture = [
       "文档里举的表示例（不是登记处行，不该计入棘轮）：",
       "```md",
@@ -383,8 +395,15 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
     expect(fenceMarker("    ```", "open")).toBeNull();
     expect(fenceMarker("   ```", "open"), "GFM 允许 ≤3 空格缩进的围栏").toBe("```");
     expect(idColumn(indented), "4 空格缩进行不该吞掉真表").toEqual(new Set(["R9-REAL-IND"]));
-    // ③ 长度与字符仍须配平：短的/异字符的闭合串不闭合。
-    expect(fenceMarker("````", "open")).toBe("````");
-    expect(fenceMarker("```", "close")?.length).toBe(3);
+    // ③ 闭合的**配平**两支（同字符 + 长度 ≥ 开启长度）必须穿过 parseTables 验，不能只停在 fenceMarker
+    //    的单元断言上（R10R4-B-m1：上一批此处的注释宣称"短的/异字符的闭合串不闭合"，实测把
+    //    `marker[0] === fence.ch && marker.length >= fence.len` 整条删掉，①②两支与③的旧断言全部照样绿）。
+    //    三组都是"开一条围栏 → 关不上 → 其后真表被吞"与"关得上 → 真表入表"的**成对**判别力。
+    const after = ["| ID | 状态 |", "|---|---|", "| R9-AFTER-FENCE | OPEN |"];
+    expect(fenceMarker("```", "close")).toBe("```"); // 单元层：3 反引号本身是合法闭合串，配平与否要看开启长度
+    expect(parseTables(["````", "```", ...after].join("\n")).length, "3 反引号闭不了 4 反引号开启的围栏").toBe(0);
+    expect(idColumn(["````", "```", "````", ...after].join("\n"))).toEqual(new Set(["R9-AFTER-FENCE"]));
+    expect(parseTables(["~~~", "```", ...after].join("\n")).length, "反引号闭不了波浪号围栏").toBe(0);
+    expect(idColumn(["~~~", "```", "~~~", ...after].join("\n"))).toEqual(new Set(["R9-AFTER-FENCE"]));
   });
 });

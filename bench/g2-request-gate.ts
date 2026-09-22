@@ -1,54 +1,44 @@
-// @no-test-required: bench runner（可执行脚本），其核心 percentile / isRegression 已由 regression-formula.test.ts 覆盖；本文件仅负责采样 + 控制台输出。
-import { performance } from "node:perf_hooks";
-import { egressSecretScan } from "../src/checkers/egress-secret-scan.ts";
-import type { ScanUnit } from "../src/shared/types.ts";
-import { percentile } from "./regression-formula.ts";
+// @no-test-required: bench runner（可执行脚本），其核心 percentile / isRegression 已由 regression-formula.test.ts 覆盖；测量骨架 http-harness.ts；本文件仅负责编排采样 + 控制台输出。
+import { bootStack, roundTripMs, sampleDelta, makeRequestBody, GW_PATH, type Delta } from "./http-harness.ts";
+import { G2_THRESHOLDS } from "./regression-formula.ts";
 
 /**
  * @test REQ-VETO-013
- * @intent G2 请求侧端到端（含 egress-secret-scan 全量扫描）p95 三档：3/10/40ms。
- *         本 runner 在 CI 里跑；预热 50 + n=200（AC-VETO-013-01 采样规范）。
+ * @intent G2 请求侧端到端 p95 三档（HTTP 端到端，M2.5 重写）：
+ *   t(经网关) = 客户端 → 网关（读体 + egress-secret-scan 全量扫描）→ 上游 → 网关（响应扫描）→ 客户端读尽
+ *   t(旁路)   = 客户端 → 上游 → 客户端读尽（无网关）
+ *   delta = t(经网关) − t(旁路)，随请求体分档 8/64/512 KB。
+ *
+ * 阈值（AC-VETO-013-02 v1 冻结）：p95 ≤8KB:3ms / ≤64KB:10ms / ≤512KB:40ms。
+ * 输出格式受 bench/check-regression.ts 解析约束：`${body_kb}KB → p50=…ms p95=…ms`。
  */
 
-const WARMUP = 50;
-const N = 200;
-
-function makeBody(sizeKb: number, embedSecret: boolean): string {
-  const filler = "The quick brown fox jumps over the lazy dog. ".repeat(50);
-  const target = sizeKb * 1024;
-  let body = "";
-  while (body.length < target) body += filler;
-  body = body.slice(0, target);
-  return embedSecret ? body + " sk-abcdefghijklmnopqrstuvwxyz" : body;
-}
-
-export interface SampleResult {
+export interface G2Tier {
   readonly tier_kb: number;
   readonly p50: number;
   readonly p95: number;
   readonly p99: number;
 }
 
-export function sampleG2(tierKb: number): SampleResult {
-  const body = makeBody(tierKb, false);
-  const unit: ScanUnit = { direction: "request", transport: "non-stream", text: body, meta: {} };
-  for (let i = 0; i < WARMUP; i++) egressSecretScan(unit);
-  const samples: number[] = [];
-  for (let i = 0; i < N; i++) {
-    const t0 = performance.now();
-    egressSecretScan(unit);
-    samples.push(performance.now() - t0);
+const OK_BODY = '{"model":"gpt-4o","choices":[{"message":{"content":"ok"}}]}';
+
+export async function sampleG2(tierKb: number): Promise<G2Tier> {
+  const stack = await bootStack({ transport: "non-stream", body: OK_BODY });
+  try {
+    const body = makeRequestBody(tierKb, false);
+    const d: Delta = await sampleDelta(roundTripMs, stack.gatewayUrl, stack.upstreamUrl, body, GW_PATH);
+    return { tier_kb: tierKb, ...d };
+  } finally {
+    await stack.close();
   }
-  return { tier_kb: tierKb, p50: percentile(samples, 0.5), p95: percentile(samples, 0.95), p99: percentile(samples, 0.99) };
 }
 
 if (process.argv[1]?.includes("g2-request-gate")) {
-  const results = [sampleG2(8), sampleG2(64), sampleG2(512)];
-  const limits = [3, 10, 40];
-  for (let i = 0; i < results.length; i++) {
-    const r = results[i]!;
-    const limit = limits[i]!;
-    const pass = r.p95 < limit;
-    console.log(`G2 ${r.tier_kb}KB → p50=${r.p50.toFixed(2)}ms p95=${r.p95.toFixed(2)}ms p99=${r.p99.toFixed(2)}ms ${pass ? "PASS" : "FAIL (limit " + limit + "ms)"}`);
+  for (let i = 0; i < G2_THRESHOLDS.length; i++) {
+    const gate = G2_THRESHOLDS[i]!;
+    const kb = gate.body_bytes / 1024;
+    const r = await sampleG2(kb);
+    const pass = r.p95 < gate.p95_ms;
+    console.log(`G2 ${r.tier_kb}KB → p50=${r.p50.toFixed(2)}ms p95=${r.p95.toFixed(2)}ms p99=${r.p99.toFixed(2)}ms ${pass ? "PASS" : `FAIL (limit ${gate.p95_ms}ms)`}`);
   }
 }

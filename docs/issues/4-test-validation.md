@@ -99,7 +99,7 @@ expected:
   - **阻断类 checker（`egress-secret-scan` / `invisible-unicode-scan`）FP = 0**（二者 v1 策略映射均为 `action=block`，阻断误报直接破坏可用性，白名单豁免须逐条写明理由与来源）。
   - **强制 benign 子集**：benign 语料必须含 ≥1 条带标准认证头（`Authorization: Bearer …` / `x-api-key: sk-…`）的真实形态请求，用于断言扫描单元已按 DESIGN §扫描单元定义排除认证头、`egress-secret-scan` 对其 FP=0（若实现未排除认证头，本条必然 FAIL——这是把"认证头不入扫描"锁为可回归约束）。
 - **合并门槛**：新增 checker 必须携带正负 fixture（含 ≥1 跨 chunk 样本），否则 PR 不合并。
-- **"回退"定义**（此前缺失，导致"回退阻断合并"不可判定）：同一 runner 连续 `n=200` 次，`p95_pr > p95_base × 1.2` **或** `p95_pr − p95_base > 2ms` → 判回退、阻断合并；`p95_base` 取 main 分支最近一次绿色基准（存 `bench/baseline.json`）。
+- **"回退"定义**（此前缺失，导致"回退阻断合并"不可判定）：同一 runner 连续 `n=200` 次，`p95_pr > p95_base × 1.2` **或** `p95_pr − p95_base > 2ms` → 判回退、阻断合并；`p95_base` 取 main 分支最近一次绿色基准（存 `bench/baseline.json`）。（**口径已修订（2026-09-22）**：判定分位数 p95 → p50、判定量 = 每档 N=10 次独立运行 p50 的**最小值**；operative 文本见 `specification.yaml` AC-VETO-013-04 与 `docs/adr/0002` 补遗三，本段保留为历史。）
 
 ### 4. 端到端演练 `@v1`（evil-relay 版 `@v2`）
 

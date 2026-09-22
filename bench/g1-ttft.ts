@@ -11,7 +11,7 @@ import { G1_TTFT_P95_MAX_MS, G1_TTFT_P99_MAX_MS } from "./regression-formula.ts"
  *
  * 采样：预热 50 + n=200；报告 p50/p95/p99（AC-VETO-013-01）。
  * 阈值：p95 < 5ms 且 p99 < 12ms（AC-VETO-013-01 v1 冻结）。
- * 输出格式受 bench/check-regression.ts 解析约束（匹配 /p95=([\d.]+)ms/）。
+ * 输出格式受 `bench/runner-format.ts` 的行首锚定契约约束（`G1_LINE_RE`；判定分位数为 p50，见 docs/adr/0002 补遗三）。
  */
 
 const CHUNKS = Array.from({ length: 24 }, (_, i) =>

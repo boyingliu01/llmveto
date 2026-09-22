@@ -30,14 +30,14 @@ M2.5 把 G1/G2 重写为 **HTTP 端到端**：同一 mock 上游，分别经网�
   - **G2 64KB**：p50≈0.9ms 稳定，但 p95 在 dev 机上稳定落在 **10–18ms**，**超出 v1 冻结的 10ms 绝对门**。
 - ⚠️ **64KB 超阈是测量环境现象，不是网关计算成本**：G3 实测 64KB 档 `egress-secret-scan` p95=0.04ms，扫描算力可忽略；p50 增量仅 0.9ms。跳变集中在 p95 尾部且与 512KB 档相比呈非比例放大（64KB 的字节数是 8KB 的 8 倍，增量却从 1ms 跳到 15ms 后在 512KB 仅缓升至 21ms），符合 Windows loopback 在 64KB socket 缓冲边界处的 delayed-ACK/分段停顿特征。该停顿是本地回环栈的环境属性，在 CI 的专用 ubuntu runner 上缓冲/栈行为不同，预期不复现或显著更低。
 - ⚠️ **绝对门仅供人读，不阻断 CI**：`bench.yml` 唯一的阻断步是 `bench/check-regression.ts`（相对回退公式，见下）；G1/G2 runner 命中绝对阈值只 `console.log` "FAIL" 并以退出码 0 结束。因此 dev 机 64KB 绝对 FAIL 不会使流水线变红。
-- **绑定不变量 = 相对回归门**：`check-regression.ts` 用 `isRegression`（`p95_pr > p95_base × 1.2` 或 `p95_pr − p95_base > 2ms`）对比 `baseline.json` 与当前采样。它要求基准与 PR 在**同构环境**下才可比——这正是 `baseline.json._refresh_policy` 规定"权威基准由 main 分支绿色 CI（ubuntu-latest）重录"的原因。本次随代码重录的 `baseline.json` 是 **dev 机占位**（`_measured_on` 已注明），合并后由绿色 main CI 覆盖为 CI 口径数值。
+- **绑定不变量 = 相对回归门**：`check-regression.ts` 用 `isRegression`（`p95_pr > p95_base × 1.2` 或 `p95_pr − p95_base > 2ms`）对比 `baseline.json` 与当前采样。**口径演进**：判定分位数已于补遗三改为 p50，入参为 `isRegression({base_ms, pr_ms})`——本段 p95 公式为该时代口径，保留为历史。它要求基准与 PR 在**同构环境**下才可比——这正是 `baseline.json._refresh_policy` 规定"权威基准由 main 分支绿色 CI（ubuntu-latest）重录"的原因。本次随代码重录的 `baseline.json` 是 **dev 机占位**（`_measured_on` 已注明），合并后由绿色 main CI 覆盖为 CI 口径数值。
 - 记录方式与 ADR-0001 同源，遵循 G-BENCH"公开记录、禁止静默放宽"纪律。
 
 ## 验证
 
 - `bun run bench/g1-ttft.ts`、`bun run bench/g2-request-gate.ts`、`bun run bench/g3-checker-timeout.ts` 均正常产出且退出码 0（绝对 FAIL 不改变退出码）。
 - `bun run bench/check-regression.ts` 以重录后的 HTTP-e2e 基准做相对判定，本地全绿（同机同口径）。
-- 输出格式与 `check-regression.ts` 解析约束保持一致：G1 `/p95=([\d.]+)ms/`、G2 `${kb}KB → p50=…ms p95=…ms`。
+- 输出格式与 `check-regression.ts` 解析约束保持一致：G1 `/p95=([\d.]+)ms/`、G2 `${kb}KB → p50=…ms p95=…ms`。**口径演进**：现行解析契约为 `bench/runner-format.ts` 的行首锚定常量/工厂（record 与 check 双侧共用，R8-B-M3），判定分位数为 p50——见补遗三。
 - 回归：`bun run typecheck && bun run test` 全绿；`bun run lint` 0 告警。
 
 ## 复审触发条件
@@ -57,6 +57,7 @@ Code-walkthrough 评审（R1）指出本 ADR 的空缺：正文规定"权威基�
 3. **SKIP ≠ 放行**：SKIP 的语义是"相对门在当前环境不具备判别力"，不是"检查通过"。绝对门（G1/G2 各档 gate_p95）仍由 runner 逐档打印在 CI 日志；一旦权威基线落地，同一 CI 环境上相对门自动从 SKIP 转为强制（无需再改任何开关）。
 4. **重录路径**：`bench.yml` 增 `workflow_dispatch` 触发 + `record` job（ubuntu-latest 跑 `bun run bench:record`，`git diff --exit-code bench/regression-formula.ts` 守卫冻结阈值零改动，`bench/baseline.json` 作为 artifact 产出）。产物**由人工下载并提交**——不引入 bot 直推 main 的写路径，main 的写权限与提交纪律保留在人工门。
 5. **本地强制**：`bun run bench:record bench/baseline.local.json` 录制本机基准，再以 `LLMVETO_BENCH_BASELINE=bench/baseline.local.json bun run bench/check-regression.ts` 对拍（该文件已入 `.gitignore`）。本地录制产物的 `ci=false`，不可能被 CI 误当作权威基准使用。
+6. **写入路径守卫**（2026-09-22 R8 走查收口）：`record-baseline.ts` 拒绝在非 CI 环境覆写 tracked 的 `bench/baseline.json`（须显式传 out 路径，如 `bench/baseline.local.json`）——权威基线的 repo 内保真锚点（见补遗三）不得被本地运行静默改写；CI record job（`CI=true`）不受影响。该守卫只限制**写路径**，不改变任何测量口径或判据。
 
 ### 影响（Consequences）
 
@@ -168,7 +169,7 @@ G1 p95 三次跨度 1.554 → 1.948（**+25%**）已超 20% 容差；而 **p50 �
 4. **规格同步**：`specification.yaml` AC-VETO-013-04 的 when/then 改为 p50 判定量并注明本 ADR 依据；冻结常量与 record job 的 `git diff --exit-code bench/regression-formula.ts` 守卫均不受影响。`docs/issues/4-test-validation.md` §回退定义 的 p95 文本保留为历史，operative 文本以 spec AC 为准；本 ADR 正文与补遗二中的 p95 判据描述亦按其时代口径保留。
 5. **可比性不变、无需重录**：schema v4 基准自 v4 起就随录制写入 `p50/p95/p99` 三字段（`record-baseline.ts` 逐分位取 min），故**已提交的 CI 权威基准可直接被 p50 判据消费：无 schema bump、无零强制窗口**。已提交基线（`730f82e`）的数字与标记**一个字节未改**（保 artifact 保真，其摘要锚点见下）；其 `_purpose`/`_note` 文案属 v4 录制期文本（描述 p95 判定），随下次按 `_refresh_policy` 重录自动刷新。
 6. **顺带落地两条已登记 Minor**（同一函数面，随本次一并消除）：`R6-B2`——判定数值（日志解析与基准字段两侧）一律经 `Number.isFinite` 守卫 fail-loud（NaN 经两条条件皆 false 会**静默 PASS**；本次换统计量恰好把"基准缺 p50"变成新的静默通过面，故同步消除）；`R6-B4`——G1/G2 档位正则行首锚定。
-7. **不引入任何形态的放宽**：容差、地板、阈值、N、估计量、可比性判据全部不动，改的只是被比较的分位数；且尾部分位数仍在日志逐档呈现，供后续复审取数。
+7. **不引入任何形态的放宽**：容差、地板、阈值、N、估计量、可比性判据全部不动。本批判据侧的改动面为**两处收紧**——(a) 被比较的分位数 p95 → p50（本补遗主体），(b) 决策 6 的两条防护（`finite()` fail-loud 守卫、正则行首锚定）——其余为文案/规格同步（R8-C-R2 收口：原"改的只是被比较的分位数"自述偏窄，未计 (b)）。尾部分位数仍在日志逐档呈现，供后续复审取数。
 
 ### 影响（Consequences）
 
@@ -176,6 +177,8 @@ G1 p95 三次跨度 1.554 → 1.948（**+25%**）已超 20% 容差；而 **p50 �
 - ✅ 规格、代码、ADR 三处口径一致；`isRegression` 不再自称 p95，未来再换分位数时字段语义不误导。
 - ⚠️ **尾部回归不再具备阻断力**：本门现在只拦**中心平移**（p50）；只抬高尾部分散度的回归仅在日志中可见。此前这类回归至多也只是"在 p95 判据里偶然命中"——真正的尾部拦截应来自绝对门升级（补遗一"后续决策点"，需单独修订本 ADR）。本补遗不改变该决策点的状态。
 - ⚠️ **残余假红风险（p50 版）**：1.2× 的绝对宽度随 p50 变小（G1 ≈0.05ms、G2 三档 ≈0.08/0.11/0.36ms），若 PR 侧 10 次采样恰落在持续慢窗口而基线侧在快窗口，仍可判红（机制同补遗二的"持续漂移"，加大 N 不可解）。实测未出现（三次 CI 间 p50 漂移 ≤7.5%）；若观测到，按数据复审本 ADR（候选：为相对条件加显式噪声地板——那会改动判定公式，须单独修订），**不得静默放宽**。
+  **量化上界（R8-A-M2 收口）**：同构 CI 环境现有实例给出两个方向的界——(a) 同估计量（min-of-10）跨实例漂移 ≤7.5%（G1 0.252→0.233）与 ≤+2.7%（G2 三档 0.39/0.54/1.8→0.40/0.55/1.78）；(b) **慢窗口包络**：run `35724569406` 内单次采样实例 p50=0.435ms 对同环境 min-of-10 基线（0.233–0.252ms）达 **1.73–1.87×**，即"PR 侧 10 次全落慢窗口"的理论上界可越过 1.2× 容差（单次 vs min-of-10 非同估计量，仅作包络参考，非本门的可达判定路径；本门两侧皆为 min-of-10）。
+  **近零基线变体（R8-B-M1 收口）**：若 base 侧 min-of-10 的 p50 取整为 0，则 1.2×0=0 且 +2ms 地板为 OR 条件不构成保护——任何 pr>0 都确定性判红。本地实测 10 次 record 中 2 次打印 `p50=0.000ms`（`var/delphi-r8/probe-baseline-b.json`：base=0、pr=0.295 → FAIL exit 1）；CI 侧未观测（G1 p50 稳定 0.23–0.25）。已登记 backlog `R8-B-M1` 并纳入 OC-1 观测，`record-baseline.ts` 对判定档 p50 min=0 加 print-only 告警（不改判据）；**若 CI 复现，按上文"显式噪声地板"候选走新 ADR 修订**，不得静默放宽。
 - ⚠️ **灵敏度交换的另一面**：p50 判据对"确定性成本平移"（新增一次拷贝/加密/校验）依旧敏感（min-of-10 的物理论证不变），对"纯尾部恶化"不敏感——这与"门拦显著性能回退、不测真成本"的既有取舍一致。
 - ✅ 零强制窗口不存在：合并后 CI 直接进入 p50 判据下的强制比较（新代码消费既有 v4 基准的 p50 字段）。
 - ✅ Minor 收敛：`R6-B2`（fail-loud 守卫）与 `R6-B4`（正则锚定）随本次落地，从 backlog 表移除。
@@ -187,6 +190,9 @@ G1 p95 三次跨度 1.554 → 1.948（**+25%**）已超 20% 容差；而 **p50 �
 - 本地端到端（win32-x64，2026-09-22 实跑）：`bun run bench:record bench/baseline.local.json` → `LLMVETO_BENCH_BASELINE=bench/baseline.local.json bun run bench/check-regression.ts` 同口径对拍，四档 p50 全部 PASS（G1 0.618→0.280、8KB 0.71→0.66、64KB 1.07→0.99、512KB 4.54→4.29）；并核对提交的 CI 基准在本机仍走 environment-SKIP 分支（SKIP 文案 + exit 0）。同轮 p95 对照行给出反向证据：64KB 档 p95 base=2.71 → pr=9.95（min-of-10，median 14.62）——**+267%**，在旧 p95 判据下该档会确定性假红，而 p50 侧同轮漂移 −7.4%。
 - 静态门：`bunx tsc --noEmit`、`bun run lint`、`bunx vitest run` 全绿。
 - CI 端到端（合并后观测）：push 触发 bench → 期望 4 档 p50 判定 PASS（基线 p50 0.252 / 0.39 / 0.54 / 1.8 vs 诊断重录 0.233 / 0.40 / 0.55 / 1.78）；判红则按"残余假红风险"节复审本 ADR。观测结果随提交说明记录。
+- 解析契约单测（R8-B-M3 收口）：`bench/runner-format.test.ts` 6 用例——行首锚定（`8KB` 不误命中 `128KB` 行）、捕获组顺序 p50/p95/p99、`1.2.3` 可匹配但 `Number` 得 NaN（数值合法性归调用侧守卫 fail-loud）。
+- 写入路径守卫实跑（win32-x64，2026-09-22）：`bun run bench:record`（无参、非 CI）→ exit 1 + 拒绝文案；`bun run bench:record bench/baseline.local.json` → exit 0。
+- 近零基线实跑（R8-B-M1 佐证）：本轮本地 record 实际打印 `⚠ G1 p50 min = 0`；随后的本地对拍 `LLMVETO_BENCH_BASELINE=bench/baseline.local.json bun run bench/check-regression.ts` 四档全 PASS（G1 base=0/pr=0.000；G2 p50 0.58/0.87/3.66 → 0.57/0.86/3.72，min-of-10）——本轮 pr 侧同为 0 故未判红；base=0 且 pr>0 的组合会确定性判红，见"残余假红风险·近零基线变体"与 backlog `R8-B-M1`。
 
 ### 权威基线的 repo 内可核验锚点（R7-A-M3 收口）
 

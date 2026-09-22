@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { isRegression } from "./regression-formula.ts";
 import { currentEnvironment, environmentMatches, isCiCalibrated, samplingMatches } from "./env-gate.ts";
 import { BENCH_SAMPLING, medianOf, minOf } from "./repeat.ts";
+import { G1_LINE_RE, g2LineRe } from "./runner-format.ts";
 
 /**
  * @test REQ-VETO-013
@@ -148,8 +149,8 @@ interface Check {
   readonly tail: Stat;
 }
 
-// 行首锚定（R6-B4）：档位号在正则里是子串（如 "8KB" 会命中 "128KB" 行），锚定后与档位一一对应。
-const g1 = sampleStats(g1Samples, /^G1 TTFT delta → p50=([\d.]+)ms p95=([\d.]+)ms/m, "G1 TTFT");
+// 解析契约（行首锚定 + 捕获组顺序）由 bench/runner-format.ts 单源提供，与 record 侧共用（R8-B-M3）。
+const g1 = sampleStats(g1Samples, G1_LINE_RE, "G1 TTFT");
 const checks: Check[] = [
   {
     name: "G1 TTFT p50",
@@ -162,8 +163,7 @@ const checks: Check[] = [
 ];
 
 for (const tier of baseline.g2_request_gate_ms.tiers) {
-  const re = new RegExp(`^G2 ${tier.body_kb}KB → p50=([\\d.]+)ms p95=([\\d.]+)ms`, "m");
-  const s = sampleStats(g2Samples, re, `G2 ${tier.body_kb}KB`);
+  const s = sampleStats(g2Samples, g2LineRe(tier.body_kb), `G2 ${tier.body_kb}KB`);
   checks.push({
     name: `G2 ${tier.body_kb}KB p50`,
     base: finite(tier.p50, `baseline G2 ${tier.body_kb}KB p50 (bench/baseline.json)`),

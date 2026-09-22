@@ -1,9 +1,10 @@
-// @no-test-required: bench 工具（可执行脚本），复刻 check-regression.ts 的 runner 编排与解析格式；核心判定由 regression-formula.test.ts 覆盖，估计量由 repeat.test.ts 覆盖。
+// @no-test-required: bench 工具（可执行脚本），复刻 check-regression.ts 的 runner 编排；解析契约与 check 侧共用 bench/runner-format.ts（R8-B-M3）。核心判定由 regression-formula.test.ts 覆盖，估计量由 repeat.test.ts 覆盖。
 import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { arch, cpus, platform } from "node:os";
 import { G1_TTFT_P95_MAX_MS, G1_TTFT_P99_MAX_MS, G2_THRESHOLDS, G3_THRESHOLDS } from "./regression-formula.ts";
 import { BENCH_SAMPLING, minOf } from "./repeat.ts";
+import { G1_LINE_RE, g2LineRe, g3LineRe } from "./runner-format.ts";
 
 /**
  * @test REQ-VETO-013
@@ -18,6 +19,18 @@ import { BENCH_SAMPLING, minOf } from "./repeat.ts";
 
 const SAMPLE_SIZE = 200;
 const WARMUP = 50;
+
+const TRACKED_BASELINE = "bench/baseline.json";
+const outPath = process.argv[2] ?? TRACKED_BASELINE;
+
+// 写入路径守卫（R8-C-R1）：权威基线的 repo 内保真锚点（docs/adr/0002 补遗三）不得被本地运行静默改写。
+// 非 CI 环境覆写 tracked 路径须显式传参（如 bench/baseline.local.json）；CI record job 不受影响。
+if (outPath === TRACKED_BASELINE && process.env.CI !== "true") {
+  throw new Error(
+    `refusing to overwrite the tracked authoritative baseline outside CI: pass an explicit out path ` +
+      `(e.g. \`bun run bench:record bench/baseline.local.json\`); authoritative re-record is the CI record job (docs/adr/0002)`,
+  );
+}
 
 const CHECKERS = ["egress-secret-scan", "invisible-unicode-scan", "model-label-consistency"] as const;
 
@@ -59,14 +72,13 @@ for (let i = 0; i < BENCH_SAMPLING.repeats; i++) {
   g3Logs.push(runRunner("bench/g3-checker-timeout.ts"));
 }
 
-const g1 = aggregatedPercentiles(g1Logs, /p50=([\d.]+)ms p95=([\d.]+)ms p99=([\d.]+)ms/, "G1");
+const g1 = aggregatedPercentiles(g1Logs, G1_LINE_RE, "G1");
 
 const g2Tiers = G2_THRESHOLDS.map((gate) => {
   const kb = gate.body_bytes / 1024;
-  const re = new RegExp(`${kb}KB → p50=([\\d.]+)ms p95=([\\d.]+)ms p99=([\\d.]+)ms`);
   return {
     body_kb: kb,
-    ...aggregatedPercentiles(g2Logs, re, `G2 ${kb}KB`),
+    ...aggregatedPercentiles(g2Logs, g2LineRe(kb), `G2 ${kb}KB`),
     gate_p95_lt_ms: gate.p95_ms,
   };
 });
@@ -74,7 +86,7 @@ const g2Tiers = G2_THRESHOLDS.map((gate) => {
 const g3Tiers = G3_THRESHOLDS.flatMap((gate) => {
   const kb = gate.body_bytes / 1024;
   return CHECKERS.map((checker) => {
-    const re = new RegExp(`G3 ${checker} ${kb}KB → p50=([\\d.]+) p95=([\\d.]+) p99=([\\d.]+)`);
+    const re = g3LineRe(checker, kb);
     return {
       checker,
       body_kb: kb,
@@ -83,6 +95,21 @@ const g3Tiers = G3_THRESHOLDS.flatMap((gate) => {
     };
   });
 });
+
+// 近零基线告警（R8-B-M1，print-only）：min-of-10 的 p50 取整到 0 时相对门在近零基线处失去绝对宽度
+// （1.2 × 0 = 0，且 +2ms 地板为 OR 条件不构成保护），任何 pr > 0 都会确定性判红；本地实测 10 次 record 中 2 次。
+// 仅告警，不改变任何判据、阈值或输出值；若 CI 复现，按 docs/adr/0002 补遗三点名的"显式噪声地板"走新 ADR 修订。
+const judgedP50: [string, number][] = [
+  ["G1", g1.p50],
+  ...g2Tiers.map((t): [string, number] => [`G2 ${t.body_kb}KB`, t.p50]),
+];
+for (const [label, p50] of judgedP50) {
+  if (p50 === 0) {
+    console.warn(
+      `⚠ ${label} p50 min = 0 — 相对门在近零基线处确定性判红（见 .sprint-state/bench-backlog.md R8-B-M1）；勿把该值作为权威基线提交`,
+    );
+  }
+}
 
 const today = new Date().toISOString().slice(0, 10);
 const cpu = cpus()[0]?.model ?? "unknown cpu";
@@ -97,7 +124,7 @@ const baseline = {
   _estimator: BENCH_SAMPLING.estimator,
   _measured_on: `${platform()} ${arch()} · ${cpu}（bun run bench:record 自动重录${process.env.CI === "true" ? "，CI runner" : "，本地"}，每档 ${BENCH_SAMPLING.repeats} 次取最小，_estimator=${BENCH_SAMPLING.estimator}）`,
   _refresh_policy:
-    "权威基准由 main 分支 CI 重录：Actions → bench → Run workflow（workflow_dispatch）触发 record job 在 ubuntu-latest 跑 `bun run bench:record`，下载 bench-baseline artifact 后人工提交（保留 main 写路径的人工门）。本地强制：`bun run bench:record bench/baseline.local.json` + LLMVETO_BENCH_BASELINE 覆写。环境门、口径门与 SKIP 语义详见 docs/adr/0002。",
+    "权威基准由 main 分支 CI 重录：Actions → bench → Run workflow（workflow_dispatch）触发 record job 在 ubuntu-latest 跑 `bun run bench:record`，下载 bench-baseline artifact 后人工提交（保留 main 写路径的人工门）。本地强制：`bun run bench:record bench/baseline.local.json` + LLMVETO_BENCH_BASELINE 覆写；非 CI 环境覆写 tracked 的 bench/baseline.json 会被 record 脚本拒绝（写入路径守卫，见 docs/adr/0002 补遗一）。环境门、口径门与 SKIP 语义详见 docs/adr/0002。",
   g1_ttft_delta_ms: {
     runner: "bench/g1-ttft.ts",
     method: "http-e2e-paired-delta",
@@ -125,7 +152,6 @@ const baseline = {
   },
 };
 
-const outPath = process.argv[2] ?? "bench/baseline.json";
 writeFileSync(outPath, JSON.stringify(baseline, null, 2) + "\n", "utf8");
 console.log(
   `baseline written → ${outPath} (_measured_at=${today}, _environment=${platform()}-${arch()}${process.env.CI === "true" ? "-ci" : "-local"}, _repeats=${BENCH_SAMPLING.repeats}, _estimator=${BENCH_SAMPLING.estimator}, G1 p50=${g1.p50}ms p95=${g1.p95}ms)`,

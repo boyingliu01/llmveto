@@ -71,7 +71,10 @@ export function samplingMatches(
   if (typeof baselineRepeats !== "number" || !Number.isInteger(baselineRepeats) || baselineRepeats < 1) {
     return { comparable: false, reason: "baseline has no _repeats marker or it is malformed (schema < 4) — re-record required" };
   }
-  if (typeof baselineEstimator !== "string" || baselineEstimator.trim() === "") {
+  // R6-C2：畸形判据与"确有口径差异"判据分开——`_estimator` 是机器写入的口径标记，带首尾空白即说明它
+  // 不是任何已知 producer 的产物（属畸形，需重录），而非"另一种统计量"（属口径不匹配）。
+  // 两侧仍走同一个 fail-closed（SKIP）出口，严格逐字比对（R6-A2 从严裁决）不因本分类放宽。
+  if (typeof baselineEstimator !== "string" || baselineEstimator.trim() === "" || baselineEstimator !== baselineEstimator.trim()) {
     return { comparable: false, reason: "baseline has no _estimator marker or it is malformed (schema < 4) — re-record required" };
   }
   if (baselineRepeats !== expected.repeats || baselineEstimator !== expected.estimator) {

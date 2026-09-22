@@ -82,6 +82,17 @@ describe("samplingMatches (录制口径前置，docs/adr/0002 补遗二)", () =>
     }
   });
 
+  it("带首尾空白的估计量 → 归为畸形而非口径不匹配（R6-C2；两侧皆不可比，分类只影响文案指向）", () => {
+    // 修复前：`" min "` 逃过 `trim() === ""` 畸形判据，落到严格逐字比对，reason 打成
+    // "sampling procedure mismatch: baseline= min  … vs gate=min …"（肉眼近乎全等，误导为口径差异）。
+    for (const e of [" min ", "min ", " min", "\tmin"]) {
+      const res = samplingMatches(BENCH_SAMPLING.repeats, e, BENCH_SAMPLING);
+      expect(res.comparable).toBe(false);
+      expect(res.reason).toContain("malformed");
+      expect(res.reason).not.toContain("mismatch");
+    }
+  });
+
   it("N 漂移（同名估计量、不同次数）→ 不可比，reason 指明双方", () => {
     const res = samplingMatches(BENCH_SAMPLING.repeats + 2, BENCH_SAMPLING.estimator, BENCH_SAMPLING);
     expect(res.comparable).toBe(false);

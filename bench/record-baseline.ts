@@ -24,9 +24,11 @@ const WARMUP = 50;
 const TRACKED_BASELINE = "bench/baseline.json";
 const outPath = process.argv[2] ?? TRACKED_BASELINE;
 
-// 同一文件的不同写法（等价路径、大小写/8.3 短名变体、symlink）折叠为同一字符串：优先文件系统解析
-// （realpath 解引用 symlink 并按平台原生规则归一），目标尚不存在时退化为词法 resolve；大小写不敏感
-// 平台（win32/darwin 默认 FS）再折叠大小写，兜住 realpath 不可用时的相对路径形态。
+// 把同一文件的多种**名字**写法折叠为同一字符串：优先文件系统解析（realpath 解引用 symlink、按平台原生
+// 规则取回真实大小写与长名，含 8.3 短名 → 长名），目标尚不存在或不可解析时退化为词法 resolve；两条分支
+// 之后一律在大小写不敏感平台（win32/darwin 默认 FS）折叠大小写。已知不折叠**身份**——UNC/admin-share、
+// NTFS 备用数据流、硬链接（同一 inode 的另一个名字）仍可经守卫写入：路径归一无 inode 可比，守卫定位为
+// 防误操作而非防篡改（详见 docs/adr/0002 补遗一决策 6）。
 function canonicalPath(p: string): string {
   let canonical: string;
   try {
@@ -41,7 +43,7 @@ function canonicalPath(p: string): string {
 // （docs/adr/0002 补遗三）不得被本地运行静默改写。归一后比较——`./bench/baseline.json`、`bench/./baseline.json`、
 // 反斜杠变体、`bench/BASELINE.JSON` 型大小写变体与指向 tracked 的 symlink 均与 tracked 路径同判。
 // 非 CI 覆写 tracked 路径须显式传参（如 bench/baseline.local.json）；CI record job 不受影响
-// （信任边界见 docs/adr/0002 补遗一决策 6）。
+// （信任边界与残余面清单见 docs/adr/0002 补遗一决策 6）。
 if (outPath.startsWith("-")) {
   throw new Error(
     `unknown flag ${outPath}: bench:record takes an optional out path only ` +

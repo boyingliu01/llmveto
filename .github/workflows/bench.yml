@@ -40,11 +40,35 @@ jobs:
       # 恰好重新引入上一段要避免的假红源。实测：放一个 `tests/integration/bench-sentinel.test.ts`，
       # 裸目录名形态 21 文件 / 显式文件列表形态 20 文件。`find` 的三个根目录因此是**作用域锚点**，
       # 交给 vitest 的一律是逐个真实文件路径；列表为空即 fail（绝不退化成全量）。
+      # **锚点缺失必须 fail-loud，不能静默少跑**（R10R4-B-M1/A-m1/C-m2，Major）：`mapfile < <(find …)` 的
+      # 进程替换**丢弃 find 的退出码**（`bash -e` 也管不到替换内部），所以某个锚点目录被重命名/拆分时 find
+      # 只报 stderr、其余根照常产出 → 本步以**缩减后的文件集**转绿。方向是"假绿"，比上段那个"多纳入"的
+      # 假红更隐蔽，且不写文件计数（计数随批次漂移，不得当命题——见 R10R3-A-m1）。故改为：先把列表落到
+      # 临时文件、**直接**判 find/sort 的退出码，并对三个锚点逐一显式存在性断言（给出指名哪个锚点的定向
+      # 文案，而不是裸 find stderr）。四路径实测记录见 docs/adr/0002 补遗一·验证节。
       # 阻断性：本步非零退出即 bench job 红（早于三台 runner，失败信号最快、最便宜；本机实测墙钟 <2s，
       # 用例数随批次漂移故不写死）。
       - name: Unit + registry integrity guard
         run: |
-          mapfile -d '' -t guard_files < <(find tests/unit tests/utils bench -name '*.test.ts' -print0 | sort -z)
+          for root in tests/unit tests/utils bench; do
+            if [ ! -d "$root" ]; then
+              echo "guard step: scope root '$root' is missing — a renamed/split guard root must never narrow the run set" >&2
+              exit 1
+            fi
+          done
+          list_file="$(mktemp)"
+          if ! find tests/unit tests/utils bench -name '*.test.ts' -print0 > "$list_file"; then
+            echo "guard step: find over the three scope roots failed" >&2
+            rm -f "$list_file"
+            exit 1
+          fi
+          if ! sort -z -o "$list_file" "$list_file"; then
+            echo "guard step: sort -z on the file list failed" >&2
+            rm -f "$list_file"
+            exit 1
+          fi
+          mapfile -d '' -t guard_files < "$list_file"
+          rm -f "$list_file"
           if [ "${#guard_files[@]}" -eq 0 ]; then
             echo "guard step matched no test files; refusing to fall back to a full vitest run" >&2
             exit 1

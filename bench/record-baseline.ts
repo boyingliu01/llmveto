@@ -24,6 +24,21 @@ const WARMUP = 50;
 const TRACKED_BASELINE = "bench/baseline.json";
 const outPath = process.argv[2] ?? TRACKED_BASELINE;
 
+// 折叠**宿主**（R10R2-C-M1）：win32 上 `:` 只可能来自 NTFS 备用数据流引用（文件名本身禁用该字符）。realpath
+// 与 statSync 对**尚不存在**的流一律 ENOENT → 名字与身份双判据同时为假，`bench/baseline.json:<任意新流名>`
+// 即可穿透守卫、把整份基线写进受保护文件的备用流（此前"ADS 已收口"仅对**已存在**的流名成立）。故折叠前先把
+// 末段首个 `:` 及其后的全部流后缀剥掉（多级流 `f:a:b` 一次剥净），把判定对象折回宿主文件。合法路径的末段不含
+// `:`，此步恒等 —— 只增拒绝，不放宽任何既有判定。posix 上 `:` 是普通文件名字符，且 realpath 本就能区分该
+// 文件与 tracked，故不剥离。
+function hostPath(p: string): string {
+  if (platform() !== "win32") return p;
+  const sep = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+  // 末段之外的冒号属于盘符（`C:`）或 UNC 共享根（`\\srv\share`），不是流分隔符。
+  const start = sep === -1 && /^[A-Za-z]:/.test(p) ? 2 : sep + 1;
+  const colon = p.indexOf(":", start);
+  return colon === -1 ? p : p.slice(0, colon);
+}
+
 // 把同一文件的多种**名字**写法折叠为同一字符串：优先文件系统解析（realpath 解引用 symlink、按平台原生
 // 规则取回真实大小写与长名，含 8.3 短名 → 长名），目标尚不存在或不可解析时退化为词法 resolve；两条分支
 // 之后一律在大小写不敏感平台（win32/darwin 默认 FS）折叠大小写。
@@ -40,23 +55,26 @@ function canonicalPath(p: string): string {
 // 折叠**身份**（R10R1-B-1：路径归一只折叠名字，同一字节另有名字时折叠不掉）。`dev:ino` 由 libuv 在
 // 三平台统一暴露——win32 下即卷序列号 + FileId（非"win32 无 inode"）。实测 win32/NTFS 上硬链接、
 // NTFS 备用数据流、UNC/admin-share（`\\localhost\d$\…`）三类别名形态的 dev/ino 与 tracked 文件全等，
-// `\\?\` 设备命名空间与 `subst` 盘则本就被 realpath 折叠。任一路径 stat 失败（尚不存在）、或文件系统
-// 不报文件 ID（`ino === 0` 是常见哨兵值，两个不同文件会假等）→ null，该条判据退让给路径折叠。
+// `\\?\` 设备命名空间与 `subst` 盘则本就被 realpath 折叠。任一路径 stat 失败（尚不存在，或 ACL 令读取被拒
+// ——两者皆 catch-all 静默退让，见 docs/adr/0002 补遗一残余 ①）、或文件系统不报文件 ID（`ino === 0` 是常见
+// 哨兵值，两个不同文件会假等）→ null，该条判据退让给路径折叠。
 function fileIdentity(p: string): string | null {
   try {
     const st = statSync(p);
-    return st.ino === 0 ? null : `${String(st.dev)}:${String(st.ino)}`;
+    return st.ino === 0 ? null : `${st.dev}:${st.ino}`;
   } catch {
     return null;
   }
 }
 
-// 写入路径守卫（R8-C-R1；R2-B-2/R2-C-M2 加固；R9-B-1/R9-C-M1/A-R9-2 收口；R10R1-B-1 升级为名字+身份双判据）：
-// 权威基线的 repo 内保真锚点（docs/adr/0002 补遗三）不得被本地运行静默改写。**名字**折叠——`./bench/baseline.json`、
-// `bench/./baseline.json`、反斜杠变体、`bench/BASELINE.JSON` 型大小写变体与指向 tracked 的 symlink 均与 tracked
-// 路径同判；**身份**折叠——硬链接 / NTFS 备用数据流 / UNC·admin-share 型同 inode 别名（真实路径不等价）同判。
+// 写入路径守卫（R8-C-R1；R2-B-2/R2-C-M2 加固；R9-B-1/R9-C-M1/A-R9-2 收口；R10R1-B-1 升级为名字+身份双判据；
+// R10R2-C-M1 补流后缀剥离）：权威基线的 repo 内保真锚点（docs/adr/0002 补遗三）不得被本地运行静默改写。
+// **名字**折叠——`./bench/baseline.json`、`bench/./baseline.json`、反斜杠变体、`bench/BASELINE.JSON` 型大小写
+// 变体与指向 tracked 的 symlink 均与 tracked 路径同判；**身份**折叠——硬链接 / NTFS 备用数据流 / UNC·admin-share
+// 型同 inode 别名（真实路径不等价）同判；**宿主**折叠——`baseline.json:<任意流名>`（含尚不存在的流名）折回宿主
+// 文件后走前两判据。
 // 非 CI 覆写 tracked 路径须显式传参（如 bench/baseline.local.json）；CI record job 不受影响
-// （信任边界与残余面清单见 docs/adr/0002 补遗一决策 6）。
+// （信任边界与残余面清单见 docs/adr/0002 补遗一·写入路径守卫）。
 if (outPath.trim() === "") {
   // `bun run` 会剥掉空 argv（落到"无参"分支），故本分支只在直接以 node 调用时可达——两入口差异见
   // docs/adr/0002 验证节，避免读者以 `bun run bench:record ""` 观测不到而误判守卫未生效。
@@ -71,13 +89,21 @@ if (outPath.startsWith("-")) {
       `(e.g. \`bun run bench:record bench/baseline.local.json\`)`,
   );
 }
-const sameName = canonicalPath(outPath) === canonicalPath(TRACKED_BASELINE);
-const outIdentity = fileIdentity(outPath);
+const outHost = hostPath(outPath);
+const sameName = canonicalPath(outHost) === canonicalPath(TRACKED_BASELINE);
+const outIdentity = fileIdentity(outHost);
 const trackedIdentity = fileIdentity(TRACKED_BASELINE);
 const sameInode = outIdentity !== null && outIdentity === trackedIdentity;
 if ((sameName || sameInode) && process.env.CI !== "true") {
+  // 三种拒绝措辞：直接命中 tracked 名字 / 同 inode 的别名路径 / 受保护文件的备用数据流引用。
+  const via =
+    outHost !== outPath
+      ? " (an NTFS alternate data stream of it)"
+      : sameInode && !sameName
+        ? " (same file identity via an alias path)"
+        : "";
   throw new Error(
-    `refusing to overwrite the tracked authoritative baseline${sameInode && !sameName ? " (same file identity via an alias path)" : ""} outside CI: pass an explicit out path ` +
+    `refusing to overwrite the tracked authoritative baseline${via} outside CI: pass an explicit out path ` +
       `(e.g. \`bun run bench:record bench/baseline.local.json\`); authoritative re-record is the CI record job (docs/adr/0002)`,
   );
 }

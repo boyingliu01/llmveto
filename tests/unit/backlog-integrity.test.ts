@@ -8,8 +8,9 @@ import { describe, expect, it } from "vitest";
  * grep 发现——原登记文件 `.sprint-state/bench-rerecord-todo.md` 按其自述关闭条件在 `730f82e` 自毁、
  * 六个 ID 未在任何 tracked 载体承接，即该类事故。三条规格（本表要求实现前先定死）：
  *   ① 守卫放置：单测门 + CI 步骤。vitest 是 pre-commit 钩子与 `bun run test` 的必经门；R10R1-A-M1/C-M1
- *      另在 `.github/workflows/bench.yml` 的 bench job 加独立阻断步（只跑本文件），使强制面覆盖到
- *      "绕过本地钩子直接进入 main 的提交"这一升级前唯一的空档。
+ *      另在 `.github/workflows/bench.yml` 的 bench job 加独立阻断步，使强制面覆盖到"绕过本地钩子直接进入
+ *      main 的提交"这一升级前唯一的空档。该步由 R10R2-A-m2/B-2/C-m1 从"只跑本文件"扩为
+ *      `bunx vitest run tests/unit tests/utils bench`（判据公式与估计量口径的同源测试一并纳入，实测 1.7s）。
  *   ② 合法删除 vs 静默丢失：显式 ID 锁清单 + **超集**断言（比对表行 ID 列，不做整文件 substring 匹配，
  *      否则"行被删、ID 仍在正文他处被提及"会漏判）。本表惯例是"行不删、只改状态列"，
  *      因此锁清单等于全集；静默丢失（脚本自毁、误 revert、写截断）直接 fail，而**合法**裁剪某行必须
@@ -25,6 +26,10 @@ import { describe, expect, it } from "vitest";
  *   - "被 git 跟踪"一步在**环境缺件**时退化为跳过（warn）而非 fail：git 可执行文件缺失（spawn 失败），
  *     或整棵树没有 `.git`（status 128 + "not a git repository"）。两者都不是登记处丢失。与"git 在、仓在、
  *     文件未跟踪"（status 1）严格区分，后者必须 fail。
+ *   - 本 parser 有两处与 GFM 的**有意偏差**，方向皆为"少认一张表 → 少一条断言"，不会造假红（R10R2-B-Minor-5
+ *     成文）：分隔线单元含内部空格（`| -- -- |` 型）的 `|` 块不认作表格；`\\|`（双反斜杠紧跟竖线）被折叠进
+ *     同一格，而 GFM 认作"转义反斜杠 + 列分隔符"而拆两格。两者当前登记处均无实例（`grep '^```'` = 0、
+ *     分隔线一律 `|---|`），ID 丢失仍由锁清单兜底。
  */
 
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -88,6 +93,19 @@ const LOCKED_IDS = [
   "R10-C-m1",
   "R10-B-5",
   "R10-C-m5",
+  "R10R2-C-M1",
+  "R10R2-A-m1",
+  "R10R2-B-1",
+  "R10R2-A-m2",
+  "R10R2-B-2",
+  "R10R2-C-m1",
+  "R10R2-B-3",
+  "R10R2-C-m2",
+  "R10R2-A-m3",
+  "R10R2-B-4",
+  "R10R2-B-5",
+  "R10R2-C-m3",
+  "R10R2-A-m4",
 ] as const;
 
 /** 规范 ID 记号；`R2-A-M2 / R2-C-M1` 型合写行按 `/` 拆开，`（并入 R8-B-M1）` 型说明格不入选。 */
@@ -128,7 +146,9 @@ interface MarkdownTable {
 
 /**
  * 按块解析 markdown 表格：连续 `|` 开头行构成一块，且第二行必须是全 `-`/`:` 分隔线，否则不视为表格
- * （正文里以 `|` 起始的引用行、ASCII 竖排段都不入表）。
+ * （正文里以 `|` 起始的引用行、ASCII 竖排段都不入表）。**代码围栏内的 `|` 行一律不入表**
+ * （R10R2-A-m1/B-Minor-1：文档示例表格会虚增棘轮行数——幻影行可掩护真实行被删，还会把缺「状态」列的
+ * 示例表变成假红源）。围栏按 GFM 取开启串的字符与长度，须以同字符、不小于该长度的串闭合。
  */
 function parseTables(md: string): MarkdownTable[] {
   const tables: MarkdownTable[] = [];
@@ -143,8 +163,21 @@ function parseTables(md: string): MarkdownTable[] {
     }
     block = [];
   };
+  let fence: { readonly ch: string; readonly len: number } | null = null;
   for (const line of md.split(/\r?\n/)) {
-    if (line.trim().startsWith("|")) block.push(line.trim());
+    const t = line.trim();
+    const marker = /^(`{3,}|~{3,})/.exec(t)?.[0] ?? "";
+    if (fence !== null) {
+      if (marker !== "" && (marker[0] ?? "") === fence.ch && marker.length >= fence.len) fence = null;
+      flush();
+      continue;
+    }
+    if (marker !== "") {
+      fence = { ch: marker[0] ?? "`", len: marker.length };
+      flush();
+      continue;
+    }
+    if (t.startsWith("|")) block.push(t);
     else flush();
   }
   flush();
@@ -217,7 +250,8 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
   it("每条数据行的格数与该表表头一致，且 ID/状态两格非空（拦截写截断与半行覆盖）", () => {
     const rows = allRows(readFileSync(path, "utf8"));
     // 行数棘轮：只增不减。裁剪行须同步下调本常量——与下调锁清单同样是刻意且进 diff 的动作。
-    const MIN_BACKLOG_ROWS = 55;
+    // 68 = R10 R2 批次后的实测行数（8 张 ID 表）。
+    const MIN_BACKLOG_ROWS = 68;
     expect(rows.length, `${BACKLOG_REL} 表行数低于棘轮下界 ${String(MIN_BACKLOG_ROWS)}（当前 ${String(rows.length)}）`).toBeGreaterThanOrEqual(
       MIN_BACKLOG_ROWS,
     );
@@ -262,5 +296,29 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
     expect(tables[0]?.rows.length).toBe(1);
     expect(tables[0]?.rows[0]?.[2]).toBe("文案含转义 `a | b` 与 `c|d`");
     expect(idColumn(fixture)).toEqual(new Set(["R9-Z-1"]));
+  });
+
+  it("解析器自检（防空转）：代码围栏内的示例表格不入表（R10R2-A-m1/B-Minor-1）", () => {
+    const fixture = [
+      "文档里举的表示例（不是登记处行，不该计入棘轮）：",
+      "```md",
+      "| ID | 状态 |",
+      "|---|---|",
+      "| R9-FAKE-1 | OPEN |",
+      "```",
+      "| ID | 位置 | 内容 | 来源 | 状态 |",
+      "|---|---|---|---|---|",
+      "| R9-Z-2 | bench/y.ts | 真行 | R9 B | OPEN |",
+      "```",
+      "| ID | 状态 |",
+      "|---|---|",
+      "| R9-FAKE-2 | OPEN |",
+    ].join("\n");
+    const tables = backlogTables(fixture);
+    expect(tables.length).toBe(1);
+    expect(tables[0]?.rows.map((r) => r[0])).toEqual(["R9-Z-2"]);
+    expect(idColumn(fixture)).toEqual(new Set(["R9-Z-2"]));
+    // 未闭合围栏把其后内容一并排除（保守方向：少认表）——真实文件若被打断，行数棘轮断言会亮红，不会静默失守。
+    expect(parseTables(fixture).length).toBe(1);
   });
 });

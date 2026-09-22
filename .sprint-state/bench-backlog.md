@@ -2,8 +2,11 @@
 
 - **owner**: boyingliu01
 - **登记日期**: 2026-09-22
-- **处置期限**: 2026-09-30 23:59 (UTC+8)；**当前无 OPEN 项**（R9 交换轮 6 条 OPEN + 两条历史延后项
-  `R6-C2`/`R7-B2` 已随 R10 批次收口，R10 匿名轮 18 个 ID 已随 R10 R1 收口提交处置，均 2026-09-22）。
+- **处置期限**: 2026-09-30 23:59 (UTC+8)；**OPEN 项 1 条**：`R10R2-A-m2`（`tests/integration/**` +
+  `tests/e2e/**` 共 12 文件仍无 CI 执行面，bench.yml 是全仓唯一 workflow）——守卫步已扩到
+  `tests/unit tests/utils bench`，该行按 OPEN 保留至 test job 落地。其余：R9 交换轮 6 条 + 两条历史延后项
+  `R6-C2`/`R7-B2` 已随 R10 批次收口，R10 匿名轮 18 个 ID 已随 R10 R1 收口提交处置，R10 交换轮 13 个 ID
+  （1 Major + 12 Minor）随 R10 R2 收口提交处置，均 2026-09-22。
   留痕项 `R9-A-3`/`R9R2-A-N1` 挂在下次 CI record 自愈
 - **逾期处理**: 必须在下一次开发会话的首项处理并向用户报告，不得静默顺延
   （该纪律的定义体与上下文见 `git show 8bb8020:.sprint-state/bench-rerecord-todo.md`）
@@ -163,10 +166,10 @@ R10 R1（匿名独立轮，评审对象 = 收口提交 `eeeba3e`）三家均 REQ
 
 | ID | 位置 | 内容 | 来源 | 状态 |
 |----|------|------|------|------|
-| R10-A-M1 | `.github/workflows/bench.yml` / `tests/unit/backlog-integrity.test.ts` | 守卫不在任何 CI job 执行面内（仓库仅 bench.yml、无 test job），强制力止于本地 `bun run test` 与全局 pre-commit 钩子；该钩子不在仓库内，故其他开发者与 CI 均不执行——与 R7-B2 设立动机（tracked 登记处自毁后无人发现）错位 | A | 已消化（bench job 在 `bun install` 后增 `Backlog registry integrity guard` 步；只跑本文件不跑全量，避免把纯登记处守卫变成未验证 e2e 面的假红源。同步：测试头规格①改写为"单测门 + CI 步骤"、ADR 验证节成文三处执行面、job 顶部"唯一阻断步"措辞改为"除登记处守卫外"） |
+| R10-A-M1 | `.github/workflows/bench.yml` / `tests/unit/backlog-integrity.test.ts` | 守卫不在任何 CI job 执行面内（仓库仅 bench.yml、无 test job），强制力止于本地 `bun run test` 与全局 pre-commit 钩子；该钩子不在仓库内，故其他开发者与 CI 均不执行——与 R7-B2 设立动机（tracked 登记处自毁后无人发现）错位 | A | 部分消化（bench job 在 `bun install` 后增 `Backlog registry integrity guard` 步；只跑本文件不跑全量，避免把纯登记处守卫变成未验证 e2e 面的假红源。同步：测试头规格①改写为"单测门 + CI 步骤"、ADR 验证节成文三处执行面、job 顶部"唯一阻断步"措辞改为"除登记处守卫外"。**根因「全仓无 test job」未消，R10 R2 由 `R10R2-A-m2` 接续并 OPEN 保留**） |
 | R10-C-M1 | 同上 | 同一件，收口二选一：加 CI 步（约 3 行 YAML、不触碰判据面/record job）或把"仅 pre-commit 生效"显式成文为强制力边界。`fix_cost: trivial` | C | 已消化（并入 `R10-A-M1`；采"加 CI 步"分支——成文边界只把空档写下来，不消除空档） |
 | R10-B-3 | 同上 | 同一件（实测 xp-gate 适配器为全量 `npx vitest run`），建议 bench job 增秒级 vitest 步或成文边界残余 | B | 已消化（并入 `R10-A-M1`） |
-| R10-B-1 | ADR 决策 6 + `record-baseline.ts` 注释 + 本表 `R9R2-C-2` 行 + `eeeba3e` 提交说明 | 「折叠身份要比 inode/卷内文件 ID，Node 在 win32 不暴露该信息（posix 有 `ino`，跨三平台不统一）」是**可检验假命题**：Bun 1.3.14 与 Node 在 win32/NTFS 实测 `statSync().ino` 均为真实文件 ID（硬链接两名字 ino 全等），ADS 与主流亦共享身份；失真理由出现 4 处 | B | 已消化（①四处文字全部订正；②守卫升级为"名字折叠 **或** 身份折叠（`dev:ino`）"双判据，`ino === 0` 哨兵与 stat 失败退让为 `null`；③④⑤ 由登记转代码收口，四别名形态端到端 refuse 实测见 ADR 验证节。判据/阈值零改动） |
+| R10-B-1 | ADR 决策 6 + `record-baseline.ts` 注释 + 本表 `R9R2-C-2` 行 + `eeeba3e` 提交说明 | 「折叠身份要比 inode/卷内文件 ID，Node 在 win32 不暴露该信息（posix 有 `ino`，跨三平台不统一）」是**可检验假命题**：Bun 1.3.14 与 Node 在 win32/NTFS 实测 `statSync().ino` 均为真实文件 ID（硬链接两名字 ino 全等），ADS 与主流亦共享身份；失真理由出现 4 处 | B | 已消化（①三处 **tracked 文字**全部订正，第 4 处即 `eeeba3e` 的**历史提交说明**——git 历史不可就地改写，勘误由 `2f2aa6c` 提交说明承接，后人 `git show eeeba3e` 仍会读到假命题原文，此点由 `R10R2-A-m3`/`R10R2-B-4` 点名（R10 R2 前本行写作"四处文字全部订正"，字面不成立）；②守卫升级为"名字折叠 **或** 身份折叠（`dev:ino`）"双判据，`ino === 0` 哨兵与 stat 失败退让为 `null`；③④⑤ 由登记转代码收口——**④ 该轮只收口"流已存在"的一半，任意流名的穿透由 `R10R2-C-M1` 的宿主折叠闭合**。判据/阈值零改动） |
 | R10-A-N1 | `bench/env-gate.ts` `environmentMatches` | os/arch 未施加与 `samplingMatches` 同类的空白归一：`{os:"win32 "}` 落 mismatch 文案而非 malformed，相邻两函数对"首尾空白"用两套标准（无判据后果，两者皆 SKIP） | A | 已消化（并入 `R10-B-2`/`R10-C-m4`） |
 | R10-B-2 | 同上 | 同一件（B 编号），建议登记即可 | B | 已消化（提级为就地收口：抽出 `isVerbatimMarker`，os/arch/`_estimator` 三处共用同一畸形判据；补 5 形态 malformed 用例 + 1 条"真实差异仍报 mismatch"反向用例，确保分类不放宽判定） |
 | R10-C-m4 | 同上 | 同一件（C 编号），标注为既存问题、非本提交引入 | C | 已消化（并入 `R10-B-2`） |
@@ -200,6 +203,44 @@ R10 R1（匿名独立轮，评审对象 = 收口提交 `eeeba3e`）三家均 REQ
 - **冻结面零改动自证**：`git diff --exit-code eeeba3e..HEAD -- bench/regression-formula.ts bench/baseline.json`
   应为 0；判据公式 `* 1.2` / `> 2` 与三台门阈值常量未触碰。本批触碰 `.github/workflows/bench.yml`
   （上一批未触碰），且**只增一步守卫、不改任何 runner 步骤与判据**。
+
+### R10 R2 批次（`2f2aa6c` 的交换轮走查意见 → 本收口提交，2026-09-22）
+
+R10 R2（交换轮，评审对象 = 收口提交 `2f2aa6c`）：A/B 各自 APPROVED（0.93 / 0.95），C REQUEST_CHANGES
+（0.90，1 Major）→ 三家下确界 0.90 但**裁决不一致**，共识门未过。下表登记 13 个 ID 的处置：
+
+| ID | 位置 | 内容 | 来源 | 状态 |
+|----|------|------|------|------|
+| R10R2-C-M1 | `bench/record-baseline.ts` 守卫 + ADR 决策 6 残余④ + 验证节 | 「④ NTFS ADS 已代码收口」只在**流已存在**时成立：尚不存在的流名令 realpath 与 stat 双双 ENOENT → 名字与身份双判据皆假 → `bench/baseline.json:<任意新流名>` 穿透并写出备用流（C 端到端实测 5241 字节）。R10 R1 的"六形态全部 refuse"结论系出题方与 B 各验自己创建过的字面量流名，判别力名字空间从未被覆盖 | C | 已消化（守卫增第三段**宿主折叠**：win32 上把末段首个 `:` 及其后全部流后缀剥掉（多级流一次剥净）再走双判据；合法路径末段无 `:` 故恒等、只增拒绝。17 形态矩阵复跑 + ADR④/验证节改写为"两段收口"并公开此前结论的不泛化） |
+| R10R2-A-m1 | `tests/unit/backlog-integrity.test.ts` `parseTables` | 围栏盲区：``` 代码块内的示例表格被认作真实表 → 幻影行虚增棘轮下界（55 恰在下界，可掩护真实行被删）、幻影 ID 入超集、示例表缺「状态」列触发结构断言假红。既有 R10-C-m1 自检只验了游离 `\|` 行，给了错误信心 | A | 已消化（`parseTables` 按 GFM 维护 inFence（同字符、不小于开启长度者闭合），围栏内行不入块；新增内存 fixture 用例覆盖"闭合围栏内示例表 + 未闭合围栏吞掉其后内容"两形态。当前登记处 `grep '^```'` = 0，属潜伏面） |
+| R10R2-B-1 | 同上 | 同一件（B 独立发现并已固化形态） | B | 已消化（并入 `R10R2-A-m1`） |
+| R10R2-A-m2 | `.github/workflows/bench.yml` / 本表 R10-A-M1 行 | 根因未消：bench.yml 是全仓唯一 workflow、无任何 test job，上批只给单个文件开执行面，`env-gate`/`repeat`/`runner-format`/`regression-formula`/`architecture-boundaries`/`toolchain-smoke` 仍无 CI 执行面；本表却记为完整"已消化"并称"当前无 OPEN 项" | A | **部分消化 → OPEN**（守卫步扩为 `bunx vitest run tests/unit tests/utils bench`，20 文件 169 用例 1.7s，判据公式与估计量口径两面纳入 CI；`tests/integration/**` + `tests/e2e/**` 共 12 文件仍无 CI 执行面，本行按 OPEN 保留至该面落地，不再由"扩了一个文件"冒充根因已消） |
+| R10R2-B-2 | 同上 | 同一件的 B 视角：对称缺口应在登记处成文为观测项，而非只留在 workflow 注释里 | B | 已消化（并入 `R10R2-A-m2` 的 OPEN 行；workflow 注释与本行互为指针） |
+| R10R2-C-m1 | `bench/regression-formula.test.ts` / `bench/repeat.test.ts` | 同一件的 C 视角：守护判据公式与 min-of-N 口径的两个测试不在任何 CI 面；C 实测合跑 142 用例仅 1.09s，"避免 e2e 假红"的顾虑可用显式文件列表近乎免费消除 | C | 已消化（并入 `R10R2-A-m2`；正是采 C 的"显式文件列表"修法） |
+| R10R2-B-3 | `bench/record-baseline.ts` `fileIdentity` + ADR 残余① | 身份判据的 `statSync` catch-all 在权限受限（EPERM/EACCES）时静默退让为"仅名字判定"，残余①只点名了 realpath 词法回退，未覆盖此面，且无告警 | B | 已消化（ADR 残余①改写为"两个面同为 catch-all 静默退让"并给出退让后果链；不改代码——加 warn 需在正常路径 stat 失败时刷屏，且落"防误操作"模型内） |
+| R10R2-C-m2 | 同上 | 同一件（C 独立发现，repro 为代码阅读） | C | 已消化（并入 `R10R2-B-3`） |
+| R10R2-A-m3 | `eeeba3e` 提交说明（历史 blob） | `R10-B-1` 登记的"失真理由出现 4 处"，其第 4 处在历史提交说明里，**不可就地改写**；本表当时未点明，后人 `git show eeeba3e` 会吸收到假命题原文 | A | 已消化（本表 `R10-B-1` 行补注：第 4 处为历史提交说明，勘误由 `2f2aa6c` 提交说明承接，历史不可改写） |
+| R10R2-B-4 | 同上 | 同一件（B 独立发现，指向"四处文字全部订正"的字面不成立） | B | 已消化（并入 `R10R2-A-m3`；`R10-B-1` 行状态列措辞同步订正为"三处 tracked 文字 + 一处历史提交说明的后续勘误"） |
+| R10R2-B-5 | `splitRow` / `fileIdentity` | 注脚级三点：`\|\|`（双反斜杠紧跟竖线）按 GFM 应拆两格而本实现折叠为单格；分隔线单元含内部空格的 `\|` 块被静默排除出结构断言；模板串内 `String()` 冗余 | B | 已消化（第三点就地删除冗余；前两点为**有意的保守偏差**（少认表 → 少断言，不造假红），写入守卫文件头「能力边界」段成文，不改语义以免引入未验证的解析分支） |
+| R10R2-C-m3 | ADR 决策 6 抬头 + `record-baseline.ts` 注释 | 文档引用瑕疵两处：决策 6 的历史链把该批写作 `R10-R9R2-*`（自指错标，实为 R9R2 批成文于 `eeeba3e`）；注释"见 docs/adr/0002 补遗一决策 6"与补遗二决策 6（绝对门 print-only）撞名歧义 | C | 已消化（抬头订正为 `R9R2-B-1/B-2/B-3/B-6/C-2 …（登记于 eeeba3e）`；注释改写全称为"补遗一·写入路径守卫"） |
+| R10R2-A-m4 | 本提交捆绑范围（7 文件 +307/−62：文档+守卫+CI+parser） | A 的保留意见：跨四面捆绑削弱回滚粒度，建议后续按判据面/测试面/流程面拆分（A 明确标注"不阻断"） | A | 已裁决·**本批不改流程**（保留为下次多文件批的自选动作；本批同样跨四面捆绑，故不在此虚报已改。`R10R2-C-M1` 的修复必须与守卫代码同批走，拆开只会让宿主折叠无测试面同批可审） |
+
+- **裁决口径**：13 个 ID（Major 1 / Minor 12）中，12 项就地消化、1 项（`R10R2-A-m2`）**部分消化后按 OPEN
+  保留**。三家 R2 下确界 0.90，但 A/B APPROVED 与 C REQUEST_CHANGES 裁决不一致 → 共识门未过，故 C 的
+  Major 修复后须出 R3 卷复评（评审对象 = 本收口提交）。
+- **本批代码面清单**：`bench/record-baseline.ts`（宿主折叠 + 注释/措辞订正 + 去 `String()` 冗余）、
+  `tests/unit/backlog-integrity.test.ts`（inFence + 围栏 fixture + 能力边界补两处有意偏差 + 规格①扩面说明，
+  6 → 7 用例）、`.github/workflows/bench.yml`（守卫步扩面 + 注释诚实化）、`docs/adr/0002`（决策 6 历史链
+  订正 + 宿主折叠成文 + 残余①扩面 + ④ 两段收口改写 + 验证节新增宿主折叠矩阵/shell 转义陷阱/执行面三条）、本文件。
+- **宿主折叠复跑**（win32-x64，17 形态）：6 个流名形态（含 C 的判别力名字 `:probestreamC`、多级 `:NEW:two`、
+  `::$DATA`、别名路径 + 新流名）全部 refuse；5 个既有名字变体 + 无参全部 refuse；2 个 UNC/设备命名空间
+  别名 refuse；5 个合法出参形态全部放行、无误伤。探针**只读判定不写流**，`dir /r` 无残留、主流 md5
+  `3ebfaa9f6a71ecf7cb7b0d91355e2525` 不变、`git status` 干净。
+- **守卫有效性负例**（扩面后复跑）：临时删两行 backlog → 三条断言同时 fail（缺 ID / 棘轮下界 / 自检超集），
+  恢复后 7 用例全绿。
+- **冻结面零改动自证**：`git diff --exit-code 2f2aa6c..HEAD -- bench/regression-formula.ts bench/baseline.json`
+  应为 0；判据公式 `* 1.2` / `> 2` 与三台门阈值常量未触碰；本批对 `bench.yml` 只改守卫步的文件列表与注释，
+  三台 runner 与 Regression check 步骤逐字节未变。
 
 ## 备注
 

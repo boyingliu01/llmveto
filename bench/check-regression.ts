@@ -2,7 +2,7 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { isRegression } from "./regression-formula.ts";
-import { currentEnvironment, environmentMatches } from "./env-gate.ts";
+import { currentEnvironment, environmentMatches, isCiCalibrated } from "./env-gate.ts";
 
 /**
  * @test REQ-VETO-013
@@ -47,18 +47,25 @@ const baseline = JSON.parse(readFileSync(baselinePath, "utf8")) as Baseline;
 const gate = environmentMatches(baseline._environment, currentEnvironment());
 if (!gate.comparable) {
   // SKIP ≠ 放行：相对门在当前环境不具备判别力（缺权威基准或跨环境噪声）。绝对门按 ADR-0002 v2
-  // 既有决策只打印不设退出码（见 docs/adr/0002 "绝对门仅供人读"）→ 过渡期内本 job 没有阻断性
-  // 性能门，必须显式声明（不得让"逐档打印"被读成仍有强制力）；权威基线落地后同一环境自动转强制。
+  // 既有决策只打印不设退出码（见 docs/adr/0002 "绝对门仅供人读"）→ 本环境内没有阻断性性能门，
+  // 必须显式声明（不得让"逐档打印"被读成仍有强制力）。两种不可比子因的补救完全不同，故分支措辞：
+  // 基线已是 CI 录制 → 判定权在同构 CI 运行，本地要强制需自录本地基准；
+  // 基线仍是本地占位 → 待办是录权威基线并提交。
   console.log(`SKIP  relative regression gate — ${gate.reason}`);
-  console.log(`      ⚠️  no blocking performance gate in effect (relative gate skipped; absolute gates print-only per ADR-0002)`);
-  console.log(`          mandatory follow-up: record the CI authoritative baseline, then commit bench/baseline.json`);
   console.log(`      baseline: ${baselinePath}`);
-  console.log(`      remediation (CI authoritative baseline): Actions → bench → Run workflow (workflow_dispatch, record job)`);
-  console.log(`                                              → download 'bench-baseline' artifact → commit bench/baseline.json`);
+  console.log(`      ⚠️  no blocking performance gate in effect (relative gate skipped; absolute gates print-only per ADR-0002)`);
+  if (isCiCalibrated(baseline._environment)) {
+    console.log(`      cause: the committed baseline was recorded on CI (ubuntu-latest); this environment cannot be compared against it.`);
+    console.log(`      authoritative enforcement: every bench run in CI (ubuntu-latest) is compared against this same baseline.`);
+  } else {
+    console.log(`          mandatory follow-up: record the CI authoritative baseline, then commit bench/baseline.json`);
+    console.log(`      remediation (CI authoritative baseline): Actions → bench → Run workflow (workflow_dispatch, record job)`);
+    console.log(`                                              → download 'bench-baseline' artifact → commit bench/baseline.json`);
+  }
   console.log(`      remediation (local enforcement): bun run bench:record bench/baseline.local.json`);
   console.log(`                 LLMVETO_BENCH_BASELINE=bench/baseline.local.json bun run bench/check-regression.ts`);
   if (process.env.CI === "true") {
-    console.log(`::warning::bench relative gate SKIPPED — ${gate.reason}; no blocking performance gate in effect until the CI baseline is committed; see docs/adr/0002`);
+    console.log(`::warning::bench relative gate SKIPPED — ${gate.reason}; no blocking performance gate in effect in this environment; see docs/adr/0002`);
   }
   process.exit(0);
 }

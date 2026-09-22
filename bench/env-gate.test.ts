@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { environmentMatches, type BenchEnvironment } from "./env-gate.ts";
+import { environmentMatches, isCiCalibrated, type BenchEnvironment } from "./env-gate.ts";
 
 // @test REQ-VETO-013
 // @intent 环境门：仅当基准 _environment 与当前环境（os/arch/ci）三字段全等才判定可比；
@@ -40,5 +40,18 @@ describe("environmentMatches (相对回归门环境前置)", () => {
   it("_environment 字段畸形（类型错）→ 不可比 + 提示重录", () => {
     expect(environmentMatches({ os: "linux", arch: "x64", ci: "true" }, current).comparable).toBe(false);
     expect(environmentMatches({ os: 1, arch: "x64", ci: true }, current).comparable).toBe(false);
+  });
+});
+
+describe("isCiCalibrated (SKIP 措辞分支用，不参与可比性判定)", () => {
+  it("CI 录制标记 → true；本地录制 → false", () => {
+    expect(isCiCalibrated({ os: "linux", arch: "x64", ci: true })).toBe(true);
+    expect(isCiCalibrated({ os: "win32", arch: "x64", ci: false })).toBe(false);
+  });
+
+  it("缺标记 / 畸形 → false（与不可比判定一致，不误报为 CI 权威）", () => {
+    for (const v of [undefined, null, "linux-x64-ci", [], { ci: "true" }, { os: "linux" }]) {
+      expect(isCiCalibrated(v)).toBe(false);
+    }
   });
 });

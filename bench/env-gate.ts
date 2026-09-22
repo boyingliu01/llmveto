@@ -44,3 +44,12 @@ export function environmentMatches(baselineEnv: unknown, current: BenchEnvironme
   }
   return { comparable: true, reason: "" };
 }
+
+/**
+ * 基准是否标注为 CI 录制。只用于 SKIP 提示选择措辞（"待录权威基线" vs "权威判定在同构 CI 运行"），
+ * 不参与可比性判定——可比性一律由 environmentMatches 决定。
+ */
+export function isCiCalibrated(baselineEnv: unknown): boolean {
+  if (baselineEnv === null || typeof baselineEnv !== "object" || Array.isArray(baselineEnv)) return false;
+  return (baselineEnv as Record<string, unknown>).ci === true;
+}

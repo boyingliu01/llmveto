@@ -1,8 +1,14 @@
-// @no-test-required: bench 工具（可执行脚本），复刻 check-regression.ts 的 runner 编排；解析契约与 check 侧共用 bench/runner-format.ts（R8-B-M3）。核心判定由 regression-formula.test.ts 覆盖，估计量由 repeat.test.ts 覆盖。
+// @no-test-required: bench 工具（可执行脚本），复刻 check-regression.ts 的 runner 编排；解析契约与 check 侧共用 bench/runner-format.ts（R8-B-M3）。核心判定由 regression-formula.test.ts 覆盖，估计量由 repeat.test.ts 覆盖，写入路径守卫由 out-path-guard.test.ts 覆盖（R10R4-C-m4）。
 import { spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { arch, cpus, platform } from "node:os";
-import { dirname, resolve } from "node:path";
+import {
+  TRACKED_BASELINE,
+  assertOutPathArg,
+  assertWritableOutPath,
+  inspectOutPath,
+  refusalMessage,
+} from "./out-path-guard.ts";
 import { G1_TTFT_P95_MAX_MS, G1_TTFT_P99_MAX_MS, G2_THRESHOLDS, G3_THRESHOLDS } from "./regression-formula.ts";
 import { BENCH_SAMPLING, minOf } from "./repeat.ts";
 import { G1_LINE_RE, g2LineRe, g3LineRe } from "./runner-format.ts";
@@ -21,148 +27,30 @@ import { G1_LINE_RE, g2LineRe, g3LineRe } from "./runner-format.ts";
 const SAMPLE_SIZE = 200;
 const WARMUP = 50;
 
-const TRACKED_BASELINE = "bench/baseline.json";
 const outPath = process.argv[2] ?? TRACKED_BASELINE;
 
-// 折叠**宿主**（R10R2-C-M1）：win32 上 `:` 只可能来自 NTFS 备用数据流引用（文件名本身禁用该字符）。realpath
-// 与 statSync 对**尚不存在**的流一律 ENOENT → 名字与身份双判据同时为假，`bench/baseline.json:<任意新流名>`
-// 即可穿透守卫、把整份基线写进受保护文件的备用流（此前"ADS 已收口"仅对**已存在**的流名成立）。故折叠前先把
-// 末段首个 `:` 及其后的全部流后缀剥掉（多级流 `f:a:b` 一次剥净），把判定对象折回宿主文件。合法路径的末段不含
-// `:`，此步恒等 —— 只增拒绝，不放宽任何既有判定。posix 上 `:` 是普通文件名字符，且 realpath 本就能区分该
-// 文件与 tracked，故不剥离。
-function hostPath(p: string): string {
-  if (platform() !== "win32") return p;
-  const sep = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
-  // 末段之外的冒号属于盘符（`C:`）或 UNC 共享根（`\\srv\share`），不是流分隔符。
-  const start = sep === -1 && /^[A-Za-z]:/.test(p) ? 2 : sep + 1;
-  const colon = p.indexOf(":", start);
-  return colon === -1 ? p : p.slice(0, colon);
+// 写入路径守卫与写可达性预检的实现住在 bench/out-path-guard.ts（R10R4-C-m4：抽成受测模块，形态矩阵
+// 进 vitest 阻断面）。本文件只保留 argv 解析、CI 放行判定与告警投递这三件**脚本特有**的事。
+// 守卫**只判"是不是受保护文件"，不判"写不写得下去"**；后者是采样前的预检，两件事不合并、顺序也在
+// 守卫之后，以免拒绝理由被混成一条。信任边界（放行判据 = CI 平台注入的 CI=true）与残余面清单见
+// docs/adr/0002 补遗一·写入路径守卫。
+assertOutPathArg(outPath);
+const fate = inspectOutPath(outPath);
+if (fate.refusal !== null && process.env.CI !== "true") {
+  throw new Error(refusalMessage(fate.refusal));
 }
-
-// 把同一文件的多种**名字**写法折叠为同一字符串：优先文件系统解析（realpath 解引用 symlink、按平台原生
-// 规则取回真实大小写与长名，含 8.3 短名 → 长名），目标尚不存在或不可解析时退化为词法 resolve；两条分支
-// 之后一律在大小写不敏感平台（win32/darwin 默认 FS）折叠大小写。
-function canonicalPath(p: string): string {
-  let canonical: string;
-  try {
-    canonical = realpathSync.native(p);
-  } catch {
-    canonical = resolve(p);
-  }
-  return platform() === "win32" || platform() === "darwin" ? canonical.toLowerCase() : canonical;
-}
-
-// 折叠**身份**（R10R1-B-1：路径归一只折叠名字，同一字节另有名字时折叠不掉）。`dev:ino` 由 libuv 在
-// 三平台统一暴露——win32 下即卷序列号 + FileId（非"win32 无 inode"）。实测 win32/NTFS 上硬链接、
-// NTFS 备用数据流、UNC/admin-share（`\\localhost\d$\…`）三类别名形态的 dev/ino 与 tracked 文件全等，
-// `\\?\` 设备命名空间与 `subst` 盘则本就被 realpath 折叠。任一路径 stat 失败（尚不存在，或 ACL 令读取被拒）、
-// 或文件系统不报文件 ID（`ino === 0` 是常见哨兵值，两个不同文件会假等）→ null，该条判据退让给路径折叠。
-// 退让**不是**同一回事（R10R3-A-m4/B-m3/C-m2）：out 侧 stat 失败是合法高频场景（首次录制目标尚不存在），
-// 告警会刷屏，故保持静默；tracked 侧 stat 失败即异常事件且使全部别名形态失效，另加定向告警（见下）。
-function fileIdentity(p: string): string | null {
-  try {
-    const st = statSync(p);
-    return st.ino === 0 ? null : `${st.dev}:${st.ino}`;
-  } catch {
-    return null;
-  }
-}
-
-// 区分 `fileIdentity` 返回 null 的两种成因：stat 抛错（异常，值得告警）vs 文件系统不报文件 ID
-// （`ino === 0` 哨兵，正常降级，不该告警）。
-function statThrows(p: string): boolean {
-  try {
-    statSync(p);
-    return false;
-  } catch {
-    return true;
-  }
-}
-
-// 写入路径守卫（R8-C-R1；R2-B-2/R2-C-M2 加固；R9-B-1/R9-C-M1/A-R9-2 收口；R10R1-B-1 升级为名字+身份双判据；
-// R10R2-C-M1 补流后缀剥离）：权威基线的 repo 内保真锚点（docs/adr/0002 补遗三）不得被本地运行静默改写。
-// **名字**折叠——`./bench/baseline.json`、`bench/./baseline.json`、反斜杠变体、`bench/BASELINE.JSON` 型大小写
-// 变体与指向 tracked 的 symlink 均与 tracked 路径同判；**身份**折叠——硬链接 / NTFS 备用数据流 / UNC·admin-share
-// 型同 inode 别名（真实路径不等价）同判；**宿主**折叠——`baseline.json:<任意流名>`（含尚不存在的流名）折回宿主
-// 文件后走前两判据。
-// 非 CI 覆写 tracked 路径须显式传参（如 bench/baseline.local.json）；CI record job 不受影响
-// （信任边界与残余面清单见 docs/adr/0002 补遗一·写入路径守卫）。
-// 本守卫**只判"是不是受保护文件"，不判"写不写得下去"**；后者是采样前的 `assertWritableOutPath` 预检
-// （R10R3-B-m4/C-m1），两件事不合并、顺序也在守卫之后，以免拒绝理由被混成一条。
-if (outPath.trim() === "") {
-  // `bun run` 会剥掉空 argv（落到"无参"分支），故本分支只在直接以 node 调用时可达——两入口差异见
-  // docs/adr/0002 验证节，避免读者以 `bun run bench:record ""` 观测不到而误判守卫未生效。
-  throw new Error(
-    `empty out path: bench:record takes an optional non-empty out path only ` +
-      `(e.g. \`bun run bench:record bench/baseline.local.json\`)`,
-  );
-}
-if (outPath.startsWith("-")) {
-  throw new Error(
-    `unknown flag ${outPath}: bench:record takes an optional out path only ` +
-      `(e.g. \`bun run bench:record bench/baseline.local.json\`)`,
-  );
-}
-const outHost = hostPath(outPath);
-const sameName = canonicalPath(outHost) === canonicalPath(TRACKED_BASELINE);
-const outIdentity = fileIdentity(outHost);
-const trackedIdentity = fileIdentity(TRACKED_BASELINE);
-const sameInode = outIdentity !== null && outIdentity === trackedIdentity;
-if ((sameName || sameInode) && process.env.CI !== "true") {
-  // 三种拒绝措辞：直接命中 tracked 名字 / 同 inode 的别名路径 / 受保护文件的备用数据流引用。
-  const via =
-    outHost !== outPath
-      ? " (an NTFS alternate data stream of it)"
-      : sameInode && !sameName
-        ? " (same file identity via an alias path)"
-        : "";
-  throw new Error(
-    `refusing to overwrite the tracked authoritative baseline${via} outside CI: pass an explicit out path ` +
-      `(e.g. \`bun run bench:record bench/baseline.local.json\`); authoritative re-record is the CI record job (docs/adr/0002)`,
-  );
-}
-// tracked 基线的 stat 抛错 → 身份判据整体缺席（R10R3-A-m4/B-m3/C-m2）。这与 `outIdentity === null`
-// 不同类：out 路径尚不存在是合法高频场景，警告会刷屏；而 TRACKED_BASELINE 在仓内必在，stat 失败本身
-// 即异常事件（ACL 拒绝 / 损坏 / 盘未挂载），一旦发生 sameInode 恒假、守卫静默降级为纯名字判定，
-// 硬链接 / UNC / ADS 宿主别名三类别名形态全部失去拦截。健康路径永不触发 → 零刷屏。
-// 与 `ino === 0`（文件系统不报文件 ID，正常降级，见 docs/adr/0002 补遗一残余①）严格区分：后者不告警，
-// 否则在 9p / 部分网络盘上每次运行都刷。
-if (trackedIdentity === null && statThrows(TRACKED_BASELINE)) {
+// tracked 基线的 stat 抛错 → 身份判据整体缺席（R10R3-A-m4/B-m3/C-m2）。这与 out 侧的 null 不同类：
+// out 路径尚不存在是合法高频场景，警告会刷屏；而 TRACKED_BASELINE 在仓内必在，stat 失败本身即异常事件
+// （ACL 拒绝 / 损坏 / 盘未挂载），一旦发生 sameInode 恒假、守卫静默降级为纯名字判定，硬链接 / UNC /
+// ADS 宿主别名三类别名形态全部失去拦截。健康路径永不触发 → 零刷屏。`ino === 0`（文件系统不报文件 ID，
+// 正常降级，见 docs/adr/0002 补遗一残余①）由模块内部分类，不在此告警，否则在 9p / 部分网络盘上每次运行都刷。
+if (fate.identityAbsent) {
   console.warn(
     `[record-baseline] WARNING: stat on ${TRACKED_BASELINE} failed; the identity criterion is disabled for this run ` +
       `and only the path-name check protects the tracked baseline`,
   );
 }
-// 写可达性预检（R10R3-B-m4/C-m1）：守卫只管 tracked 家族，不校验"这个 out 路径写不写得下去"。
-// 错拼目录 / 只读卷 / 空宿主（`:stream` 折叠后）此前要跑满 10×3 采样才在 writeFileSync 处 ENOENT，
-// 白烧约 90s 且失败信号指向错误。改为采样前即刻 throw。**不做创建探测**（不 mkdir、不 touch、
-// 不以 "a" 模式打开——那会留下 0 字节文件或改动 mtime），也不宣称消除 TOCTOU：预检与写之间的窗口
-// 与残余①②同型，本步只把"必然失败"提前到失败最便宜处。
-function assertWritableOutPath(p: string): void {
-  if (p.trim() === "") {
-    throw new Error(`invalid out path ${outPath}: its host is empty (a bare ":stream" suffix has no file to write to)`);
-  }
-  const dir = dirname(p);
-  if (!existsSync(dir)) {
-    throw new Error(`out path ${p}: parent directory ${dir} does not exist (create it first; bench:record never mkdirs)`);
-  }
-  try {
-    accessSync(dir, constants.W_OK);
-  } catch (e) {
-    throw new Error(`out path ${p}: parent directory ${dir} is not writable (${String(e)})`);
-  }
-  if (existsSync(p)) {
-    if (!statSync(p).isFile()) {
-      throw new Error(`out path ${p} exists but is not a regular file`);
-    }
-    try {
-      accessSync(p, constants.W_OK);
-    } catch (e) {
-      throw new Error(`out path ${p} is not writable (${String(e)})`);
-    }
-  }
-}
-assertWritableOutPath(outHost);
+assertWritableOutPath(fate);
 
 const CHECKERS = ["egress-secret-scan", "invisible-unicode-scan", "model-label-consistency"] as const;
 

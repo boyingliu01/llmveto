@@ -57,7 +57,7 @@ Code-walkthrough 评审（R1）指出本 ADR 的空缺：正文规定"权威基�
 3. **SKIP ≠ 放行**：SKIP 的语义是"相对门在当前环境不具备判别力"，不是"检查通过"。绝对门（G1/G2 各档 gate_p95）仍由 runner 逐档打印在 CI 日志；一旦权威基线落地，同一 CI 环境上相对门自动从 SKIP 转为强制（无需再改任何开关）。
 4. **重录路径**：`bench.yml` 增 `workflow_dispatch` 触发 + `record` job（ubuntu-latest 跑 `bun run bench:record`，`git diff --exit-code bench/regression-formula.ts` 守卫冻结阈值零改动，`bench/baseline.json` 作为 artifact 产出）。产物**由人工下载并提交**——不引入 bot 直推 main 的写路径，main 的写权限与提交纪律保留在人工门。
 5. **本地强制**：`bun run bench:record bench/baseline.local.json` 录制本机基准，再以 `LLMVETO_BENCH_BASELINE=bench/baseline.local.json bun run bench/check-regression.ts` 对拍（该文件已入 `.gitignore`）。本地录制产物的 `ci=false`，不可能被 CI 误当作权威基准使用。
-6. **写入路径守卫**（2026-09-22 R8 走查收口）：`record-baseline.ts` 拒绝在非 CI 环境覆写 tracked 的 `bench/baseline.json`（须显式传 out 路径，如 `bench/baseline.local.json`）——权威基线的 repo 内保真锚点（见补遗三）不得被本地运行静默改写；CI record job（`CI=true`）不受影响。该守卫只限制**写路径**，不改变任何测量口径或判据。
+6. **写入路径守卫**（2026-09-22 R8 走查收口；R2-B-2/R2-C-M2 加固）：`record-baseline.ts` 拒绝在非 CI 环境覆写 tracked 的 `bench/baseline.json`（须显式传 out 路径，如 `bench/baseline.local.json`）——权威基线的 repo 内保真锚点（见补遗三）不得被本地运行静默改写。out 路径**归一后比较**（`./bench/baseline.json`、`bench/./baseline.json`、反斜杠变体与 tracked 路径同判），以 `-` 开头的未知 flag 直接拒绝。**信任边界**（R2-A-M2/R2-C-M1 成文）：放行判据是 `process.env.CI === "true"`，即信任"CI 平台会注入该变量"（GitHub Actions 隐式注入）——该守卫防的是**误操作**，不是防篡改的安全控制；平台迁移若不再注入，无参 record 会以拒绝文案失败（fail-loud 属预期行为）。该守卫只限制**写路径**，不改变任何测量口径或判据。
 
 ### 影响（Consequences）
 

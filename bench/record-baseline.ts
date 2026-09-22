@@ -2,6 +2,7 @@
 import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { arch, cpus, platform } from "node:os";
+import { resolve } from "node:path";
 import { G1_TTFT_P95_MAX_MS, G1_TTFT_P99_MAX_MS, G2_THRESHOLDS, G3_THRESHOLDS } from "./regression-formula.ts";
 import { BENCH_SAMPLING, minOf } from "./repeat.ts";
 import { G1_LINE_RE, g2LineRe, g3LineRe } from "./runner-format.ts";
@@ -23,9 +24,17 @@ const WARMUP = 50;
 const TRACKED_BASELINE = "bench/baseline.json";
 const outPath = process.argv[2] ?? TRACKED_BASELINE;
 
-// 写入路径守卫（R8-C-R1）：权威基线的 repo 内保真锚点（docs/adr/0002 补遗三）不得被本地运行静默改写。
-// 非 CI 环境覆写 tracked 路径须显式传参（如 bench/baseline.local.json）；CI record job 不受影响。
-if (outPath === TRACKED_BASELINE && process.env.CI !== "true") {
+// 写入路径守卫（R8-C-R1；路径归一与未知 flag 拒绝为 R2-B-2/R2-C-M2 加固）：权威基线的 repo 内保真锚点
+// （docs/adr/0002 补遗三）不得被本地运行静默改写。归一后比较——`./bench/baseline.json`、`bench/./baseline.json`、
+// 反斜杠变体与 tracked 路径同判，避免等价路径绕过。非 CI 覆写 tracked 路径须显式传参（如 bench/baseline.local.json）；
+// CI record job 不受影响（信任边界见 docs/adr/0002 补遗一决策 6）。
+if (outPath.startsWith("-")) {
+  throw new Error(
+    `unknown flag ${outPath}: bench:record takes an optional out path only ` +
+      `(e.g. \`bun run bench:record bench/baseline.local.json\`)`,
+  );
+}
+if (resolve(outPath) === resolve(TRACKED_BASELINE) && process.env.CI !== "true") {
   throw new Error(
     `refusing to overwrite the tracked authoritative baseline outside CI: pass an explicit out path ` +
       `(e.g. \`bun run bench:record bench/baseline.local.json\`); authoritative re-record is the CI record job (docs/adr/0002)`,
@@ -124,7 +133,7 @@ const baseline = {
   _estimator: BENCH_SAMPLING.estimator,
   _measured_on: `${platform()} ${arch()} · ${cpu}（bun run bench:record 自动重录${process.env.CI === "true" ? "，CI runner" : "，本地"}，每档 ${BENCH_SAMPLING.repeats} 次取最小，_estimator=${BENCH_SAMPLING.estimator}）`,
   _refresh_policy:
-    "权威基准由 main 分支 CI 重录：Actions → bench → Run workflow（workflow_dispatch）触发 record job 在 ubuntu-latest 跑 `bun run bench:record`，下载 bench-baseline artifact 后人工提交（保留 main 写路径的人工门）。本地强制：`bun run bench:record bench/baseline.local.json` + LLMVETO_BENCH_BASELINE 覆写；非 CI 环境覆写 tracked 的 bench/baseline.json 会被 record 脚本拒绝（写入路径守卫，见 docs/adr/0002 补遗一）。环境门、口径门与 SKIP 语义详见 docs/adr/0002。",
+    "权威基准由 main 分支 CI 重录：Actions → bench → Run workflow（workflow_dispatch）触发 record job 在 ubuntu-latest 跑 `bun run bench:record`，下载 bench-baseline artifact 后人工提交（保留 main 写路径的人工门）。本地强制：`bun run bench:record bench/baseline.local.json` + LLMVETO_BENCH_BASELINE 覆写；非 CI 环境覆写 tracked 的 bench/baseline.json 会被 record 脚本拒绝（写入路径守卫，路径归一后比较，见 docs/adr/0002 补遗一；放行依赖 CI 平台注入的 CI=true 环境变量）。环境门、口径门与 SKIP 语义详见 docs/adr/0002。",
   g1_ttft_delta_ms: {
     runner: "bench/g1-ttft.ts",
     method: "http-e2e-paired-delta",

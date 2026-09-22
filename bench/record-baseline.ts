@@ -1,6 +1,6 @@
 // @no-test-required: bench 工具（可执行脚本），复刻 check-regression.ts 的 runner 编排；解析契约与 check 侧共用 bench/runner-format.ts（R8-B-M3）。核心判定由 regression-formula.test.ts 覆盖，估计量由 repeat.test.ts 覆盖。
 import { spawnSync } from "node:child_process";
-import { realpathSync, writeFileSync } from "node:fs";
+import { realpathSync, statSync, writeFileSync } from "node:fs";
 import { arch, cpus, platform } from "node:os";
 import { resolve } from "node:path";
 import { G1_TTFT_P95_MAX_MS, G1_TTFT_P99_MAX_MS, G2_THRESHOLDS, G3_THRESHOLDS } from "./regression-formula.ts";
@@ -26,9 +26,7 @@ const outPath = process.argv[2] ?? TRACKED_BASELINE;
 
 // 把同一文件的多种**名字**写法折叠为同一字符串：优先文件系统解析（realpath 解引用 symlink、按平台原生
 // 规则取回真实大小写与长名，含 8.3 短名 → 长名），目标尚不存在或不可解析时退化为词法 resolve；两条分支
-// 之后一律在大小写不敏感平台（win32/darwin 默认 FS）折叠大小写。已知不折叠**身份**——UNC/admin-share、
-// NTFS 备用数据流、硬链接（同一 inode 的另一个名字）仍可经守卫写入：路径归一无 inode 可比，守卫定位为
-// 防误操作而非防篡改（详见 docs/adr/0002 补遗一决策 6）。
+// 之后一律在大小写不敏感平台（win32/darwin 默认 FS）折叠大小写。
 function canonicalPath(p: string): string {
   let canonical: string;
   try {
@@ -39,20 +37,47 @@ function canonicalPath(p: string): string {
   return platform() === "win32" || platform() === "darwin" ? canonical.toLowerCase() : canonical;
 }
 
-// 写入路径守卫（R8-C-R1；R2-B-2/R2-C-M2 加固；R9-B-1/R9-C-M1/A-R9-2 收口）：权威基线的 repo 内保真锚点
-// （docs/adr/0002 补遗三）不得被本地运行静默改写。归一后比较——`./bench/baseline.json`、`bench/./baseline.json`、
-// 反斜杠变体、`bench/BASELINE.JSON` 型大小写变体与指向 tracked 的 symlink 均与 tracked 路径同判。
+// 折叠**身份**（R10R1-B-1：路径归一只折叠名字，同一字节另有名字时折叠不掉）。`dev:ino` 由 libuv 在
+// 三平台统一暴露——win32 下即卷序列号 + FileId（非"win32 无 inode"）。实测 win32/NTFS 上硬链接、
+// NTFS 备用数据流、UNC/admin-share（`\\localhost\d$\…`）三类别名形态的 dev/ino 与 tracked 文件全等，
+// `\\?\` 设备命名空间与 `subst` 盘则本就被 realpath 折叠。任一路径 stat 失败（尚不存在）、或文件系统
+// 不报文件 ID（`ino === 0` 是常见哨兵值，两个不同文件会假等）→ null，该条判据退让给路径折叠。
+function fileIdentity(p: string): string | null {
+  try {
+    const st = statSync(p);
+    return st.ino === 0 ? null : `${String(st.dev)}:${String(st.ino)}`;
+  } catch {
+    return null;
+  }
+}
+
+// 写入路径守卫（R8-C-R1；R2-B-2/R2-C-M2 加固；R9-B-1/R9-C-M1/A-R9-2 收口；R10R1-B-1 升级为名字+身份双判据）：
+// 权威基线的 repo 内保真锚点（docs/adr/0002 补遗三）不得被本地运行静默改写。**名字**折叠——`./bench/baseline.json`、
+// `bench/./baseline.json`、反斜杠变体、`bench/BASELINE.JSON` 型大小写变体与指向 tracked 的 symlink 均与 tracked
+// 路径同判；**身份**折叠——硬链接 / NTFS 备用数据流 / UNC·admin-share 型同 inode 别名（真实路径不等价）同判。
 // 非 CI 覆写 tracked 路径须显式传参（如 bench/baseline.local.json）；CI record job 不受影响
 // （信任边界与残余面清单见 docs/adr/0002 补遗一决策 6）。
+if (outPath.trim() === "") {
+  // `bun run` 会剥掉空 argv（落到"无参"分支），故本分支只在直接以 node 调用时可达——两入口差异见
+  // docs/adr/0002 验证节，避免读者以 `bun run bench:record ""` 观测不到而误判守卫未生效。
+  throw new Error(
+    `empty out path: bench:record takes an optional non-empty out path only ` +
+      `(e.g. \`bun run bench:record bench/baseline.local.json\`)`,
+  );
+}
 if (outPath.startsWith("-")) {
   throw new Error(
     `unknown flag ${outPath}: bench:record takes an optional out path only ` +
       `(e.g. \`bun run bench:record bench/baseline.local.json\`)`,
   );
 }
-if (canonicalPath(outPath) === canonicalPath(TRACKED_BASELINE) && process.env.CI !== "true") {
+const sameName = canonicalPath(outPath) === canonicalPath(TRACKED_BASELINE);
+const outIdentity = fileIdentity(outPath);
+const trackedIdentity = fileIdentity(TRACKED_BASELINE);
+const sameInode = outIdentity !== null && outIdentity === trackedIdentity;
+if ((sameName || sameInode) && process.env.CI !== "true") {
   throw new Error(
-    `refusing to overwrite the tracked authoritative baseline outside CI: pass an explicit out path ` +
+    `refusing to overwrite the tracked authoritative baseline${sameInode && !sameName ? " (same file identity via an alias path)" : ""} outside CI: pass an explicit out path ` +
       `(e.g. \`bun run bench:record bench/baseline.local.json\`); authoritative re-record is the CI record job (docs/adr/0002)`,
   );
 }

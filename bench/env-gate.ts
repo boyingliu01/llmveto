@@ -30,6 +30,16 @@ export function currentEnvironment(): BenchEnvironment {
 }
 
 /**
+ * 口径/环境标记由 record 侧机器写入，任何 producer 都不会产出空串或带首尾空白的值；出现即说明该标记
+ * 不是本仓库任何已知版本的产物（属**畸形**，指向重录），而不是"另一种环境/统计量"（属**不匹配**，
+ * 指向换到同构环境运行）。两类判据分开只影响 reason 文案指向，两侧仍走同一 fail-closed（SKIP）出口，
+ * 逐字严格比对（R6-A2 从严裁决）不因分类放宽。
+ */
+function isVerbatimMarker(value: unknown): boolean {
+  return typeof value === "string" && value !== "" && value === value.trim();
+}
+
+/**
  * 基准环境标记 vs 当前环境可否比较。
  * 标记缺失/畸形（schema < 3 的旧基准）同样判不可比：无法验证同构就不能判定回退。
  */
@@ -38,8 +48,10 @@ export function environmentMatches(baselineEnv: unknown, current: BenchEnvironme
     return { comparable: false, reason: "baseline has no _environment marker (schema < 3) — re-record required" };
   }
   const b = baselineEnv as Record<string, unknown>;
-  if (typeof b.os !== "string" || typeof b.arch !== "string" || typeof b.ci !== "boolean") {
-    return { comparable: false, reason: "baseline _environment marker is malformed — re-record required" };
+  // R10R1-A-N1/B-2/C-m4：与 samplingMatches 施加同一套畸形判据（R6-C2 的分类口径此前只覆盖 _estimator，
+  // os/arch 却把 `" linux "` 当成一种环境报 mismatch，同一提交内两套标准）。
+  if (!isVerbatimMarker(b.os) || !isVerbatimMarker(b.arch) || typeof b.ci !== "boolean") {
+    return { comparable: false, reason: "baseline _environment marker is missing or malformed — re-record required" };
   }
   const base = { os: b.os, arch: b.arch, ci: b.ci };
   if (base.os !== current.os || base.arch !== current.arch || base.ci !== current.ci) {
@@ -71,10 +83,9 @@ export function samplingMatches(
   if (typeof baselineRepeats !== "number" || !Number.isInteger(baselineRepeats) || baselineRepeats < 1) {
     return { comparable: false, reason: "baseline has no _repeats marker or it is malformed (schema < 4) — re-record required" };
   }
-  // R6-C2：畸形判据与"确有口径差异"判据分开——`_estimator` 是机器写入的口径标记，带首尾空白即说明它
-  // 不是任何已知 producer 的产物（属畸形，需重录），而非"另一种统计量"（属口径不匹配）。
-  // 两侧仍走同一个 fail-closed（SKIP）出口，严格逐字比对（R6-A2 从严裁决）不因本分类放宽。
-  if (typeof baselineEstimator !== "string" || baselineEstimator.trim() === "" || baselineEstimator !== baselineEstimator.trim()) {
+  // R6-C2：畸形判据与"确有口径差异"判据分开——判据与 _environment 侧共用 isVerbatimMarker（R10R1-A-N1
+  // 的同一标准），严格逐字比对（R6-A2 从严裁决）不因分类放宽。
+  if (!isVerbatimMarker(baselineEstimator)) {
     return { comparable: false, reason: "baseline has no _estimator marker or it is malformed (schema < 4) — re-record required" };
   }
   if (baselineRepeats !== expected.repeats || baselineEstimator !== expected.estimator) {

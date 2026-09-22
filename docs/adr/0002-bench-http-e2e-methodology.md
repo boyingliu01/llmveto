@@ -57,14 +57,19 @@ Code-walkthrough 评审（R1）指出本 ADR 的空缺：正文规定"权威基�
 3. **SKIP ≠ 放行**：SKIP 的语义是"相对门在当前环境不具备判别力"，不是"检查通过"。绝对门（G1/G2 各档 gate_p95）仍由 runner 逐档打印在 CI 日志；一旦权威基线落地，同一 CI 环境上相对门自动从 SKIP 转为强制（无需再改任何开关）。
 4. **重录路径**：`bench.yml` 增 `workflow_dispatch` 触发 + `record` job（ubuntu-latest 跑 `bun run bench:record`，`git diff --exit-code bench/regression-formula.ts` 守卫冻结阈值零改动，`bench/baseline.json` 作为 artifact 产出）。产物**由人工下载并提交**——不引入 bot 直推 main 的写路径，main 的写权限与提交纪律保留在人工门。
 5. **本地强制**：`bun run bench:record bench/baseline.local.json` 录制本机基准，再以 `LLMVETO_BENCH_BASELINE=bench/baseline.local.json bun run bench/check-regression.ts` 对拍（该文件已入 `.gitignore`）。本地录制产物的 `ci=false`，不可能被 CI 误当作权威基准使用。
-6. **写入路径守卫**（2026-09-22 R8 走查收口；R2-B-2/R2-C-M2 加固；R9-B-1/R9-C-M1/A-R9-2 收口；R10-R9R2-B-1/B-2/B-3/B-6/C-2 已知残余成文）：`record-baseline.ts` 拒绝在非 CI 环境覆写 tracked 的 `bench/baseline.json`（须显式传 out 路径，如 `bench/baseline.local.json`）——权威基线的 repo 内保真锚点（见补遗三）不得被本地运行静默改写。out 路径**归一后比较**：先做**文件系统解析**（`realpath`，解引用 symlink、按平台原生规则取回真实大小写与长名），目标尚不存在或不可解析时退化为词法 `resolve`；**其后两条分支一律**在大小写不敏感平台（win32/darwin 默认 FS）折叠大小写（非仅 fallback 分支）。据此 `./bench/baseline.json`、`bench/./baseline.json`、反斜杠变体、`BENCH/BASELINE.JSON` 型大小写变体、8.3 短名与指向 tracked 的符号链接均与 tracked 路径同判；以 `-` 开头的未知 flag 直接拒绝。**信任边界**（R2-A-M2/R2-C-M1 成文）：放行判据是 `process.env.CI === "true"`，即信任"CI 平台会注入该变量"（GitHub Actions 隐式注入）——该守卫防的是**误操作**，不是防篡改的安全控制；平台迁移若不再注入，无参 record 会以拒绝文案失败（fail-loud 属预期行为）。**已知残余**（R9 R2 成文；均落在"防误操作、非防篡改"的信任模型内，需刻意构造，且**零改判据**）：
+6. **写入路径守卫**（2026-09-22 R8 走查收口；R2-B-2/R2-C-M2 加固；R9-B-1/R9-C-M1/A-R9-2 收口；R10-R9R2-B-1/B-2/B-3/B-6/C-2 已知残余成文；R10R1-B-1 升级为"名字折叠 + 身份折叠"双判据，③④⑤ 由登记转为代码收口）：`record-baseline.ts` 拒绝在非 CI 环境覆写 tracked 的 `bench/baseline.json`（须显式传 out 路径，如 `bench/baseline.local.json`）——权威基线的 repo 内保真锚点（见补遗三）不得被本地运行静默改写。out 路径**归一后比较**：先做**文件系统解析**（`realpath`，解引用 symlink、按平台原生规则取回真实大小写与长名），目标尚不存在或不可解析时退化为词法 `resolve`；**其后两条分支一律**在大小写不敏感平台（win32/darwin 默认 FS）折叠大小写（非仅 fallback 分支）。据此 `./bench/baseline.json`、`bench/./baseline.json`、反斜杠变体、`BENCH/BASELINE.JSON` 型大小写变体、8.3 短名与指向 tracked 的符号链接均与 tracked 路径同判；以 `-` 开头的未知 flag、空串/纯空白 out 路径直接拒绝。**身份判据**（R10R1-B-1 升级；与路径折叠取**或**）：`statSync` 的 `dev:ino` 相等即同一文件——路径归一只折叠**名字**，折叠不掉"同一字节另有名字"的别名形态。`ino === 0`（文件系统不报文件 ID 的常见哨兵值，两个不同文件会假等）或 out 路径 stat 失败（尚不存在）时该判据退让为 `null`，守卫回落为纯路径折叠，不会把"不存在"误判成"同一文件"。**信任边界**（R2-A-M2/R2-C-M1 成文）：放行判据是 `process.env.CI === "true"`，即信任"CI 平台会注入该变量"（GitHub Actions 隐式注入）——该守卫防的是**误操作**，不是防篡改的安全控制；平台迁移若不再注入，无参 record 会以拒绝文案失败（fail-loud 属预期行为）。**已知残余**（R9 R2 成文；均落在"防误操作、非防篡改"的信任模型内，需刻意构造，且**零改判据**。R10 R1 后 ③④⑤ 已由身份判据代码收口，真实残余收缩为 ①②⑥）：
    - **①②（R9 已述）**：解析失败（目标尚不存在、权限受限）的路径退化为词法比较；`check → write` 之间的 TOCTOU 窗口不做防护。两者**不构成**对"覆写 tracked 文件"的实际绕过面——tracked 文件在仓内存在即必可解析。
-   - **③ UNC / admin-share 同文件形态**（R9R2-B-1）：`//localhost/c$/…/baseline.json`、`\\?\UNC\…` 下 `realpath` 不折算为盘符路径 → 与 tracked 路径不等 → **放行**，且确为同一文件（B 在克隆内端到端证实）。需 admin share 可达。
-   - **④ NTFS 备用数据流**（R9R2-B-2）：`baseline.json:<stream>` 可经守卫写入（`realpath` 返回带流后缀的路径 → 不等 → 放行）。主流字节不受影响（实测 git 干净），损害面限于备用流。
-   - **⑤ 硬链接**（R9R2-C-2，出题方独立复现）：`mklink /H var/x.json bench/baseline.json`（无需特权）后传该链接路径 → **放行**，写入落在同一 inode → 覆写 tracked 内容。
+   - **③ UNC / admin-share 同文件形态**（R9R2-B-1）→ **已代码收口（R10R1-B-1）**：`realpath` 不折算 `//localhost/d$/…`、`\\?\UNC\…` 为盘符路径（名字不等），但其 `dev:ino` 与 tracked 文件全等 → 身份判据拦下。
+   - **④ NTFS 备用数据流**（R9R2-B-2）→ **已代码收口（R10R1-B-1）**：`baseline.json:<stream>` 的 stat 与主流同 `dev:ino` → 拦下。注：ADS 写入本就**不改主流字节**（实测 git 干净），此项收口是**从严**方向（按"不得覆写 tracked 基线文件"的字面语义一并拒绝），并非修补实际内容损坏面。
+   - **⑤ 硬链接**（R9R2-C-2，出题方独立复现）→ **已代码收口（R10R1-B-1）**：`mklink /H var/x.json bench/baseline.json`（无需特权）后传该链接路径，`dev:ino` 全等 → 拦下。这是③⑤两型实际内容覆写面之一（③ 经 UNC 写 tracked 主流、⑤ 经硬链接写同一 inode 亦覆写主流），④ 只及备用流。
    - **⑥ 反向面（误拒，非放行）**（R9R2-B-3）：per-directory 大小写敏感（WSL / 目录 flag 挂载）下，仅大小写不同的两个**真实不同**文件会被折叠成同一路径而误拒其一。默认 NTFS/APFS 不可达。
-   ③④⑤ 同属"同一字节有多个名字"的别名面：**路径归一只折叠名字，不折叠身份**——折叠身份要比 inode / 卷内文件
-   ID，Node 在 win32 不暴露该信息（posix 有 `ino`，跨三平台不统一），且该构造已超出"防误操作"定位。**8.3 短名折叠以平台原生解析为准**：本机实测 `realpathSync.native("bench/BASELI~1.JSO")` → 长名 `D:\projects\llmveto\bench\baseline.json`，端到端亦 refuse（C 的相反结论系其探针用了**字面**短名文件，不构成别名场景，已否证）。该守卫只限制**写路径**，不改变任何测量口径或判据。
+   ③④⑤ 原登记为"已知残余"，其共同依据是**一句可检验的假命题**——"折叠身份要比 inode / 卷内文件 ID，
+   而 Node 在 win32 不暴露该信息（posix 有 `ino`，跨三平台不统一）"。R10 R1 由 B 与出题方**双重实测否证**：
+   libuv 在 win32 以卷序列号 + 文件 ID 填充 `st_dev`/`st_ino`，Bun 1.3.14 与 Node 在 win32/NTFS 实测均暴露
+   真实文件 ID，且硬链接、NTFS 备用数据流、UNC/admin-share（`//localhost/d$/…`、`\\localhost\d$\…`）三类
+   别名形态的 `dev:ino` 与 tracked 文件**全等**（`\\?\` 设备命名空间与 `subst` 盘另经 realpath 折名字，升级前
+   本即被拒）。守卫据此升级为"名字折叠 **或** 身份折叠"双判据，③④⑤ 由登记转为代码收口；真实残余收缩为
+   ①②（不构成实际绕过面）与⑥（误拒方向）。**8.3 短名折叠以平台原生解析为准**：本机实测 `realpathSync.native("bench/BASELI~1.JSO")` → 长名 `D:\projects\llmveto\bench\baseline.json`，端到端亦 refuse（C 的相反结论系其探针用了**字面**短名文件，不构成别名场景，已否证）。该守卫只限制**写路径**，不改变任何测量口径或判据。
 
 ### 影响（Consequences）
 
@@ -81,6 +86,9 @@ Code-walkthrough 评审（R1）指出本 ADR 的空缺：正文规定"权威基�
 - `bun run bench/env-gate.test.ts`（vitest）覆盖三字段等值/不等值/缺标记/畸形（用例数与断言数以该测试文件为准，可直接核对）。
 - 本地 `bun run bench/check-regression.ts` 打印 `SKIP relative regression gate — environment mismatch: baseline=win32-x64-local current=…`（提交 CI 基准后）。
 - `bun run bench:record bench/baseline.local.json` 产出含 `_environment` 与 `_schema_version` 的基准文件（不入库）。
+- **写路径守卫形态矩阵**（win32-x64 实测，R10 R1 复跑）：无参 / `./bench/baseline.json` / `bench/./baseline.json` / `bench/BASELINE.JSON` / `bench\BASELI~1.JSO`（8.3 短名）→ 全部 refuse；`--help` → unknown flag；空串 → empty out path（`bun run` 会剥掉空 argv，故该支须经 `node bench/record-baseline.ts ""` 观测）；`bench/baseline.local.json` → **放行**（8s 内已开始跑 runner，退出码非拒绝文案）。
+- **身份判据的别名形态实测**（R10R1-B-1，dev=119610712 / ino=1688849860291391 与 tracked 全等）：`mklink /H`（硬链接）、`baseline.json:<stream>`（NTFS 备用数据流）、`//localhost/d$/…` 与 `\\localhost\d$\…`（admin share）、`\\?\d:\…`（设备命名空间）、`subst X:` 盘 → 六形态端到端全部 refuse；探针结束后 `bench/baseline.json` md5 不变、`git status` 干净（ADS 经 `fs.unlinkSync("…:probestream")` 单独删除，`dir /r` 复核无残留）。**分工**：出题方与 B 各自独立构造并复现，C 的相反结论（字面短名文件）已否证。
+- **登记处守卫的执行面**（R10R1-A-M1/C-M1）：`tests/unit/backlog-integrity.test.ts` 现同时在三处执行——本地 `bun run test`、pre-commit 钩子、以及 `bench.yml` bench job 的独立步骤（PR 与 main push 均触发，失败即红）。升级前该守卫只在本地门生效，"未跟踪/被删的登记处"可经绕过本地钩子的路径（如直接在 CI 上产生的提交）静默进入 main。
 
 ## 补遗二（2026-09-22）：相对门降噪口径 —— N 次重复采样取最小值（min-of-N）
 

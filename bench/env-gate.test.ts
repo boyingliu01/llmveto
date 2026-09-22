@@ -42,6 +42,33 @@ describe("environmentMatches (相对回归门环境前置)", () => {
     expect(environmentMatches({ os: "linux", arch: "x64", ci: "true" }, current).comparable).toBe(false);
     expect(environmentMatches({ os: 1, arch: "x64", ci: true }, current).comparable).toBe(false);
   });
+
+  it("带首尾空白 / 空串的 os·arch → 归为畸形而非环境不匹配（R6-C2 判据统一，R10R1-A-N1/B-2/C-m4）", () => {
+    // _estimator 侧的畸形/不匹配分类（R6-C2）此前未覆盖 os/arch：`" linux "` 会被报成 "environment
+    // mismatch"，把"该重录"的数据问题误导成"换个环境跑"。两侧现共用 isVerbatimMarker。
+    // 分类只改文案指向，不改判定：两类皆不可比（SKIP），逐字严格比对不因分类放宽。
+    const forms: unknown[] = [
+      { os: " linux", arch: "x64", ci: true },
+      { os: "\tlinux", arch: "x64", ci: true },
+      { os: "linux", arch: " x64", ci: true },
+      { os: "", arch: "x64", ci: true },
+      { os: "linux", arch: "  ", ci: true },
+    ];
+    for (const v of forms) {
+      const r = environmentMatches(v, current);
+      expect(r.comparable).toBe(false);
+      expect(r.reason).toContain("malformed");
+      expect(r.reason).not.toContain("mismatch");
+    }
+  });
+
+  it("真实环境差异仍报 mismatch（畸形分类不得把可比性判据放宽成放行）", () => {
+    const r = environmentMatches({ os: "linux ", arch: "x64", ci: true }, { os: "linux", arch: "x64", ci: true });
+    expect(r.comparable).toBe(false);
+    expect(r.reason).toContain("malformed");
+    const real = environmentMatches({ os: "win32", arch: "x64", ci: true }, current);
+    expect(real.reason).toContain("mismatch");
+  });
 });
 
 describe("isCiCalibrated (SKIP 措辞分支用，不参与可比性判定)", () => {

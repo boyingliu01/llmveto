@@ -30,8 +30,13 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with: { bun-version: latest }
       - run: bun install --frozen-lockfile
-      # 三台 runner 的独立步骤仅供人读（绝对门 print-only，ADR-0002 v2 决策）；本 job 唯一阻断步是
-      # Regression check。`| tee` 已使退出码取末命令（`bash -e` 无 pipefail），此处再显式 `|| true`
+      # Minor 登记处完整性守卫（R7-B2；强制面由 R10R1-A-M1/C-M1 收口）：只跑该文件，不跑全量 vitest
+      # ——全量含未在本 workflow 环境验证过的 e2e 面，在此引入会把一个纯登记处守卫变成不可控假红源。
+      # 阻断性：本步非零退出即 bench job 红（早于三台 runner，失败信号最快、最便宜）。
+      - name: Backlog registry integrity guard
+        run: bunx vitest run tests/unit/backlog-integrity.test.ts
+      # 三台 runner 的独立步骤仅供人读（绝对门 print-only，ADR-0002 v2 决策）；除上方的登记处守卫外，
+      # 本 job 唯一的性能阻断步是 Regression check。`| tee` 已使退出码取末命令（`bash -e` 无 pipefail），此处再显式 `|| true`
       # 把"不阻断"写成契约 —— 避免将来有人加 pipefail/去 tee 时，把 print-only 变成真阻断
       # （补遗二决策 6）。代价：G3 runner 崩溃也不会在此步骤报红，兜底在 record job（runRunner throw）。
       - name: Run G1 TTFT

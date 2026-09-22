@@ -3,7 +3,8 @@
 - **owner**: boyingliu01
 - **登记日期**: 2026-09-22
 - **处置期限**: 2026-09-30 23:59 (UTC+8)；**当前无 OPEN 项**（R9 交换轮 6 条 OPEN + 两条历史延后项
-  `R6-C2`/`R7-B2` 已随 R10 批次收口，2026-09-22）。留痕项 `R9-A-3`/`R9R2-A-N1` 挂在下次 CI record 自愈
+  `R6-C2`/`R7-B2` 已随 R10 批次收口，R10 匿名轮 18 个 ID 已随 R10 R1 收口提交处置，均 2026-09-22）。
+  留痕项 `R9-A-3`/`R9R2-A-N1` 挂在下次 CI record 自愈
 - **逾期处理**: 必须在下一次开发会话的首项处理并向用户报告，不得静默顺延
   （该纪律的定义体与上下文见 `git show 8bb8020:.sprint-state/bench-rerecord-todo.md`）
 - **触发条件**: 任何触碰 `bench/`、`.github/workflows/bench.yml` 或 `docs/adr/0002` 的提交，
@@ -127,14 +128,14 @@ R9 R2（交换轮，评审对象 = 收口提交 `0c9e6fa`：`realpath` 归一 + 
 | ID | 位置 | 内容 | 来源 | 状态 |
 |----|------|------|------|------|
 | R9R2-A-N1 | `bench/baseline.json`（committed，源自 `730f82e`） | 产物内嵌 `_purpose` 亦为 v4 旧代文本（描述 p95 判定），与 `_refresh_policy` 同属模板/持久化产物的时序漂移；`check-regression.ts` 不消费该字段，不影响判据 | A | 留痕（已在 ADR 补遗三决策 5 成文；下次 CI record 重录自愈，同 `R9-A-3` 机制） |
-| R9R2-B-1 | `bench/record-baseline.ts` `canonicalPath`（UNC / admin-share 形态） | 继承性残余：`//localhost/c$/…`、`\\?\UNC\…` 指向同一文件时 `realpath` 不折算盘符 → 比较不等 → 放行（B 在克隆内端到端证实，已恢复） | B | 已消化（R10：ADR 决策 6「已知残余③」成文，附"名字 vs 身份"定位理由；不改代码） |
-| R9R2-B-2 | 同上（NTFS 备用数据流） | 继承性残余：`baseline.json:<stream>` 可经守卫写入（`realpath` 返回带流后缀路径）；主流内容实测不被覆写（git 干净） | B | 已消化（R10：「已知残余④」成文；不改代码） |
+| R9R2-B-1 | `bench/record-baseline.ts` `canonicalPath`（UNC / admin-share 形态） | 继承性残余：`//localhost/c$/…`、`\\?\UNC\…` 指向同一文件时 `realpath` 不折算盘符 → 比较不等 → 放行（B 在克隆内端到端证实，已恢复） | B | 已消化（R10：ADR 决策 6「已知残余③」成文；**R10 R1 后再升级**——原「不改代码」的理由「win32 无文件 ID 可比」经实测否证，守卫增 `dev:ino` 身份判据，本形态现由代码拦下，见 `R10-B-1`） |
+| R9R2-B-2 | 同上（NTFS 备用数据流） | 继承性残余：`baseline.json:<stream>` 可经守卫写入（`realpath` 返回带流后缀路径）；主流内容实测不被覆写（git 干净） | B | 已消化（R10：「已知残余④」成文；**R10 R1 后**由身份判据一并拦下——ADS 与主流同 `dev:ino`，收口方向为"从严"而非修补内容损坏面） |
 | R9R2-B-3 | 同上（平台折叠的反向面） | 本提交新引入·理论级：per-directory 大小写敏感（WSL / 目录 flag 挂载）下，仅大小写不同的两个真实不同文件被判同路径而**误拒**；默认 NTFS/APFS 不可达 | B | 已消化（R10：「已知残余⑥」成文并标注为"误拒而非放行"方向；不改代码） |
 | R9R2-B-4 | `var/delphi-r9/round2-input.md` 前置段（**评审卷，非 tracked**） | 卷面称 `1f8745e`「已推送」，实测 `origin/main` 当时仍为 `5325c3a`、未推送工作为 2 commits | B | 已收口（卷面就地改写 + §6 勘误段；已交付的 `input-*-r2.md` 保留原文以维持三家所见一致） |
 | R9R2-B-5 | 本表 R9 批次 intro | 「3 项就地消化 + 2 项留痕」与表内「4 项已消化 + 1 项留痕」分组口径不一致 | B | 已消化（R10：intro 改为按 ID 点名分组，与本表实际状态列对齐） |
 | R9R2-B-6 | `docs/adr/0002` 补遗一·决策 6 | 已知残余段未列 ADS/UNC 面；「win32/darwin 再折叠大小写」语序易读成仅 fallback 分支折叠（实际两分支均折叠） | B | 已消化（R10：残余段扩为①–⑥六面 + 语序改为「两条分支之后都…」，`canonicalPath` 注释同步） |
 | R9R2-C-1 | `docs/adr/0002` 决策 6 + `record-baseline.ts` 注释 | 指「8.3 短名…均同判」超出实现能力，称 `realpathSync.native` 按请求格式返回短名不折算长名，并附探针 | C | 已裁决·**实测否证**（出题方复测：本机 `BASELI~1.JSO` 别名解析为长名，端到端亦 refuse exit 1；C 的探针文件系**字面**短名，不构成别名场景。结论保留原宣称，并在决策 6 补「以平台原生解析为准」注记） |
-| R9R2-C-2 | `docs/adr/0002` 决策 6（已知残余段） | 登记缺口：硬链接（`mklink /H`，无需特权）不在归一覆盖与残余叙述中——传链接路径即覆写 tracked 内容 | C | 已消化（R10：「已知残余⑤」成文；出题方独立复现后确认，不改代码——折叠身份要比 inode，Node 在 win32 不暴露该信息） |
+| R9R2-C-2 | `docs/adr/0002` 决策 6（已知残余段） | 登记缺口：硬链接（`mklink /H`，无需特权）不在归一覆盖与残余叙述中——传链接路径即覆写 tracked 内容 | C | 已消化（R10：「已知残余⑤」成文；出题方独立复现后确认。**R10 R1 订正**：原登记理由「折叠身份要比 inode，Node 在 win32 不暴露该信息」系**假命题**（win32/NTFS 实测 `statSync().ino` 为真实文件 ID，硬链接两名字 ino 全等），守卫已据此增身份判据、本形态由"登记"转为"代码拦下"，详见 `R10-B-1`） |
 
 ### R10 批次（收口 R9 交换轮 6 条 OPEN + 历史延后 2 条，2026-09-22）
 
@@ -153,6 +154,52 @@ R9 R2（交换轮，评审对象 = 收口提交 `0c9e6fa`：`realpath` 归一 + 
   `--help` 仍走 `unknown flag`；`bench/regression-formula.ts` 与 `bench/baseline.json` 对 `0c9e6fa` 零 diff。
 - **冻结面零改动自证**：`bench/regression-formula.ts`、`bench/baseline.json`、`.github/workflows/bench.yml`
   本批未触碰；`git diff --exit-code 0c9e6fa..HEAD -- bench/regression-formula.ts bench/baseline.json` 应为 0。
+
+### R10 R1 批次（`eeeba3e` 的匿名轮走查意见 → 本收口提交，2026-09-22）
+
+R10 R1（匿名独立轮，评审对象 = 收口提交 `eeeba3e`）三家均 REQUEST_CHANGES：0 Critical / 2 类 Major
+（`R10-A-M1`+`R10-C-M1`+`R10-B-3` 同一件的 CI 执行面缺失、`R10-B-1` 假命题）/ 12 条 Minor。
+下表逐行登记 18 个 ID 的处置；`并入` 型合写表示同一修法覆盖多来源，两侧 ID 均入锁清单：
+
+| ID | 位置 | 内容 | 来源 | 状态 |
+|----|------|------|------|------|
+| R10-A-M1 | `.github/workflows/bench.yml` / `tests/unit/backlog-integrity.test.ts` | 守卫不在任何 CI job 执行面内（仓库仅 bench.yml、无 test job），强制力止于本地 `bun run test` 与全局 pre-commit 钩子；该钩子不在仓库内，故其他开发者与 CI 均不执行——与 R7-B2 设立动机（tracked 登记处自毁后无人发现）错位 | A | 已消化（bench job 在 `bun install` 后增 `Backlog registry integrity guard` 步；只跑本文件不跑全量，避免把纯登记处守卫变成未验证 e2e 面的假红源。同步：测试头规格①改写为"单测门 + CI 步骤"、ADR 验证节成文三处执行面、job 顶部"唯一阻断步"措辞改为"除登记处守卫外"） |
+| R10-C-M1 | 同上 | 同一件，收口二选一：加 CI 步（约 3 行 YAML、不触碰判据面/record job）或把"仅 pre-commit 生效"显式成文为强制力边界。`fix_cost: trivial` | C | 已消化（并入 `R10-A-M1`；采"加 CI 步"分支——成文边界只把空档写下来，不消除空档） |
+| R10-B-3 | 同上 | 同一件（实测 xp-gate 适配器为全量 `npx vitest run`），建议 bench job 增秒级 vitest 步或成文边界残余 | B | 已消化（并入 `R10-A-M1`） |
+| R10-B-1 | ADR 决策 6 + `record-baseline.ts` 注释 + 本表 `R9R2-C-2` 行 + `eeeba3e` 提交说明 | 「折叠身份要比 inode/卷内文件 ID，Node 在 win32 不暴露该信息（posix 有 `ino`，跨三平台不统一）」是**可检验假命题**：Bun 1.3.14 与 Node 在 win32/NTFS 实测 `statSync().ino` 均为真实文件 ID（硬链接两名字 ino 全等），ADS 与主流亦共享身份；失真理由出现 4 处 | B | 已消化（①四处文字全部订正；②守卫升级为"名字折叠 **或** 身份折叠（`dev:ino`）"双判据，`ino === 0` 哨兵与 stat 失败退让为 `null`；③④⑤ 由登记转代码收口，四别名形态端到端 refuse 实测见 ADR 验证节。判据/阈值零改动） |
+| R10-A-N1 | `bench/env-gate.ts` `environmentMatches` | os/arch 未施加与 `samplingMatches` 同类的空白归一：`{os:"win32 "}` 落 mismatch 文案而非 malformed，相邻两函数对"首尾空白"用两套标准（无判据后果，两者皆 SKIP） | A | 已消化（并入 `R10-B-2`/`R10-C-m4`） |
+| R10-B-2 | 同上 | 同一件（B 编号），建议登记即可 | B | 已消化（提级为就地收口：抽出 `isVerbatimMarker`，os/arch/`_estimator` 三处共用同一畸形判据；补 5 形态 malformed 用例 + 1 条"真实差异仍报 mismatch"反向用例，确保分类不放宽判定） |
+| R10-C-m4 | 同上 | 同一件（C 编号），标注为既存问题、非本提交引入 | C | 已消化（并入 `R10-B-2`） |
+| R10-A-N2 | `record-baseline.ts:30` 注释 vs ADR 决策 6 | 两处措辞不严格等价；建议注释改为"posix 有 ino、win32 无，跨平台不对称" | A | 已裁决·**不采其措辞**（该修法延续 `R10-B-1` 的同一假命题；以实测为准，两侧统一改为"win32 亦暴露文件 ID、守卫已用之"。A 指出的"绝对化措辞会误导"这一点成立并已吸收） |
+| R10-A-N3 | ADR 决策 6 残余名录 | 未列 `\\?\D:\…` 本地设备命名空间，疑为与 ③ 同族的放行面（A 本轮只读、未实测） | A | 已消化·**推测实测否证**（`realpathSync.native` 把 `\\?\d:\…` 折回 `D:\…`，升级前即 refuse 而非放行；升级后其 `dev:ino` 亦与 tracked 全等 → 双判据同拦。已并入 ADR 验证节别名形态清单） |
+| R10-C-m3 | ADR 决策 6 残余③ | `subst` 映射盘（免特权）称"realpath 不折算盘符"，为与 UNC 同构的放行面，未列入①–⑥ | C | 已消化·**推测实测否证**（本机 `subst X: d:\projects\llmveto` 后 `realpathSync.native("X:/bench/baseline.json")` → `D:\projects\llmveto\bench\baseline.json`，升级前即 refuse；现身份判据亦覆盖。已在③叙述点名两形态） |
+| R10-A-N4 | `tests/unit/backlog-integrity.test.ts` 规格② | 状态列**整体改写**为任意非空文本后守卫全绿（A 实测复现：rows=37 / ids=39 / malformed=0）——静态结构守卫的固有能力边界，非实现缺陷 | A | 已消化（并入 `R10-C-m2`；文件头新增「能力边界」段成文） |
+| R10-C-m2 | 同上 | 同一件（C 实测：改 `R6-B2` 状态格为 STALE → 5 passed），边界未在文件头成文 | C | 已消化（成文三件事：守卫只保证行的结构存在性；状态语义真伪由三位专家逐行核对承担，不由字符串检查冒充；`OC-1` 型正文 bullet 不在表行 ID 列语义域内） |
+| R10-A-N5 | 同上「文件被 git 跟踪」断言 | 非 git 环境 `git -C <非仓库> ls-files` → status 128 → 断言必红（假红）；浅克隆与 worktree 含 index 不受影响 | A | 已消化（三分：spawn 失败 `status===null` 与 128+"not a git repository" → warn 后跳过；`status===1`（仓在、文件未跟踪）仍 fail。能力边界同入文件头） |
+| R10-A-N6 | 同上 表列数断言 | `c.length !== 5` 硬编码，未来合法演进（如增"证据指针"列）会被误伤为假红 | A | 已消化（改为按**表头**推导格数、「状态」列按表头名定位；并按块解析 markdown 表格，无 `ID` 表头的表整体不参与断言） |
+| R10-B-4 | `tests/unit/backlog-integrity.test.ts` 假红面 ×3 + 无 git + 内容腐坏 | 未来非 5 列新表 / 单元格含 `\|` / 自检用字面 `ID` 前缀与排版耦合，三处假红；另无 git 环境假红、状态列改写不可见建议成文 | B | 已消化（假红面并入 `R10-A-N6`/`R10-C-m1` 及下方「守卫自检」新增 fixture；排版耦合改由解析后的首格匹配（`dropRowWithId`），空格与转义变体同样删得中；余两面并入 `R10-A-N4`/`R10-A-N5`） |
+| R10-C-m1 | 同上 `tableRows()` | 裸 `split("\|")` 不识别 Markdown 转义：实测下一批新增含转义竖线的表行 → 5 格断言确定性假红，且报错文案误导 | C | 已消化（parser 逐字扫描、`\|` 不作分隔符、行尾 `\|` 不当收尾符裁掉；新增**内存 fixture** 自检用例固化该形态，不依赖真实文件将来是否含转义） |
+| R10-B-5 | 本表「观测待办 · OC-1」 | OC-1 仅存在于正文 bullet，不在表行 ID 列内 → 既不被收集也不被锁清单覆盖（该项已封闭，风险为理论面） | B | 已消化（成文命名空间边界：锁清单只管 `R…-…` 规范 ID 的表行首格；OC-1 的保全面由本小节与守卫文件头点名承担，不扩锁清单以免把正文当表解析） |
+| R10-C-m5 | `bench/record-baseline.ts` | `bun run bench:record ""` 空串非 nullish、穿透守卫，跑满测量后死于 `writeFileSync("")`（C 探针误触，bun 抢建了空的 gitignored `baseline.local.json`，已自行删除并复验干净） | C | 已消化（增空串/纯空白即时拒绝分支。**观测口径注**：`bun run` 会剥掉空 argv 而落到"无参"分支，故该判据须经 `node bench/record-baseline.ts ""` 观测——两入口行为不同已在 ADR 验证节点名，避免后人误判守卫未生效） |
+
+- **裁决口径**：18 个 ID（A 7 / B 5 / C 6）中，2 类 Major 全部就地修复、无降级登记；Minor 12 条中
+  9 条就地消化、2 条（`R10-A-N3`/`R10-C-m3`）推测经实测否证后并入代码收口、1 条（`R10-A-N2`）指出问题
+  成立但不采其修法。三家共识下确界 0.90，R2 复评卷以本收口提交为评审对象。
+
+- **本批代码面清单**：`bench/record-baseline.ts`（守卫升级为双判据 + 空 outPath 即时拒绝 + 注释订正）、
+  `bench/env-gate.ts`（`isVerbatimMarker` 统一畸形判据，三处共用）、`bench/env-gate.test.ts`（+2 用例）、
+  `tests/unit/backlog-integrity.test.ts`（块级表格 parser + 转义 + 表头推导 + git 三分 + 能力边界成文，6 用例）、
+  `.github/workflows/bench.yml`（bench job 增守卫步）、`docs/adr/0002`（决策 6 双判据与③④⑤ 收口改写 +
+  验证节新增形态矩阵/别名身份实测/守卫执行面三条）、本文件。
+- **写路径守卫形态矩阵复跑**（win32-x64，升级后）：`bench/baseline.json` 的四种既有名字变体 + 8.3 短名 +
+  无参共六形态 `refusing …`；**新增**硬链接 / `baseline.json:<stream>` / `//localhost/d$/…` /
+  `\\localhost\d$\…` 四别名形态亦 refuse（文案附 `(same file identity via an alias path)`）；
+  `bench/baseline.local.json` 仍放行（8s 内已进入 runner）；`--help` → unknown flag；空串 → empty out path。
+  探针后 `bench/baseline.json` md5 `3ebfaa9f6a71ecf7cb7b0d91355e2525` 不变、ADS `dir /r` 复核无残留、
+  `git status` 干净（探针产物一律落 `var/delphi-r10/`，硬链接与 `subst X:` 均已解除）。
+- **冻结面零改动自证**：`git diff --exit-code eeeba3e..HEAD -- bench/regression-formula.ts bench/baseline.json`
+  应为 0；判据公式 `* 1.2` / `> 2` 与三台门阈值常量未触碰。本批触碰 `.github/workflows/bench.yml`
+  （上一批未触碰），且**只增一步守卫、不改任何 runner 步骤与判据**。
 
 ## 备注
 

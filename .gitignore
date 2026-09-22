@@ -26,6 +26,7 @@ var/*
 # xp-gate hook artifacts (local quality-gate reports/history, not project state)
 .xp-gate/
 .quality-history.jsonl
+.code-walkthrough-result.json
 
 # Agent harness residue (local run continuation state, not project state)
 .omo/

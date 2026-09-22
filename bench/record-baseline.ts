@@ -1,6 +1,6 @@
 // @no-test-required: bench 工具（可执行脚本），复刻 check-regression.ts 的 runner 编排；解析契约与 check 侧共用 bench/runner-format.ts（R8-B-M3）。核心判定由 regression-formula.test.ts 覆盖，估计量由 repeat.test.ts 覆盖。
 import { spawnSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { realpathSync, writeFileSync } from "node:fs";
 import { arch, cpus, platform } from "node:os";
 import { resolve } from "node:path";
 import { G1_TTFT_P95_MAX_MS, G1_TTFT_P99_MAX_MS, G2_THRESHOLDS, G3_THRESHOLDS } from "./regression-formula.ts";
@@ -24,17 +24,31 @@ const WARMUP = 50;
 const TRACKED_BASELINE = "bench/baseline.json";
 const outPath = process.argv[2] ?? TRACKED_BASELINE;
 
-// 写入路径守卫（R8-C-R1；路径归一与未知 flag 拒绝为 R2-B-2/R2-C-M2 加固）：权威基线的 repo 内保真锚点
+// 同一文件的不同写法（等价路径、大小写/8.3 短名变体、symlink）折叠为同一字符串：优先文件系统解析
+// （realpath 解引用 symlink 并按平台原生规则归一），目标尚不存在时退化为词法 resolve；大小写不敏感
+// 平台（win32/darwin 默认 FS）再折叠大小写，兜住 realpath 不可用时的相对路径形态。
+function canonicalPath(p: string): string {
+  let canonical: string;
+  try {
+    canonical = realpathSync.native(p);
+  } catch {
+    canonical = resolve(p);
+  }
+  return platform() === "win32" || platform() === "darwin" ? canonical.toLowerCase() : canonical;
+}
+
+// 写入路径守卫（R8-C-R1；R2-B-2/R2-C-M2 加固；R9-B-1/R9-C-M1/A-R9-2 收口）：权威基线的 repo 内保真锚点
 // （docs/adr/0002 补遗三）不得被本地运行静默改写。归一后比较——`./bench/baseline.json`、`bench/./baseline.json`、
-// 反斜杠变体与 tracked 路径同判，避免等价路径绕过。非 CI 覆写 tracked 路径须显式传参（如 bench/baseline.local.json）；
-// CI record job 不受影响（信任边界见 docs/adr/0002 补遗一决策 6）。
+// 反斜杠变体、`bench/BASELINE.JSON` 型大小写变体与指向 tracked 的 symlink 均与 tracked 路径同判。
+// 非 CI 覆写 tracked 路径须显式传参（如 bench/baseline.local.json）；CI record job 不受影响
+// （信任边界见 docs/adr/0002 补遗一决策 6）。
 if (outPath.startsWith("-")) {
   throw new Error(
     `unknown flag ${outPath}: bench:record takes an optional out path only ` +
       `(e.g. \`bun run bench:record bench/baseline.local.json\`)`,
   );
 }
-if (resolve(outPath) === resolve(TRACKED_BASELINE) && process.env.CI !== "true") {
+if (canonicalPath(outPath) === canonicalPath(TRACKED_BASELINE) && process.env.CI !== "true") {
   throw new Error(
     `refusing to overwrite the tracked authoritative baseline outside CI: pass an explicit out path ` +
       `(e.g. \`bun run bench:record bench/baseline.local.json\`); authoritative re-record is the CI record job (docs/adr/0002)`,

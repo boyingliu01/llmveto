@@ -65,7 +65,8 @@
 - **观测待办 · OC-1**：**已回填（2026-09-22，closed）**——push `d334503..5325c3a` → run **35735231178**
   （`bench` job success 43s；`record` job 按预期 skipped；`grep -c SKIP` = 0，相对门**全程强制**而非放行）。
   四档 p50（min-of-10）全 PASS：G1 `base=0.252 pr=0.112`、G2 8KB `0.39→0.200`、64KB `0.54→0.290`、
-  512KB `1.8→1.070`；p95 对照行同向（G1 1.554→1.160），反证 R7 期间的 G1 p95 判红系跨实例尾部抖动。
+  512KB `1.8→1.070`；p95 对照行同向（G1 1.554→1.160），**印证** R7 期间的 G1 p95 判红系跨实例尾部抖动
+  （n=1，作旁证而非反证；R9-B-2 措辞收口）。
   绝对门全 PASS 且余量大。观测档：`var/delphi-r7/ci-observation-p50.md`（含扩项核验）。
   **扩项（R8-B-M1）核验结果**：CI 侧未出现任一判定档 `p50 min = 0`、无 `base=0` 判红原因，
   → **不触发**"显式噪声地板"新 ADR 修订，`R8-B-M1` 维持既有处置。
@@ -89,10 +90,24 @@ R2（交换轮）三家均 APPROVED（A 9/10 ratio 0.94、B 8/10 ratio 0.95、C 
 |----|------|------|------|------|
 | R2-X-1 | `var/delphi-r8/round2-input.md` §2.3（**评审卷，非 tracked**） | 卷面两条冻结核验命令标注 `EXIT=0` 与实测不符（全范围端点下 formula/bench.yml 因 `62bef31` 注释与字段更名而 EXIT=1）；冻结主张实质成立 | A+B+C（三家独立命中） | 已收口（卷面就地标注 + §2.3-勘误段；tracked 文档经 grep 复核不含该错误陈述） |
 | R2-A-M2 / R2-C-M1 | `docs/adr/0002` 补遗一·决策 6、`record-baseline.ts` `_refresh_policy` | 写路径守卫的信任边界（`CI=true` 由平台注入）未成文；平台迁移缺该变量时无参 record 会以误导性文案失败 | A+C | 已消化（决策 6 补「信任边界」段 + `_refresh_policy` 括注；守卫行为零改动） |
-| R2-B-2 / R2-C-M2 | `bench/record-baseline.ts` 守卫判据 | 原始字符串比较可被等价路径绕过（`./bench/baseline.json`、`bench/./…`、反斜杠；`--help` 被当作 out 路径） | B+C | 已消化（`path.resolve` 归一后比较 + `-` 前缀未知 flag 拒绝；实跑核验见提交说明） |
+| R2-B-2 / R2-C-M2 | `bench/record-baseline.ts` 守卫判据 | 原始字符串比较可被等价路径绕过（`./bench/baseline.json`、`bench/./…`、反斜杠；`--help` 被当作 out 路径） | B+C | 已消化（`path.resolve` 归一后比较 + `-` 前缀未知 flag 拒绝；实跑核验见提交说明）——**注**：该行描述的是 R8 时点的形态，归一已由 R9-B-1/R9-C-M1 升级为文件系统解析（见下表） |
 | R2-B-1 | `bench/g2-request-gate.ts:13` | 单源化之前的解析约束注释漏扫（同类漏扫，R8-B-M2 当时只修了 g1） | B | 已消化（改指 `runner-format.ts` 的 `g2LineRe`） |
 | R2-A-M3 | `docs/adr/0002` line 100/149/167 | 残留 `p95_pr` 措辞属历史/引用/机制语境，非 operative 文本 | A | 已裁决（记录在案，不需整改） |
 | （并入 R8-B-M1） | 零值告警面 | 建议评估「零值告警时 record job 置 non-zero」 | C | 已并入该新 ADR 修订的评估清单，本轮不动 |
+
+### R9 批次（`5325c3a..1f8745e` 匿名轮意见 + 本收口提交，2026-09-22）
+
+R9 R1（匿名独立轮，评审对象 = R8 交换轮 4 条 OPEN Minor 收口 + OC-1 回填，单提交 `1f8745e`）
+三家均 APPROVED（A 9/10 ratio 0.96、B 9/10 ratio 0.95、C 9/10 ratio 0.95；0 Critical / 0 Major）。
+本轮 5 项 Minor（B-R9-1 与 C-R9-M1 同项）处置：3 项随本收口提交就地消化，2 项留痕登记：
+
+| ID | 位置 | 内容 | 来源 | 状态 |
+|----|------|------|------|------|
+| R9-A-1 | `bench/g2-request-gate.ts:13` | 注释写作 `g2LineRe(tier_kb)`，与 `runner-format.ts` 真实形参名 `tierKb` 非逐字一致（`tier_kb` 系结果对象字段名） | A（B 亦以 nano 提及） | 已消化（本收口提交：统一为 `g2LineRe(tierKb)`） |
+| R9-A-2 | `docs/adr/0002` 补遗一·决策 6 | 符号链接为理论残余绕过面（`path.resolve` 不解引用） | A | 已消化（本收口提交：归一升级为文件系统解析（`realpath` deref）+ 已知残余段成文） |
+| R9-A-3 | `bench/baseline.json`（committed，源自 `730f82e`） | 产物内嵌 `_refresh_policy` 为旧代文本（不含 R8 守卫句与归一括注），系模板与持久化产物的时序漂移，非本提交引入 | A | 留痕（**下次 CI record job 提交产物时自愈**；重录前为唯一代际共存面） |
+| R9-B-1 / R9-C-M1 | `bench/record-baseline.ts`（守卫判据） | 大小写不敏感 FS（win32/darwin）上 `bench/BASELINE.JSON` 型变体绕过 `path.resolve` 字符串比较并覆写 tracked 基线（B 端到端实测，已恢复；C 独立复现并指 8.3 短名同理） | B+C | 已消化（本收口提交：归一升级为 `realpath` 解析 + 平台折叠，覆盖大小写/短名/symlink 变体；实跑核验见提交说明） |
+| R9-B-2 | 本表 OC-1 行 | 「反证」措辞过度（n=1 不足以反证） | B | 已消化（本收口提交：改为「印证」+ 旁证限定） |
 
 ## 备注
 

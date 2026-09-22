@@ -10,7 +10,7 @@ import { G2_THRESHOLDS } from "./regression-formula.ts";
  *   delta = t(经网关) − t(旁路)，随请求体分档 8/64/512 KB。
  *
  * 阈值（AC-VETO-013-02 v1 冻结）：p95 ≤8KB:3ms / ≤64KB:10ms / ≤512KB:40ms。
- * 输出格式受 `bench/runner-format.ts` 的 `g2LineRe(tier_kb)` 契约约束（行首锚定、捕获组恒为 p50/p95/p99；
+ * 输出格式受 `bench/runner-format.ts` 的 `g2LineRe(tierKb)` 契约约束（行首锚定、捕获组恒为 p50/p95/p99；
  * 判定分位数为 p50，见 docs/adr/0002 补遗三）。
  */
 

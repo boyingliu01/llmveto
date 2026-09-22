@@ -122,4 +122,21 @@ describe("SL-09+SL-10 integration: gateway ⇄ mock-upstream", () => {
     expect(text).toContain("[DONE]");
     expect(text).not.toContain("veto-mid-stream");
   });
+
+  it("AC-04 body stream:true 但上游回非 SSE JSON → 响应仍被扫描：恶意内容不透传（R2-N1 变体）", async () => {
+    mock = await startMockUpstream({
+      transport: "non-stream",
+      body: '{"model":"gpt-4o","choices":[{"message":{"content":"ok\u200Bleak-marker"}}]}',
+    });
+    const g = await boot({ upstream: mock });
+    const r = await fetch(g.url + "/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "gpt-4o", stream: true, messages: [{ role: "user", content: "hi" }] }),
+    });
+    expect(r.status).toBe(200);
+    const text = await r.text();
+    expect(text).not.toContain("leak-marker");
+    expect(text).toContain("llmveto:veto-mid-stream");
+  });
 });

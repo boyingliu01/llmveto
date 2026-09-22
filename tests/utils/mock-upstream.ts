@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
  * @test REQ-VETO-011
  * @intent 纯 TS 声明式脚本回放（v1 全部集成/E2E 恶意上游载体）。
  *         支持自定义 chunk 边界（AC-VETO-011-02：把 U+200B 三字节拆两片）。
+ *         requests 记录 method/url（含查询串）/body/headers，供断言转发保真度。
  *
  * Fixture schema：
  *   { transport: "stream"|"non-stream",
@@ -27,7 +28,7 @@ export interface MockUpstreamSpec {
 
 export interface MockUpstream {
   readonly url: string;
-  readonly requests: readonly { method: string; body: string; headers: Record<string, string> }[];
+  readonly requests: readonly { method: string; url: string; body: string; headers: Record<string, string> }[];
   close(): Promise<void>;
 }
 
@@ -52,7 +53,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, spec: MockUpstr
     if (typeof v === "string") headers[k] = v;
     else if (Array.isArray(v)) headers[k] = v[0] ?? "";
   }
-  (sink as { method: string; body: string; headers: Record<string, string> }[]).push({ method: req.method ?? "GET", body, headers });
+  (sink as { method: string; url: string; body: string; headers: Record<string, string> }[]).push({ method: req.method ?? "GET", url: req.url ?? "", body, headers });
 
   for (const [k, v] of Object.entries(spec.headers ?? {})) res.setHeader(k, v);
   res.statusCode = spec.status ?? 200;

@@ -88,13 +88,13 @@ export function resolveUpstream(
   return catchAll ? { base: catchAll, viaHeader: false } : null; // 空串 = 未配置 → fail-closed
 }
 
-/** 拼接 upstream base + rest；去重双重 /v1（base 末尾带 /v1 且 rest 以 /v1 开头）。 */
-export function joinUpstream(base: string, rest: string, viaHeader: boolean): string {
+/** 拼接 upstream base + rest + 查询串（`search` 含前导 `?`）；去重双重 /v1（base 末尾带 /v1 且 rest 以 /v1 开头）。 */
+export function joinUpstream(base: string, rest: string, viaHeader: boolean, search = ""): string {
   if (viaHeader) return base; // TEST 契约 #1：头注入的是完整目标 URL
-  if (!rest) return base;
+  if (!rest) return base + search;
   const trimmed = base.replace(/\/+$/, "");
-  if (trimmed.endsWith("/v1") && (rest === "/v1" || rest.startsWith("/v1/"))) return trimmed + rest.slice(3);
-  return trimmed + rest;
+  if (trimmed.endsWith("/v1") && (rest === "/v1" || rest.startsWith("/v1/"))) return trimmed + rest.slice(3) + search;
+  return trimmed + rest + search;
 }
 
 async function dispatch(req: IncomingMessage, res: ServerResponse, core: GatewayCore, cfg: GatewayConfig): Promise<void> {
@@ -125,7 +125,10 @@ async function dispatch(req: IncomingMessage, res: ServerResponse, core: Gateway
     if (typeof v === "string") headers[k.toLowerCase()] = v;
     else if (Array.isArray(v) && v.length > 0) headers[k.toLowerCase()] = v[0]!;
   }
-  // 身份识别：路径段优先，x-llmveto-* 头作 fallback（兼容 legacy 直连 /v1 与测试 harness）
+  // 身份识别：路径段优先，x-llmveto-* 头作 fallback（兼容 legacy 直连 /v1 与测试 harness）。
+  // 信任边界：网关硬绑 127.0.0.1，本机客户端视为同一信任域，故身份头不做认证——它们只影响
+  // evidence 归属与（catch-all 路径下的）路由条目选择，不改变转发目标；唯一能改变目标的是
+  // x-llmveto-upstream-url，由 allowUpstreamHeaderOverride 门控（默认关闭，生产不开启）。
   const client = route.client ?? headers["x-llmveto-client"] ?? "unknown";
   const providerId = route.providerId ?? headers["x-llmveto-provider"] ?? cfg.providerId ?? "unknown";
   const requestId = headers["x-llmveto-request-id"] ?? randomUUID();
@@ -133,7 +136,8 @@ async function dispatch(req: IncomingMessage, res: ServerResponse, core: Gateway
   const turnId = headers["x-llmveto-turn-id"] ?? "t-" + requestId.slice(0, 8);
 
   const resolution = resolveUpstream(route, headers, cfg);
-  const upstreamUrl = resolution ? joinUpstream(resolution.base, route.rest, resolution.viaHeader) : null;
+  // 查询串随路径一并转发（如受管 Delphi endpoint 的 `?stream=1`、Azure 风格 api-version）
+  const upstreamUrl = resolution ? joinUpstream(resolution.base, route.rest, resolution.viaHeader, url.search) : null;
   const endpointHost = headers["x-llmveto-endpoint-host"] ?? (upstreamUrl ? safeHost(upstreamUrl) : "unknown");
 
   // fail-closed：无任何路由可解析 → 502，不转发，evidence 记录 router finding
@@ -152,7 +156,8 @@ async function dispatch(req: IncomingMessage, res: ServerResponse, core: Gateway
   }
 
   // 传输判定单一真相源（server 层）：body `stream:true` / Delphi 受管 endpoint 的 `?stream=1` /
-  // 显式 x-llmveto-transport 头。判定结果显式下传 core，避免两层各自重判导致响应形态分歧。
+  // 显式 x-llmveto-transport 头（TEST 契约：环回信任域内可强制流式分支——只影响响应形态与
+  // 扫描粒度，不改变转发目标）。判定结果显式下传 core，避免两层各自重判导致响应形态分歧。
   const stream = /"stream"\s*:\s*true/.test(bodyText)
     || url.searchParams.get("stream") === "1"
     || headers["x-llmveto-transport"] === "stream";
@@ -171,8 +176,10 @@ async function dispatch(req: IncomingMessage, res: ServerResponse, core: Gateway
 
   const respText = outcome.body;
   res.statusCode = outcome.status;
-  res.setHeader("content-type", stream ? "text/event-stream" : "application/json");
-  if (stream && outcome.sse) {
+  // content-type 以实际响应形态为准：stream 判定为真但无 sse（如上游非 2xx 走错误分支）时
+  // 交付的是 JSON 体，若仍标 text/event-stream 会令流式客户端解析失败（R2 评审 A-N-1）。
+  res.setHeader("content-type", outcome.sse ? "text/event-stream" : "application/json");
+  if (outcome.sse) {
     for await (const chunk of outcome.sse) res.write(chunk);
     res.end();
   } else {

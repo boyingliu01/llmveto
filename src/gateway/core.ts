@@ -180,6 +180,13 @@ export async function handleChatCompletions(
   let deliveredChunks = 0;
   const allFindings: EvidenceFinding[] = [...reqFindings];
   let terminated = false;
+  /** 交付前扫描（含非 SSE 内容）：命中 block → true，调用方改发 veto 终止流。 */
+  function scanDelivered(text: string): boolean {
+    const scan = core.scanResponseStreamChunk(window, text, requested);
+    window = scan.nextWindow;
+    allFindings.push(...flattenFindings(scan.inputs));
+    return decide([...reqScan.inputs, ...scan.inputs]).action === "block";
+  }
   async function* sse(): AsyncIterable<string> {
     while (true) {
       const { value, done } = await reader.read();
@@ -188,13 +195,16 @@ export async function handleChatCompletions(
       const { frames, rest } = parseSseFrames(pending);
       pending = rest;
       for (const f of frames) {
-        if (f.data === undefined) { yield f.raw + "\n\n"; continue; }
+        // 非 `data:` 帧（上游按 body 判模态而回整段 JSON 时即此类）同样先扫描后转发：
+        // transport=stream 由本端判定（`?stream=1` / 头），与上游模态可能不一致，
+        // 免检直通会让该子类的响应侧 checker 全部落空（R2-N1 扫描回归）。
+        if (f.data === undefined) {
+          if (scanDelivered(f.raw)) { yield encodeVetoEvent(deliveredChunks); terminated = true; return; }
+          yield f.raw + "\n\n";
+          continue;
+        }
         if (f.data === "[DONE]") { yield `data: ${f.data}\n\n`; continue; }
-        const scan = core.scanResponseStreamChunk(window, f.data, requested);
-        window = scan.nextWindow;
-        const decision = decide([...reqScan.inputs, ...scan.inputs]);
-        allFindings.push(...flattenFindings(scan.inputs));
-        if (decision.action === "block") {
+        if (scanDelivered(f.data)) {
           yield encodeVetoEvent(deliveredChunks);
           terminated = true;
           return;
@@ -203,18 +213,26 @@ export async function handleChatCompletions(
         deliveredChunks += 1;
       }
     }
+    // EOF 残尾（未以空行收束的最后一帧，含"上游返回非 SSE JSON 体"的整段内容）：
+    // 补帧终止符后按帧规则解析出可扫描文本，命中则不发残尾直接 veto。
     if (pending.length > 0) {
+      const tail = parseSseFrames(pending + "\n\n").frames[0];
+      if (scanDelivered(tail?.data ?? tail?.raw ?? pending)) {
+        yield encodeVetoEvent(deliveredChunks);
+        terminated = true;
+        return;
+      }
       yield pending;
     }
   }
   // 用 getter 而不是快照：sse() 是惰性 generator，调用方 server.ts 在 `for await` 完成后才写 evidence；
-  // 届时 actionTaken / deliveredChunks / scenario 需要反映终止时的真值（AC-VETO-014-05 场景 4）。
+  // 届时 actionTaken / deliveredChunks / scenario / findings 需要反映终止时的真值（AC-VETO-014-05 场景 4）。
   return {
     status: 200,
     body: "",
     sse: sse(),
     get actionTaken(): ActionTaken { return terminated ? "terminated_after_delivery" : "allowed"; },
-    findings: allFindings,
+    get findings(): EvidenceFinding[] { return allFindings; },
     get deliveredChunks(): number { return deliveredChunks; },
     get scenario(): BehaviorScenario { return pickScenario({ side: "response", transport: "stream", deliveredChunks }); },
   };

@@ -89,5 +89,83 @@ describe("SL-14 e2e: delphi managed path (REQ-VETO-014)", () => {
     expect(rec.transport).toBe("stream");
     expect(rec.action_taken).toBe("terminated_after_delivery");
     expect(rec.response_delivered.delivered_chunks).toBe(1);
+    // 查询串随路径转发到 upstream（R2-N1 根因①：`?stream=1` 不再被剥离）
+    expect(mock.requests[0]!.url).toBe("/v1/chat/completions?stream=1");
+  });
+
+  it("AC-02 endpoint.stream + 上游按 body 判模态回 JSON（非 SSE）→ 响应仍被扫描：恶意内容不透传（R2-N1 回归）", async () => {
+    // 修复前：transport=stream 且上游回非 SSE JSON 时，内容经 EOF 残尾/非 data: 帧直通，
+    // 响应侧 checker 全部落空 → U+200B 免检到达客户端且 evidence 记 allowed（假清洁）。
+    const writerPath = join(dir, "ev-delphi-nonmod.jsonl");
+    mock = await startMockUpstream({
+      transport: "non-stream",
+      body: JSON.stringify({ model: "gpt-4o", choices: [{ message: { content: "ok\u200Bhidden-secret" }, finish_reason: "stop" }] }),
+    });
+    const writer = new EvidenceWriter(writerPath);
+    gw = await startGateway({ config: { upstreamBaseUrl: mock.url, evidenceWriter: writer } });
+
+    const patch = delphiAdapter.buildPatch(gw.url);
+    const endpoint = (patch as { endpoint: { chat: string; stream: string } }).endpoint;
+    const r = await fetch(endpoint.stream, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "hi delphi" }] }),
+    });
+    expect(r.status).toBe(200);
+    const text = await r.text();
+    expect(text).not.toContain("hidden-secret"); // 命中内容不得透传
+    expect(text).toContain("llmveto:veto-mid-stream");
+    expect(mock.requests).toHaveLength(1); // 请求侧本就放行，已到达上游
+
+    const rec = JSON.parse(readFileSync(writerPath, "utf8").split("\n")[0]!) as {
+      transport: string;
+      action_taken: string;
+      response_delivered: { partial: boolean; delivered_chunks: number };
+      findings: { checker: string }[];
+    };
+    expect(rec.transport).toBe("stream");
+    expect(rec.action_taken).toBe("terminated_after_delivery");
+    expect(rec.response_delivered.delivered_chunks).toBe(0);
+    expect(rec.findings.some((f) => f.checker === "invisible-unicode-scan")).toBe(true); // 非假清洁审计
+  });
+
+  it("AC-02 endpoint.stream + 上游 JSON 体含空行（拆成非 data: 帧）→ 逐帧扫描，命中帧不转发", async () => {
+    const writerPath = join(dir, "ev-delphi-nonmod2.jsonl");
+    mock = await startMockUpstream({
+      transport: "non-stream",
+      body: '{"model":"gpt-4o","choices":[{"message":{"content":"ok-1"}}]}\n\n{"model":"gpt-4o","choices":[{"message":{"content":"\u200Bevil-2"}}]}\n\n',
+    });
+    const writer = new EvidenceWriter(writerPath);
+    gw = await startGateway({ config: { upstreamBaseUrl: mock.url, evidenceWriter: writer } });
+
+    const patch = delphiAdapter.buildPatch(gw.url);
+    const endpoint = (patch as { endpoint: { chat: string; stream: string } }).endpoint;
+    const r = await fetch(endpoint.stream, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "hi delphi" }] }),
+    });
+    expect(r.status).toBe(200);
+    const text = await r.text();
+    expect(text).toContain("ok-1"); // 首个 benign 非 data: 帧正常交付
+    expect(text).not.toContain("evil-2");
+    expect(text).toContain("llmveto:veto-mid-stream");
+  });
+
+  it("AC-02 endpoint.stream + 上游 4xx → content-type=application/json（R2 评审 A-N-1 回归）", async () => {
+    mock = await startMockUpstream({ transport: "non-stream", body: '{"error":"unauthorized"}', status: 401 });
+    const writer = new EvidenceWriter(join(dir, "ev-delphi-401.jsonl"));
+    gw = await startGateway({ config: { upstreamBaseUrl: mock.url, evidenceWriter: writer } });
+
+    const patch = delphiAdapter.buildPatch(gw.url);
+    const endpoint = (patch as { endpoint: { chat: string; stream: string } }).endpoint;
+    const r = await fetch(endpoint.stream, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "hi delphi" }] }),
+    });
+    expect(r.status).toBe(401);
+    expect(r.headers.get("content-type")).toBe("application/json"); // 无 sse → 不得标 SSE
+    expect(await r.text()).toBe('{"error":"unauthorized"}');
   });
 });

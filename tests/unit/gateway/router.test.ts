@@ -83,6 +83,12 @@ describe("joinUpstream", () => {
     expect(joinUpstream("http://h:1", "", false)).toBe("http://h:1");
     expect(joinUpstream("http://h:1/full", "/v1/chat/completions", true)).toBe("http://h:1/full");
   });
+  it("查询串随路径转发（客户端语义不丢弃）；header 注入目标不受影响", () => {
+    expect(joinUpstream("http://h:1", "/v1/chat/completions", false, "?stream=1")).toBe("http://h:1/v1/chat/completions?stream=1");
+    expect(joinUpstream("https://x/v1", "/v1/chat/completions", false, "?api-version=2024-06-01")).toBe("https://x/v1/chat/completions?api-version=2024-06-01");
+    expect(joinUpstream("http://h:1", "", false, "?a=1")).toBe("http://h:1?a=1");
+    expect(joinUpstream("http://h:1/full", "/v1/x", true, "?stream=1")).toBe("http://h:1/full");
+  });
 });
 
 describe("gateway 路由端到端", () => {
@@ -161,6 +167,19 @@ describe("gateway 路由端到端", () => {
     const rec = evidence(writerPath)[0]!;
     expect(rec.client).toBe("unknown");
     expect(mock.requests.length).toBe(1);
+  });
+
+  it("查询串端到端转发：非 stream 语义的 query（如 api-version）原样到达 upstream", async () => {
+    mock = await startMockUpstream({ transport: "non-stream", body: OK_BODY });
+    const writer = new EvidenceWriter(join(dir, "ev-query.jsonl"));
+    gw = await startGateway({ config: { upstreamBaseUrl: mock.url + "/v1", evidenceWriter: writer } });
+    const r = await fetch(gw.url + "/v1/chat/completions?api-version=2024-06-01", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] }),
+    });
+    expect(r.status).toBe(200);
+    expect(await r.text()).toBe(OK_BODY);
+    expect(mock.requests[0]!.url).toBe("/v1/chat/completions?api-version=2024-06-01");
   });
 
   it("x-llmveto-upstream-url 默认不生效：请求落到受管路由表，而非头指向的目标", async () => {

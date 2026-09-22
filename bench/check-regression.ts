@@ -1,4 +1,4 @@
-// @no-test-required: CI 入口脚本（无逻辑分支），核心判定由 regression-formula.test.ts 与环境门由 env-gate.test.ts 覆盖。
+// @no-test-required: CI 入口脚本（含内联解析/守卫逻辑，异常即 fail-loud 抛出并在 CI 日志直接可见）；核心判定由 regression-formula.test.ts 覆盖、可比性前置门由 env-gate.test.ts 覆盖。
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { isRegression } from "./regression-formula.ts";
@@ -7,14 +7,21 @@ import { BENCH_SAMPLING, medianOf, minOf } from "./repeat.ts";
 
 /**
  * @test REQ-VETO-013
- * @intent CI 端读取基准文件（默认 bench/baseline.json，可用 LLMVETO_BENCH_BASELINE 覆写）的 p95_base
- *         与当前 PR 采样（p95_pr），套用 regression-formula.isRegression()。
+ * @intent CI 端读取基准文件（默认 bench/baseline.json，可用 LLMVETO_BENCH_BASELINE 覆写）的 p50_base
+ *         与当前 PR 采样（p50_pr），套用 regression-formula.isRegression()。
  *         任一档命中回退 → exit 1 阻断合并。
  *
- * 估计量：每档取 BENCH_REPEATS 次独立运行 runner 的 p95 **最小值**（docs/adr/0002 补遗二）。
+ * 判定量 = 相对口径下 N 次独立运行 runner 的 **p50** 最小值（docs/adr/0002 补遗三）。
+ *         分位数取 p50 而非 p95：尾部在共享 runner 上受偶发停顿支配，跨实例波动实测达 +25%，
+ *         已超过 1.2× 容差本身（补遗三的三次同码实测），会把无回归的改动判红；p50 反映网关真实增量
+ *         且跨运行稳定。尾部回归由绝对门（G1 p95/p99、G2 p95、G3）在 job 日志中呈现，
+ *         其是否升级为阻断须单独修订 ADR（补遗一"后续决策点"）。
+ *
+ * 估计量：每档取 BENCH_REPEATS 次独立运行 runner 的对应分位数 **最小值**（docs/adr/0002 补遗二）。
  *         干扰只会抬高测得成本，最小值最接近真成本；单次采样在共享 runner 上受突发干扰支配，
  *         实测同 job 内同码同档可差 3×——比 1.2× 容差更宽，会把无回归的改动判红。基准侧由
- *         record-baseline.ts 用同一估计量录制。中位数与全部采样只作人读输出。
+ *         record-baseline.ts 用同一估计量录制（逐分位取 N 次最小，故 p50 与 p95 皆可直接消费）。
+ *         中位数、全部采样与 p95 对照行只作人读输出，不参与判定。
  *
  * 可比性前置门（docs/adr/0002 补遗一/二）：环境（os/arch/ci 全等）与录制口径（_repeats/_estimator
  * 相等）二者缺一即不可比。不匹配 → SKIP（exit 0，非阻断）+ 醒目提示与补救指引：跨环境/跨口径
@@ -29,16 +36,27 @@ interface Baseline {
   readonly _environment?: unknown;
   readonly _repeats?: unknown;
   readonly _estimator?: unknown;
-  readonly g1_ttft_delta_ms: { readonly p95: number };
+  readonly g1_ttft_delta_ms: { readonly p50: number; readonly p95: number };
   readonly g2_request_gate_ms: {
-    readonly tiers: readonly { readonly body_kb: number; readonly p95: number }[];
+    readonly tiers: readonly { readonly body_kb: number; readonly p50: number; readonly p95: number }[];
   };
 }
 
-function parseP95(log: string, labelRe: RegExp): number {
-  const m = log.match(labelRe);
-  if (!m || m[1] === undefined) throw new Error(`p95 not found in log (pattern: ${labelRe.source})`);
-  return Number(m[1]);
+/**
+ * 数值守卫（R6-B2，fail-loud）：NaN/Infinity 经 isRegression 两条件皆 false 会**静默 PASS**
+ * ——等于"无阻断性性能门"被无声放行。日志解析与基准字段两侧共用本守卫：任一缺失/畸形都抛。
+ */
+function finite(value: unknown, what: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`${what} is not a finite number (fail-loud: NaN would silently pass both regression conditions)`);
+  }
+  return value;
+}
+
+/** 取日志中第 group 个捕获组为有限数。runner 输出自控，但 `[\d.]+` 仍可匹配出 `1.2.3` 型 NaN，故守卫不放行。 */
+function parseStat(log: string, labelRe: RegExp, group: number, label: string): number {
+  const raw = log.match(labelRe)?.[group];
+  return finite(raw === undefined ? NaN : Number(raw), `${label} in runner log (pattern: ${labelRe.source})`);
 }
 
 function runRunner(file: string): string {
@@ -50,10 +68,25 @@ function runRunner(file: string): string {
   return res.stdout;
 }
 
-/** N 次采样各自的 p95，及判定用最小值与仅供人读的中位数。逐采样打印保留日志可读性（突发样本肉眼可辨）。 */
-function sampleStats(samples: readonly string[], labelRe: RegExp): { min: number; median: number; values: number[] } {
-  const values = samples.map((log) => parseP95(log, labelRe));
-  return { min: minOf(values), median: medianOf(values), values };
+interface Stat {
+  readonly values: number[];
+  readonly min: number;
+  readonly median: number;
+}
+
+function summarize(values: number[]): Stat {
+  return { values, min: minOf(values), median: medianOf(values) };
+}
+
+/**
+ * 一个档位的两组统计量：`judged` = 判定用 p50（第 1 捕获组），`tail` = 仅供人读的 p95 对照（第 2 捕获组）。
+ * 逐采样打印保留日志可读性（突发样本肉眼可辨）；p95 对照为补遗三的复审留数据，不参与判定。
+ */
+function sampleStats(samples: readonly string[], labelRe: RegExp, label: string): { judged: Stat; tail: Stat } {
+  return {
+    judged: summarize(samples.map((log) => parseStat(log, labelRe, 1, `${label} p50`))),
+    tail: summarize(samples.map((log) => parseStat(log, labelRe, 2, `${label} p95`))),
+  };
 }
 
 const baselinePath = process.env.LLMVETO_BENCH_BASELINE ?? "bench/baseline.json";
@@ -103,32 +136,58 @@ for (let i = 0; i < BENCH_SAMPLING.repeats; i++) {
 }
 
 console.log(
-  `relative regression gate — ${BENCH_SAMPLING.estimator} of ${BENCH_SAMPLING.repeats} runs vs baseline (${baselinePath})`,
+  `relative regression gate — p50 ${BENCH_SAMPLING.estimator} of ${BENCH_SAMPLING.repeats} runs vs baseline (${baselinePath})`,
 );
 
-const g1 = sampleStats(g1Samples, /p95=([\d.]+)ms/);
-const checks: { name: string; base: number; pr: number; median: number; values: number[] }[] = [
-  { name: "G1 TTFT p95", base: baseline.g1_ttft_delta_ms.p95, pr: g1.min, median: g1.median, values: g1.values },
+interface Check {
+  readonly name: string;
+  readonly base: number;
+  readonly judged: Stat;
+  readonly tailLabel: string;
+  readonly tailBase: number;
+  readonly tail: Stat;
+}
+
+// 行首锚定（R6-B4）：档位号在正则里是子串（如 "8KB" 会命中 "128KB" 行），锚定后与档位一一对应。
+const g1 = sampleStats(g1Samples, /^G1 TTFT delta → p50=([\d.]+)ms p95=([\d.]+)ms/m, "G1 TTFT");
+const checks: Check[] = [
+  {
+    name: "G1 TTFT p50",
+    base: finite(baseline.g1_ttft_delta_ms.p50, "baseline g1_ttft_delta_ms.p50 (bench/baseline.json)"),
+    judged: g1.judged,
+    tailLabel: "G1 TTFT p95",
+    tailBase: finite(baseline.g1_ttft_delta_ms.p95, "baseline g1_ttft_delta_ms.p95 (bench/baseline.json)"),
+    tail: g1.tail,
+  },
 ];
 
 for (const tier of baseline.g2_request_gate_ms.tiers) {
-  const re = new RegExp(`${tier.body_kb}KB → p50=[\\d.]+ms p95=([\\d.]+)ms`);
-  const s = sampleStats(g2Samples, re);
-  checks.push({ name: `G2 ${tier.body_kb}KB p95`, base: tier.p95, pr: s.min, median: s.median, values: s.values });
+  const re = new RegExp(`^G2 ${tier.body_kb}KB → p50=([\\d.]+)ms p95=([\\d.]+)ms`, "m");
+  const s = sampleStats(g2Samples, re, `G2 ${tier.body_kb}KB`);
+  checks.push({
+    name: `G2 ${tier.body_kb}KB p50`,
+    base: finite(tier.p50, `baseline G2 ${tier.body_kb}KB p50 (bench/baseline.json)`),
+    judged: s.judged,
+    tailLabel: `G2 ${tier.body_kb}KB p95`,
+    tailBase: finite(tier.p95, `baseline G2 ${tier.body_kb}KB p95 (bench/baseline.json)`),
+    tail: s.tail,
+  });
 }
 
 let regressed = false;
 for (const c of checks) {
-  const v = isRegression({ p95_base_ms: c.base, p95_pr_ms: c.pr });
-  const samples = `[${c.values.map((x) => x.toFixed(3)).join(", ")}]`;
+  const v = isRegression({ base_ms: c.base, pr_ms: c.judged.min });
+  const samples = `[${c.judged.values.map((x) => x.toFixed(3)).join(", ")}]`;
+  const line = `${c.name}: base=${c.base} pr=${c.judged.min.toFixed(3)} (min of ${c.judged.values.length}; median=${c.judged.median.toFixed(3)}) runs=${samples}`;
   if (v.regressed) {
     regressed = true;
-    console.log(
-      `FAIL  ${c.name}: base=${c.base} pr=${c.pr.toFixed(3)} (min of ${c.values.length}; median=${c.median.toFixed(3)}) runs=${samples} → ${v.reasons.join("; ")}`,
-    );
+    console.log(`FAIL  ${line} → ${v.reasons.join("; ")}`);
   } else {
-    console.log(`PASS  ${c.name}: base=${c.base} pr=${c.pr.toFixed(3)} (min of ${c.values.length}; median=${c.median.toFixed(3)}) runs=${samples}`);
+    console.log(`PASS  ${line}`);
   }
+  console.log(
+    `      ${c.tailLabel} [info only, not judged]: base=${c.tailBase} pr=${c.tail.min.toFixed(3)} (median=${c.tail.median.toFixed(3)})`,
+  );
 }
 
 process.exit(regressed ? 1 : 0);

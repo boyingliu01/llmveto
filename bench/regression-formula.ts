@@ -1,14 +1,17 @@
 /**
  * @test REQ-VETO-013
  * @intent 回退公式（AC-VETO-013-04）：
- *   p95_pr > p95_base × 1.2  OR  p95_pr − p95_base > 2ms → 判回退。
+ *   pr > base × 1.2  OR  pr − base > 2ms → 判回退。
  *
  * 本文件是纯函数，可在 CI 中直接消费。基准 runner（bench/*.ts）把两次采样结果传进来判定。
+ * 传入的是**哪个统计量**由调用方决定：判定量 = 相对口径下 N 次独立采样的最小值，所取分位数
+ * 为 **p50**（尾部 p95/p99 在共享 runner 上受偶发停顿支配，跨实例波动超过 1.2× 容差本身，
+ * 故只由绝对门守；见 docs/adr/0002 补遗三）。
  */
 
 export interface RegressionInput {
-  readonly p95_base_ms: number;
-  readonly p95_pr_ms: number;
+  readonly base_ms: number;
+  readonly pr_ms: number;
 }
 
 export interface RegressionVerdict {
@@ -17,10 +20,10 @@ export interface RegressionVerdict {
 }
 
 export function isRegression(input: RegressionInput): RegressionVerdict {
-  const { p95_base_ms: base, p95_pr_ms: pr } = input;
+  const { base_ms: base, pr_ms: pr } = input;
   const reasons: string[] = [];
-  if (pr > base * 1.2) reasons.push(`p95_pr (${pr}ms) > p95_base × 1.2 (${(base * 1.2).toFixed(2)}ms)`);
-  if (pr - base > 2) reasons.push(`p95_pr - p95_base (${(pr - base).toFixed(2)}ms) > 2ms`);
+  if (pr > base * 1.2) reasons.push(`pr (${pr}ms) > base × 1.2 (${(base * 1.2).toFixed(2)}ms)`);
+  if (pr - base > 2) reasons.push(`pr - base (${(pr - base).toFixed(2)}ms) > 2ms`);
   return { regressed: reasons.length > 0, reasons };
 }
 

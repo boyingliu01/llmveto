@@ -27,20 +27,27 @@ describe("SL-13 bench: regression formula + gates (REQ-VETO-013)", () => {
     expect(G3_THRESHOLDS.map((t) => t.ms)).toEqual([20, 50, 120]);
   });
 
-  it("AC-04 回退：p95_pr > p95_base × 1.2 → regressed", () => {
-    const v = isRegression({ p95_base_ms: 3, p95_pr_ms: 4 });
+  it("AC-04 回退：pr > base × 1.2 → regressed", () => {
+    const v = isRegression({ base_ms: 3, pr_ms: 4 });
     expect(v.regressed).toBe(true);
     expect(v.reasons.join(" ")).toContain("1.2");
   });
 
-  it("AC-04 回退：p95_pr − p95_base > 2ms → regressed", () => {
-    const v = isRegression({ p95_base_ms: 2, p95_pr_ms: 5 });
+  it("AC-04 回退：pr − base > 2ms → regressed", () => {
+    const v = isRegression({ base_ms: 2, pr_ms: 5 });
     expect(v.regressed).toBe(true);
     expect(v.reasons.length).toBeGreaterThan(0);
   });
 
   it("AC-04 非回退：同速率小幅上升", () => {
-    const v = isRegression({ p95_base_ms: 3, p95_pr_ms: 3.2 });
+    const v = isRegression({ base_ms: 3, pr_ms: 3.2 });
+    expect(v.regressed).toBe(false);
+  });
+
+  it("AC-04 判定量口径：p50 量级的 CI 实测对（补遗三的假红样本）不判回退", () => {
+    // 2026-09-22 bench run 35724569406：G1 p95 1.554→1.867（+20.1%）假红；同日两次 record 的 p50 为
+    // 0.252（35713318131，已提交基线）→ 0.233（35724920387，诊断性重录），在 p50 判据下通过。
+    const v = isRegression({ base_ms: 0.252, pr_ms: 0.233 });
     expect(v.regressed).toBe(false);
   });
 

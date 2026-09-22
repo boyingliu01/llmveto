@@ -65,8 +65,9 @@ describe("samplingMatches (录制口径前置，docs/adr/0002 补遗二)", () =>
     });
   });
 
-  it("单次采样基准（schema v3，无标记）→ 不可比 + 提示重录", () => {
-    for (const r of [undefined, null, "3", [], {}, 0, -1, 1.5]) {
+  it("畸形 _repeats（缺标记 / 非整数 / 非有限数）→ 不可比 + 提示重录", () => {
+    // NaN / ±Infinity（R6-B1）的 typeof 同为 number，靠 Number.isInteger 挡下——无此守卫即静默放行。
+    for (const r of [undefined, null, "3", [], {}, 0, -1, 1.5, NaN, Infinity, -Infinity]) {
       const res = samplingMatches(r, BENCH_SAMPLING.estimator, BENCH_SAMPLING);
       expect(res.comparable).toBe(false);
       expect(res.reason).toContain("re-record");

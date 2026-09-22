@@ -90,7 +90,7 @@ const cpu = cpus()[0]?.model ?? "unknown cpu";
 const baseline = {
   _schema_version: 4,
   _purpose:
-    "AC-VETO-013-04 回退公式基准：p95_base 取本文件对应 runner 的 p95_ms 字段。CI 中 bench 每次运行按同 runner 采样 n=200 后调用 regression-formula.isRegression({p95_base_ms, p95_pr_ms}) 判定；regressed=true → 阻断合并。v2 起 G1/G2 为 HTTP 端到端口径（逐请求配对增量），G3 仍为进程内 checker 计时；口径变更详见 docs/adr/0002-bench-http-e2e-methodology.md。v3 起增 _environment 标记：check-regression 前置环境门要求基准与采样 os/arch/ci 全等，不匹配即 SKIP（见该 ADR 补遗一）。v4 起增 _repeats/_estimator 标记：每档取 N 次独立采样的最小值（干扰只抬高成本，最小值最接近真成本），record 与 check 双侧同口径；标记与当前门口径不符即 SKIP（见该 ADR 补遗二）。",
+    "AC-VETO-013-04 回退公式基准：base/pr 判定值取本文件对应 runner 的 p50（每档 N 次独立运行取最小，口径见 _estimator/_repeats）。CI 中 bench 每次运行按同 runner 采样 n=200 后调用 regression-formula.isRegression({base_ms, pr_ms}) 判定；regressed=true → 阻断合并。判定量取 p50 之缘由：p95/p99 尾部在共享 runner 上受偶发停顿支配，跨实例波动实测顶到 1.2× 容差本身，会把无回归的改动判红（见该 ADR 补遗三）；尾部回归由绝对门在 job 日志呈现。v2 起 G1/G2 为 HTTP 端到端口径（逐请求配对增量），G3 仍为进程内 checker 计时；口径变更详见 docs/adr/0002-bench-http-e2e-methodology.md。v3 起增 _environment 标记：check-regression 前置环境门要求基准与采样 os/arch/ci 全等，不匹配即 SKIP（见该 ADR 补遗一）。v4 起增 _repeats/_estimator 标记：每档取 N 次独立采样的最小值（干扰只抬高成本，最小值最接近真成本），record 与 check 双侧同口径；标记与当前门口径不符即 SKIP（见该 ADR 补遗二）。",
   _measured_at: today,
   _environment: { os: platform(), arch: arch(), ci: process.env.CI === "true" },
   _repeats: BENCH_SAMPLING.repeats,
@@ -113,7 +113,7 @@ const baseline = {
     warmup: WARMUP,
     tiers: g2Tiers,
     _note:
-      "p50 为网关真实增量；p95/p99 尾部受测量环境偶发停顿（杀软/索引/回环 socket 缓冲边界）支配，跨运行呈双峰（1–2ms 档实测快模式 ~1.0–1.3ms / 慢模式 ~1.9–2.2ms）。绝对门与相对门均以 CI (ubuntu-latest) 为权威；v4 起逐档取 N 次最小值以取得「无干扰底」（见 docs/adr/0002 补遗二）。",
+      "p50 为网关真实增量，亦是相对门的判定量（docs/adr/0002 补遗三）；p95/p99 尾部受测量环境偶发停顿（杀软/索引/回环 socket 缓冲边界）支配，跨运行呈双峰（1–2ms 档实测快模式 ~1.0–1.3ms / 慢模式 ~1.9–2.2ms），只由绝对门守。绝对门与相对门均以 CI (ubuntu-latest) 为权威；v4 起逐档取 N 次最小值以取得「无干扰底」（见 docs/adr/0002 补遗二）。",
   },
   g3_checker_timeout_ms: {
     runner: "bench/g3-checker-timeout.ts",
@@ -128,5 +128,5 @@ const baseline = {
 const outPath = process.argv[2] ?? "bench/baseline.json";
 writeFileSync(outPath, JSON.stringify(baseline, null, 2) + "\n", "utf8");
 console.log(
-  `baseline written → ${outPath} (_measured_at=${today}, _environment=${platform()}-${arch()}${process.env.CI === "true" ? "-ci" : "-local"}, _repeats=${BENCH_SAMPLING.repeats}, _estimator=${BENCH_SAMPLING.estimator}, G1 p95=${g1.p95}ms)`,
+  `baseline written → ${outPath} (_measured_at=${today}, _environment=${platform()}-${arch()}${process.env.CI === "true" ? "-ci" : "-local"}, _repeats=${BENCH_SAMPLING.repeats}, _estimator=${BENCH_SAMPLING.estimator}, G1 p50=${g1.p50}ms p95=${g1.p95}ms)`,
 );

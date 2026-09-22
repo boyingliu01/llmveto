@@ -1,8 +1,9 @@
 name: bench
 
 # G-BENCH 性能三台门（REQ-VETO-013）
-# - PR 与 main push 各跑一次
-# - 与 bench/baseline.json 中的 p95 比较；命中回退公式 -> 阻断合并
+# - PR 与 main push：跑三台 runner（绝对门逐档打印），再由 check-regression 做相对回退判定
+# - 相对门仅在基准与本次采样同构环境（os/arch/ci 全等）时强制；跨环境 → SKIP + 醒目提示
+#   （权威基准由 record job 在 ubuntu-latest 重录后人工提交，见 docs/adr/0002 补遗）
 # - 512KB 档 p99_scan >= G3 * 0.6 触发 ADR 提示
 
 on:
@@ -10,12 +11,14 @@ on:
     branches: [main]
   push:
     branches: [main]
+  workflow_dispatch: {} # 触发 record job：重录权威基准
 
 permissions:
   contents: read
 
 jobs:
   bench:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,3 +39,25 @@ jobs:
         with:
           name: bench-logs
           path: bench-g*.log
+
+  record:
+    # 权威基线重录（workflow_dispatch 手动触发）：产出 artifact 供人工提交 bench/baseline.json。
+    # 不引入 bot 直推 main 的写路径——main 的写权限与提交纪律保留在人工门（docs/adr/0002 补遗）。
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: latest }
+      - run: bun install --frozen-lockfile
+      - name: Record baseline (G1/G2/G3, warmup 50 + n=200)
+        run: bun run bench:record
+      - name: Show recorded baseline
+        run: cat bench/baseline.json
+      - name: Guard — frozen thresholds untouched
+        run: git diff --exit-code bench/regression-formula.ts
+      - name: Upload recorded baseline
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-baseline
+          path: bench/baseline.json

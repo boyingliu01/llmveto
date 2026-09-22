@@ -49,4 +49,45 @@ describe("SL-14 e2e: delphi managed path (REQ-VETO-014)", () => {
     // endpoint_host 从解析后的 upstream URL 提取（M1.3：不再恒为 unknown）
     expect(rec.endpoint_host).toBe(new URL(mock.url).host);
   });
+
+  it("AC-02 endpoint.stream（?stream=1，body 无 stream:true）→ 流式扫描生效：中段命中终止流（R1-A2 回归）", async () => {
+    // 真实 Delphi 客户端靠 endpoint URL 的 ?stream=1 选流式，body 不含 `"stream":true`；
+    // 修复前 core 层自行从 body 重判 → 误判 non-stream → 缓冲整段 + 502 blocked_before_deliver。
+    const writerPath = join(dir, "ev-delphi-stream.jsonl");
+    mock = await startMockUpstream({
+      transport: "stream",
+      chunks: [
+        '{"model":"gpt-4o","choices":[{"delta":{"content":"clean-1"}}]}',
+        '{"model":"gpt-4o","choices":[{"delta":{"content":"\u200Bevil-mid"}}]}',
+        '{"model":"gpt-4o","choices":[{"delta":{"content":"never-arrives"}}]}',
+      ],
+    });
+    const writer = new EvidenceWriter(writerPath);
+    gw = await startGateway({ config: { upstreamBaseUrl: mock.url, evidenceWriter: writer } });
+
+    const patch = delphiAdapter.buildPatch(gw.url);
+    const endpoint = (patch as { endpoint: { chat: string; stream: string } }).endpoint;
+    const r = await fetch(endpoint.stream, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "hi delphi stream" }] }),
+    });
+    expect(r.status).toBe(200);
+    expect(r.headers.get("content-type")).toBe("text/event-stream");
+    const text = await r.text();
+    expect(text).toContain('"content":"clean-1"'); // 已交付字节保留（v1 流式阻断 = 终止流，不撤回）
+    expect(text).toContain("llmveto:veto-mid-stream");
+    expect(text).toContain('"delivered_chunks":1');
+    expect(text).not.toContain("evil-mid"); // 命中帧本身不转发
+    expect(text).not.toContain("never-arrives");
+
+    const rec = JSON.parse(readFileSync(writerPath, "utf8").split("\n")[0]!) as {
+      transport: string;
+      action_taken: string;
+      response_delivered: { partial: boolean; delivered_chunks: number };
+    };
+    expect(rec.transport).toBe("stream");
+    expect(rec.action_taken).toBe("terminated_after_delivery");
+    expect(rec.response_delivered.delivered_chunks).toBe(1);
+  });
 });

@@ -154,6 +154,17 @@ describe("SL-11 CLI (REQ-VETO-008)", () => {
     rmSync(d, { recursive: true, force: true });
   });
 
+  it("start：存活 pid + url → 幂等返回 already running（不派生第二个 daemon）", async () => {
+    const d = mkdtempSync(join(tmpdir(), "llmveto-start-idem-"));
+    writeFileSync(join(d, "gateway.pid"), String(process.pid), "utf8"); // 本 worker 进程必然存活
+    writeFileSync(join(d, "gateway.url"), "http://127.0.0.1:8787", "utf8");
+    const r = await runCli("start", { stateDir: d });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain(`already running (pid=${process.pid})`);
+    expect(r.stdout).toContain("http://127.0.0.1:8787");
+    rmSync(d, { recursive: true, force: true });
+  });
+
   it("stop：无 pid 文件 → exit=1 如实报告未运行（禁止 stub 式假成功）", async () => {
     const r = await runCli("stop", { stateDir: dir });
     expect(r.exitCode).toBe(1);

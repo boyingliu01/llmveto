@@ -9,6 +9,9 @@ build/
 # Test coverage (xp-gate pre-commit hook reads coverage/coverage-summary.json)
 coverage/
 
+# Local (non-authoritative) bench baseline recorded on a dev machine
+bench/baseline.local.json
+
 # Local runtime state (gateway pid/log/state)
 .llmveto/
 

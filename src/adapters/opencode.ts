@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Adapter, ConfigId, Env } from "./index.ts";
-import { deepMerge, readJsonConfig, writeJsonConfig } from "./config-io.ts";
+import { deepMerge, readJsonConfig, readJsonConfigStrict, writeJsonConfig } from "./config-io.ts";
 
 /**
  * @test REQ-VETO-009
@@ -56,7 +56,7 @@ export const opencodeAdapter: Adapter = {
   },
   applyManagedConfig(env: Env, gatewayBaseUrl: string): string {
     const path = this.defaultConfigPath(env);
-    const merged = deepMerge(readJsonConfig(path), this.buildPatch(gatewayBaseUrl));
+    const merged = deepMerge(readJsonConfigStrict(path), this.buildPatch(gatewayBaseUrl));
     writeJsonConfig(path, merged);
     return path;
   },

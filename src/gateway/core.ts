@@ -37,9 +37,16 @@ export interface GatewayConfig {
   readonly providerId?: string;
   /**
    * 路径路由表（REQ-VETO-009/014）：键 `"client/provider"` 或 `"client/*"`，值为该 provider 的 upstream base URL。
-   * 解析优先级：x-llmveto-upstream-url 头 > upstreams["client/provider"] > upstreams["client/*"] > upstreamBaseUrl(catch-all) > fail-closed。
+   * 解析优先级：upstreams["client/provider"] > upstreams["client/*"] > upstreamBaseUrl(catch-all) > fail-closed；
+   * 若显式开启 allowUpstreamHeaderOverride，则 x-llmveto-upstream-url 头置于最前。
    */
   readonly upstreams?: Readonly<Record<string, string>>;
+  /**
+   * 可测试性契约 #1 的注入开关：开启后 `x-llmveto-upstream-url` 头可覆盖转发目标（完整 URL）。
+   * 默认 false —— 生产 daemon 不开启，转发目标只由受管路由表决定；在网关进程内（in-process）
+   * 测试通过显式配置开启，命令行/网络客户端无法自行开启。
+   */
+  readonly allowUpstreamHeaderOverride?: boolean;
   /** OpenCode 模型目录快照文件路径；设置后 GET /opencode/models 本地伺服（P1 缓解：锁定 models URL）。 */
   readonly modelsSnapshotPath?: string;
 }
@@ -116,10 +123,11 @@ function safeRun(fn: NonStreamChecker, unit: ScanUnit): CheckerResult {
  */
 export async function handleChatCompletions(
   core: GatewayCore,
-  req: { body: string; headers: Record<string, string>; upstreamUrl: string; requestId: string; sessionId: string; turnId: string; client: string; providerId: string; endpointHost: string },
+  req: { body: string; headers: Record<string, string>; upstreamUrl: string; requestId: string; sessionId: string; turnId: string; client: string; providerId: string; endpointHost: string; transport: "stream" | "non-stream" },
 ): Promise<{ status: number; body: string; sse?: AsyncIterable<string>; actionTaken: ActionTaken; findings: EvidenceFinding[]; deliveredChunks: number; scenario: BehaviorScenario }> {
-  const stream = req.headers["x-llmveto-transport"] === "stream" || /"stream"\s*:\s*true/.test(req.body);
-  const transport: "stream" | "non-stream" = stream ? "stream" : "non-stream";
+  // transport 由 server 层判定后下传（单一真相源）：本层不再自行从 headers/body 重判。
+  const stream = req.transport === "stream";
+  const transport = req.transport;
   const reqScan = core.scanRequest(req.body, req.headers, transport);
   const reqDecision = decide(reqScan.inputs);
   const reqFindings = flattenFindings(reqScan.inputs);

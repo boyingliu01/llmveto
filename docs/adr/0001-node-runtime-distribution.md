@@ -30,7 +30,8 @@
 
 - ✅ `engines.node: ">=18"` 承诺由 dist 兑现（实测 `node dist/cli/index.js status|bogus|<no-arg>` 正确退出并分派）。运行时只用 Node 标准库 + 全局 `fetch`（Node ≥18 提供），无 Bun 专有 API。
 - ✅ 消除了"参数属性 / `.ts` 说明符 / `import.meta.main`"三处 Node 不可运行根因。
-- ⚠️ 安装/试用前必须 `bun run build`（或 `npm link` 前置 `prepublishOnly`）；`dist/` 纳入 `.gitignore`，不入库。
+- ⚠️ 安装/试用前必须 `bun run build`；`dist/` 纳入 `.gitignore`，不入库。
+- ⚠️ `package.json` 保持 `"private": true` 为**有意**（2026-09-22 评审确认）：v1 不经 npm registry 发布，故不存在 `prepublishOnly` 等发布期钩子，README 不得引用之。分发路径 = 本地 clone → `bun run build` → `npm link`（或直接 `node dist/cli/index.js`）。转为公开发布须另行决策：去掉 `private`、补发布前构建/校验门，并更新本文档。
 - ⚠️ 开发态仍走 `bun run src/cli/index.ts …`（即时、无构建）；仅分发/冒烟用 dist。两套入口由同一 `runCli` 纯函数收敛，行为一致。
 - 记录方式遵循 roadmap G-BENCH 同类纪律：口径变化必须**公开记录**，禁止静默放宽。
 

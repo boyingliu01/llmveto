@@ -75,13 +75,14 @@ const today = new Date().toISOString().slice(0, 10);
 const cpu = cpus()[0]?.model ?? "unknown cpu";
 
 const baseline = {
-  _schema_version: 2,
+  _schema_version: 3,
   _purpose:
-    "AC-VETO-013-04 回退公式基准：p95_base 取本文件对应 runner 的 p95_ms 字段。CI 中 bench 每次运行按同 runner 采样 n=200 后调用 regression-formula.isRegression({p95_base_ms, p95_pr_ms}) 判定；regressed=true → 阻断合并。v2 起 G1/G2 为 HTTP 端到端口径（逐请求配对增量），G3 仍为进程内 checker 计时；口径变更详见 docs/adr/0002-bench-http-e2e-methodology.md。",
+    "AC-VETO-013-04 回退公式基准：p95_base 取本文件对应 runner 的 p95_ms 字段。CI 中 bench 每次运行按同 runner 采样 n=200 后调用 regression-formula.isRegression({p95_base_ms, p95_pr_ms}) 判定；regressed=true → 阻断合并。v2 起 G1/G2 为 HTTP 端到端口径（逐请求配对增量），G3 仍为进程内 checker 计时；口径变更详见 docs/adr/0002-bench-http-e2e-methodology.md。v3 起增 _environment 标记：check-regression 前置环境门要求基准与采样 os/arch/ci 全等，不匹配即 SKIP（见该 ADR 补遗）。",
   _measured_at: today,
-  _measured_on: `${platform()} ${arch()} · ${cpu}（bun run bench:record 自动重录）`,
+  _environment: { os: platform(), arch: arch(), ci: process.env.CI === "true" },
+  _measured_on: `${platform()} ${arch()} · ${cpu}（bun run bench:record 自动重录${process.env.CI === "true" ? "，CI runner" : "，本地"}）`,
   _refresh_policy:
-    "手动 `bun run bench:record` 在安静环境重录；基准与 PR 须同构环境才可比（见相对回归门）；dev 机数值为占位，权威基准以 main 分支绿色 CI (ubuntu-latest) 口径为准，见 docs/adr/0002。",
+    "权威基准由 main 分支 CI 重录：Actions → bench → Run workflow（workflow_dispatch）触发 record job 在 ubuntu-latest 跑 `bun run bench:record`，下载 bench-baseline artifact 后人工提交（保留 main 写路径的人工门）。本地强制：`bun run bench:record bench/baseline.local.json` + LLMVETO_BENCH_BASELINE 覆写。环境门与 SKIP 语义详见 docs/adr/0002。",
   g1_ttft_delta_ms: {
     runner: "bench/g1-ttft.ts",
     method: "http-e2e-paired-delta",
@@ -111,4 +112,4 @@ const baseline = {
 
 const outPath = process.argv[2] ?? "bench/baseline.json";
 writeFileSync(outPath, JSON.stringify(baseline, null, 2) + "\n", "utf8");
-console.log(`baseline written → ${outPath} (_measured_at=${today})`);
+console.log(`baseline written → ${outPath} (_measured_at=${today}, _environment=${platform()}-${arch()}${process.env.CI === "true" ? "-ci" : "-local"})`);

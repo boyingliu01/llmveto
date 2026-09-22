@@ -22,8 +22,8 @@ import { percentile } from "./regression-formula.ts";
  * 采样协议（AC-VETO-013-01）：预热 WARMUP + n=N；报告 p50/p95/p99。
  */
 
-export const WARMUP = 50;
-export const N = 200;
+const WARMUP = 50;
+const N = 200;
 
 // 经网关的路由路径（client=bench / provider=default）；直连用 mock 原始路径。
 export const GW_PATH = "/bench/default/v1/chat/completions";

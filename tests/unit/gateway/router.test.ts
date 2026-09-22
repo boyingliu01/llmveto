@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { EvidenceWriter } from "../../../src/evidence/writer.ts";
-import { startGateway, parseRoute, resolveUpstreamBase, joinUpstream } from "../../../src/gateway/server.ts";
+import { startGateway, parseRoute, resolveUpstream, joinUpstream } from "../../../src/gateway/server.ts";
 import type { GatewayConfig } from "../../../src/gateway/core.ts";
 import { startMockUpstream, type MockUpstream } from "../../utils/mock-upstream.ts";
 
@@ -45,24 +45,32 @@ describe("parseRoute", () => {
   });
 });
 
-describe("resolveUpstreamBase 优先级", () => {
-  const cfg: Pick<GatewayConfig, "upstreamBaseUrl" | "upstreams"> = {
+describe("resolveUpstream 优先级", () => {
+  const cfg: Pick<GatewayConfig, "upstreamBaseUrl" | "upstreams" | "allowUpstreamHeaderOverride"> = {
     upstreamBaseUrl: "http://catch-all:1",
     upstreams: { "opencode/openai": "http://exact:1", "delphi/*": "http://client-wide:1" },
   };
-  it("header 优先（TEST 契约 #1）", () => {
+  it("头覆盖默认关闭：x-llmveto-upstream-url 被忽略（转发目标只由受管路由表决定）", () => {
     const route = parseRoute("/opencode/openai/v1/chat/completions");
-    expect(resolveUpstreamBase(route, { "x-llmveto-upstream-url": "http://header:1" }, cfg)).toBe("http://header:1");
+    expect(resolveUpstream(route, { "x-llmveto-upstream-url": "http://header:1" }, cfg)).toEqual({
+      base: "http://exact:1", viaHeader: false,
+    });
+  });
+  it("头覆盖显式开启（TEST 契约 #1）→ 头优先，viaHeader=true", () => {
+    const route = parseRoute("/opencode/openai/v1/chat/completions");
+    expect(resolveUpstream(route, { "x-llmveto-upstream-url": "http://header:1" }, { ...cfg, allowUpstreamHeaderOverride: true })).toEqual({
+      base: "http://header:1", viaHeader: true,
+    });
   });
   it("upstreams[\"c/p\"] > upstreams[\"c/*\"] > catch-all", () => {
-    expect(resolveUpstreamBase(parseRoute("/opencode/openai/v1/x"), {}, cfg)).toBe("http://exact:1");
-    expect(resolveUpstreamBase(parseRoute("/delphi/default/v1/x"), {}, cfg)).toBe("http://client-wide:1");
-    expect(resolveUpstreamBase(parseRoute("/other/prov/v1/x"), {}, cfg)).toBe("http://catch-all:1");
+    expect(resolveUpstream(parseRoute("/opencode/openai/v1/x"), {}, cfg)).toEqual({ base: "http://exact:1", viaHeader: false });
+    expect(resolveUpstream(parseRoute("/delphi/default/v1/x"), {}, cfg)).toEqual({ base: "http://client-wide:1", viaHeader: false });
+    expect(resolveUpstream(parseRoute("/other/prov/v1/x"), {}, cfg)).toEqual({ base: "http://catch-all:1", viaHeader: false });
   });
   it("无 catch-all（空串）且表未命中 → null（fail-closed 前提）", () => {
     const noCatch: Pick<GatewayConfig, "upstreamBaseUrl" | "upstreams"> = { upstreamBaseUrl: "", upstreams: { "opencode/openai": "http://exact:1" } };
-    expect(resolveUpstreamBase(parseRoute("/other/prov/v1/x"), {}, noCatch)).toBeNull();
-    expect(resolveUpstreamBase(parseRoute("/v1/chat/completions"), {}, noCatch)).toBeNull();
+    expect(resolveUpstream(parseRoute("/other/prov/v1/x"), {}, noCatch)).toBeNull();
+    expect(resolveUpstream(parseRoute("/v1/chat/completions"), {}, noCatch)).toBeNull();
   });
 });
 
@@ -153,5 +161,25 @@ describe("gateway 路由端到端", () => {
     const rec = evidence(writerPath)[0]!;
     expect(rec.client).toBe("unknown");
     expect(mock.requests.length).toBe(1);
+  });
+
+  it("x-llmveto-upstream-url 默认不生效：请求落到受管路由表，而非头指向的目标", async () => {
+    mock = await startMockUpstream({ transport: "non-stream", body: OK_BODY });
+    const headerTarget = await startMockUpstream({ transport: "non-stream", body: OK_BODY });
+    try {
+      const writer = new EvidenceWriter(join(dir, "ev-hdr.jsonl"));
+      gw = await startGateway({ config: { upstreamBaseUrl: mock.url, evidenceWriter: writer } });
+      const r = await fetch(gw.url + "/some/prov/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-llmveto-upstream-url": headerTarget.url },
+        body: JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] }),
+      });
+      expect(r.status).toBe(200);
+      await r.text();
+      expect(mock.requests.length).toBe(1);
+      expect(headerTarget.requests.length).toBe(0);
+    } finally {
+      await headerTarget.close();
+    }
   });
 });

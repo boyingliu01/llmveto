@@ -48,9 +48,10 @@ Claude Code / Codex / promptfoo     ── v2 接入
 
 ## 分发与 runtime 承诺（两个不同的承诺，勿混用）
 
-- **官方分发**：`bun build --compile` 产出的单二进制，用户无需安装任何 runtime。
-- **npm/CLI 分发**：`bun run build` 用 `tsc` 产出纯 ESM 的 `dist/`，`package.json` `bin.llmveto` 指向 `dist/cli/index.js`；`npm link`（或全局安装）后得 `llmveto` 命令，用**自带 Node ≥ 18** 即可运行（详见 [ADR-0001](docs/adr/0001-node-runtime-distribution.md)）。
+- **npm/CLI 分发（已交付；本地 link，不经 npm registry）**：`bun run build` 用 `tsc` 产出纯 ESM 的 `dist/`，`package.json` `bin.llmveto` 指向 `dist/cli/index.js`；本地 clone 后 `npm link` 得 `llmveto` 命令，用**自带 Node ≥ 18** 即可运行（详见 [ADR-0001](docs/adr/0001-node-runtime-distribution.md)）。
+  `package.json` 保持 `"private": true` 是**有意设置**：v1 不发布到 npm registry（`npm publish` 被 npm 阻断属预期），`npm link` 与本地使用不受影响；转为公开发布前须补齐发布流程与构建门（ADR-0001）。
 - **源码运行（开发态）**：`bun run src/cli/index.ts …` 直接跑 `.ts`（Bun 原生）。运行时代码**仅使用 Node 标准库 API**（`node:http` / `node:crypto` / Web Streams），**禁用 Bun-only API**；CI 在 vitest（Node）上执行正是为机器化保证这一约束。
+- **单二进制分发（未交付，不在 v1 承诺内）**：`bun build --compile` 打包为免 runtime 的单文件分属 v2 路线候选，v1 不提供该产物、不承诺命令名。
 
 > ⚠️ `.ts` 源码不是 Node 可直接运行的分发物（`.ts` 说明符 / 参数属性 / `import.meta.main` 三处不兼容）——分发必须走 `dist/`，见 ADR-0001。
 

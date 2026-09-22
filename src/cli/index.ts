@@ -39,6 +39,20 @@ function pidFile(ctx: CliCtx): string { return join(stateDir(ctx), "gateway.pid"
 function evidenceFile(ctx: CliCtx): string { return join(stateDir(ctx), "evidence.jsonl"); }
 function urlFile(ctx: CliCtx): string { return join(stateDir(ctx), "gateway.url"); }
 
+/** 读 pid 文件为整数；缺失 / 非法内容 → null。 */
+function readPid(ctx: CliCtx): number | null {
+  if (!existsSync(pidFile(ctx))) return null;
+  const pid = Number(readFileSync(pidFile(ctx), "utf8").trim());
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+
+/** 清理状态文件（best-effort）。 */
+function clearStateFiles(ctx: CliCtx): void {
+  for (const f of [pidFile(ctx), urlFile(ctx)]) {
+    try { if (existsSync(f)) rmSync(f); } catch { /* best-effort cleanup */ }
+  }
+}
+
 export async function runCli(cmd: CliCommand | string, ctx: CliCtx = {}): Promise<CliResult> {
   const args = ctx.args ?? [];
   if (!COMMANDS.includes(cmd as CliCommand)) {
@@ -73,6 +87,14 @@ async function cmdStartSpawn(ctx: CliCtx, env: Readonly<Record<string, string | 
   mkdirSync(dir, { recursive: true });
   const script = process.argv[1];
   if (!script) return { exitCode: 1, stdout: "", stderr: "start: cannot resolve CLI entry path (process.argv[1])\n" };
+  // 已在运行 → 幂等返回，不派生第二个必然因端口占用而失败的 daemon。
+  const livePid = readPid(ctx);
+  if (livePid !== null && isAlive(livePid)) {
+    const url = existsSync(urlFile(ctx)) ? readFileSync(urlFile(ctx), "utf8").trim() : "unknown";
+    return { exitCode: 0, stdout: `gateway already running (pid=${livePid}) at ${url}\nstate dir: ${dir}\n`, stderr: "" };
+  }
+  // 陈旧状态清理：上次异常退出遗留的 pid/url 文件会让下面的握手读到旧地址（假成功）。
+  clearStateFiles(ctx);
   // 把 stateDir 经 env 传给子进程（ctx 不跨进程）；其余网关配置（UPSTREAM/PORT/…）随 process.env 继承。
   const child = spawn(process.execPath, [script, "start"], {
     cwd: process.cwd(),
@@ -89,12 +111,13 @@ async function cmdStartSpawn(ctx: CliCtx, env: Readonly<Record<string, string | 
   const deadline = Date.now() + 3000;
   let url: string | null = null;
   while (Date.now() < deadline) {
-    if (existsSync(urlFile(ctx))) { url = readFileSync(urlFile(ctx), "utf8").trim(); break; }
-    if (died) break;
+    if (died) break; // 子进程提前退出优先于文件存在判断
+    // 只认本次派生的子进程写出的状态：pid 文件必须等于 child.pid（防陈旧文件误判）。
+    if (readPid(ctx) === pid && existsSync(urlFile(ctx))) { url = readFileSync(urlFile(ctx), "utf8").trim(); break; }
     await sleep(50);
   }
   if (!url) {
-    for (const f of [pidFile(ctx), urlFile(ctx)]) { try { if (existsSync(f)) rmSync(f); } catch { /* best-effort */ } }
+    clearStateFiles(ctx);
     return { exitCode: 1, stdout: "", stderr: `start: daemon exited before listening (port busy or misconfig?); see LLMVETO_* env\n` };
   }
   return { exitCode: 0, stdout: `gateway started in background (pid=${pid}) at ${url}\nstate dir: ${dir}\n`, stderr: "" };
@@ -129,7 +152,7 @@ async function cmdStartDaemon(ctx: CliCtx, env: Readonly<Record<string, string |
     if (closing) return;
     closing = true;
     void gw.close().finally(() => {
-      for (const f of [pidFile(ctx), urlFile(ctx)]) { try { if (existsSync(f)) rmSync(f); } catch { /* best-effort */ } }
+      clearStateFiles(ctx);
       process.exit(0);
     });
   };
@@ -147,9 +170,7 @@ async function cmdStop(ctx: CliCtx): Promise<CliResult> {
   if (Number.isInteger(pid) && pid > 0) {
     try { process.kill(pid); signaled = true; } catch { /* stale pid or permission: fall through to cleanup */ }
   }
-  for (const f of [pidPath, urlFile(ctx)]) {
-    try { if (existsSync(f)) rmSync(f); } catch { /* best-effort cleanup */ }
-  }
+  clearStateFiles(ctx);
   return signaled
     ? { exitCode: 0, stdout: "stop: signal sent\n", stderr: "" }
     : { exitCode: 1, stdout: "", stderr: `stop: stale pid file removed but process ${pid} not found\n` };
@@ -181,15 +202,20 @@ async function cmdDoctor(ctx: CliCtx, writeManaged: boolean): Promise<CliResult>
   //    写失败仅告警（AC-VETO-008-03），不影响本检查项 ok。
   if (writeManaged) {
     const results: string[] = [];
+    let failures = 0;
     for (const a of adapters) {
       try {
         const p = a.applyManagedConfig(env, baseUrl);
         results.push(`${a.name}→${p}`);
       } catch (e) {
-        results.push(`${a.name} WARN write failed: ${(e as Error).message}`);
+        failures += 1;
+        results.push(`${a.name} write failed: ${(e as Error).message}`);
       }
     }
-    checks.push({ id: "doctor.write-managed-config", ok: true, message: results.join("; ") || "no adapters" });
+    // AC-VETO-008-03：写失败仅告警。本项恒 PASS，故消息必须显式标注失败计数，
+    // 避免运维把 [PASS] 读成"配置已生效"；未写入的漂移由 doctor.config-drift 如实报 FAIL。
+    const warn = failures > 0 ? ` [WARN: ${failures}/${adapters.length} write failed — warn-only per AC-VETO-008-03; see doctor.config-drift]` : "";
+    checks.push({ id: "doctor.write-managed-config", ok: true, message: (results.join("; ") || "no adapters") + warn });
   }
   // ① 漂移：真实读取每个适配器的受管配置文件（缺失 / 不可解析 → 全漂移）
   const drift: { id: string }[] = [];
@@ -245,7 +271,7 @@ export function assertNoV2Stubs(): void {
 
 function probeReachable(baseUrl: string, timeoutMs = 500): Promise<boolean> {
   const url = new URL(baseUrl);
-  const port = Number(url.port) || 80;
+  const port = url.port ? Number(url.port) : url.protocol === "https:" ? 443 : 80;
   return new Promise((resolve) => {
     const sock = createConnection({ host: url.hostname, port });
     const timer = setTimeout(() => { sock.destroy(); resolve(false); }, timeoutMs);

@@ -59,27 +59,38 @@ export function parseRoute(urlPath: string): RouteInfo {
   return { client, providerId: provider, rest: rest === "/" ? "" : rest };
 }
 
-/** upstream 候选解析（非 final URL）：头 > upstreams["c/p"] > upstreams["c/*"] > catch-all。 */
-export function resolveUpstreamBase(
+/** upstream 解析结果：viaHeader=true 表示 base 是头注入的完整目标 URL（不拼接 rest）。 */
+export interface UpstreamResolution {
+  readonly base: string;
+  readonly viaHeader: boolean;
+}
+
+/**
+ * upstream 解析（单一真相源）：头 > upstreams["c/p"] > upstreams["c/*"] > catch-all。
+ * 头覆盖默认关闭（allowUpstreamHeaderOverride），仅可测试性契约 #1 的注入场景显式开启；
+ * 生产 daemon 不开启 → 转发目标只由受管路由表决定。
+ */
+export function resolveUpstream(
   route: RouteInfo,
   headers: Readonly<Record<string, string>>,
-  cfg: Pick<GatewayConfig, "upstreamBaseUrl" | "upstreams">,
-): string | null {
+  cfg: Pick<GatewayConfig, "upstreamBaseUrl" | "upstreams" | "allowUpstreamHeaderOverride">,
+): UpstreamResolution | null {
   const headerUrl = headers["x-llmveto-upstream-url"];
-  if (headerUrl) return headerUrl;
+  if (cfg.allowUpstreamHeaderOverride === true && headerUrl) return { base: headerUrl, viaHeader: true };
   const client = route.client ?? "*";
   const provider = route.providerId ?? "*";
   const table = cfg.upstreams ?? {};
   const exact = table[`${client}/${provider}`];
-  if (exact) return exact;
+  if (exact) return { base: exact, viaHeader: false };
   const clientWide = table[`${client}/*`];
-  if (clientWide) return clientWide;
-  return cfg.upstreamBaseUrl || null; // 空串 = 未配置 → fail-closed
+  if (clientWide) return { base: clientWide, viaHeader: false };
+  const catchAll = cfg.upstreamBaseUrl;
+  return catchAll ? { base: catchAll, viaHeader: false } : null; // 空串 = 未配置 → fail-closed
 }
 
 /** 拼接 upstream base + rest；去重双重 /v1（base 末尾带 /v1 且 rest 以 /v1 开头）。 */
-export function joinUpstream(base: string, rest: string, headerOverride: boolean): string {
-  if (headerOverride) return base; // TEST 契约 #1：头注入的是完整目标 URL
+export function joinUpstream(base: string, rest: string, viaHeader: boolean): string {
+  if (viaHeader) return base; // TEST 契约 #1：头注入的是完整目标 URL
   if (!rest) return base;
   const trimmed = base.replace(/\/+$/, "");
   if (trimmed.endsWith("/v1") && (rest === "/v1" || rest.startsWith("/v1/"))) return trimmed + rest.slice(3);
@@ -121,9 +132,8 @@ async function dispatch(req: IncomingMessage, res: ServerResponse, core: Gateway
   const sessionId = headers["x-llmveto-session-id"] ?? "s-" + requestId.slice(0, 8);
   const turnId = headers["x-llmveto-turn-id"] ?? "t-" + requestId.slice(0, 8);
 
-  const baseCandidate = resolveUpstreamBase(route, headers, cfg);
-  const headerOverride = headers["x-llmveto-upstream-url"] !== undefined;
-  const upstreamUrl = baseCandidate ? joinUpstream(baseCandidate, route.rest, headerOverride) : null;
+  const resolution = resolveUpstream(route, headers, cfg);
+  const upstreamUrl = resolution ? joinUpstream(resolution.base, route.rest, resolution.viaHeader) : null;
   const endpointHost = headers["x-llmveto-endpoint-host"] ?? (upstreamUrl ? safeHost(upstreamUrl) : "unknown");
 
   // fail-closed：无任何路由可解析 → 502，不转发，evidence 记录 router finding
@@ -141,7 +151,11 @@ async function dispatch(req: IncomingMessage, res: ServerResponse, core: Gateway
     return;
   }
 
-  const stream = /"stream"\s*:\s*true/.test(bodyText) || url.searchParams.get("stream") === "1";
+  // 传输判定单一真相源（server 层）：body `stream:true` / Delphi 受管 endpoint 的 `?stream=1` /
+  // 显式 x-llmveto-transport 头。判定结果显式下传 core，避免两层各自重判导致响应形态分歧。
+  const stream = /"stream"\s*:\s*true/.test(bodyText)
+    || url.searchParams.get("stream") === "1"
+    || headers["x-llmveto-transport"] === "stream";
   const outcome = await handleChatCompletions(core, {
     body: bodyText,
     headers,
@@ -152,6 +166,7 @@ async function dispatch(req: IncomingMessage, res: ServerResponse, core: Gateway
     client,
     providerId,
     endpointHost,
+    transport: stream ? "stream" : "non-stream",
   });
 
   const respText = outcome.body;
@@ -183,7 +198,9 @@ function writeEvidence(cfg: GatewayConfig, p: EvidenceWriteParams): void {
   const parsedResp = safeParse(p.respText);
   const modelResp = parsedResp && typeof parsedResp.model === "string" ? parsedResp.model : null;
   const bodyCapture = cfg.bodyCapture ?? "metadata_only";
-  redactSink(bodyCapture, p.bodyText); // 咽喉点：即便 metadata_only 也要过一遍
+  // 咽喉点（AC-VETO-002-05）：文本写盘前必须过 redactSink。v1 evidence 只落 sha256 + 模式标记
+  // （见 evidence/schema.ts），无原文落盘，故返回值不参与落盘；保留调用作为文本 sink 的强制入口。
+  redactSink(bodyCapture, p.bodyText);
   cfg.evidenceWriter.append({
     session_id: p.sessionId, turn_id: p.turnId, request_id: p.requestId,
     client: p.client, provider_id: p.providerId, endpoint_host: p.endpointHost,

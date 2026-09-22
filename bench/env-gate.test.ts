@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { environmentMatches, isCiCalibrated, type BenchEnvironment } from "./env-gate.ts";
+import { environmentMatches, isCiCalibrated, samplingMatches, type BenchEnvironment } from "./env-gate.ts";
+import { BENCH_SAMPLING } from "./repeat.ts";
 
 // @test REQ-VETO-013
 // @intent 环境门：仅当基准 _environment 与当前环境（os/arch/ci）三字段全等才判定可比；
@@ -53,5 +54,44 @@ describe("isCiCalibrated (SKIP 措辞分支用，不参与可比性判定)", () 
     for (const v of [undefined, null, "linux-x64-ci", [], { ci: "true" }, { os: "linux" }]) {
       expect(isCiCalibrated(v)).toBe(false);
     }
+  });
+});
+
+describe("samplingMatches (录制口径前置，docs/adr/0002 补遗二)", () => {
+  it("_repeats/_estimator 与当前门口径一致 → 可比", () => {
+    expect(samplingMatches(BENCH_SAMPLING.repeats, BENCH_SAMPLING.estimator, BENCH_SAMPLING)).toEqual({
+      comparable: true,
+      reason: "",
+    });
+  });
+
+  it("单次采样基准（schema v3，无标记）→ 不可比 + 提示重录", () => {
+    for (const r of [undefined, null, "3", [], {}, 0, -1, 1.5]) {
+      const res = samplingMatches(r, BENCH_SAMPLING.estimator, BENCH_SAMPLING);
+      expect(res.comparable).toBe(false);
+      expect(res.reason).toContain("re-record");
+    }
+  });
+
+  it("缺 _estimator 标记 / 标记畸形 → 不可比 + 提示重录", () => {
+    for (const e of [undefined, null, "", "  ", 7, [], {}]) {
+      const res = samplingMatches(BENCH_SAMPLING.repeats, e, BENCH_SAMPLING);
+      expect(res.comparable).toBe(false);
+      expect(res.reason).toContain("re-record");
+    }
+  });
+
+  it("N 漂移（同名估计量、不同次数）→ 不可比，reason 指明双方", () => {
+    const res = samplingMatches(BENCH_SAMPLING.repeats + 2, BENCH_SAMPLING.estimator, BENCH_SAMPLING);
+    expect(res.comparable).toBe(false);
+    expect(res.reason).toContain(`baseline=${BENCH_SAMPLING.estimator} of ${BENCH_SAMPLING.repeats + 2}`);
+    expect(res.reason).toContain(`gate=${BENCH_SAMPLING.estimator} of ${BENCH_SAMPLING.repeats}`);
+  });
+
+  it("统计量漂移（同 N、median 基准 vs min 门）→ 不可比（双峰下中位会按模式抽签，两者不同分布）", () => {
+    const res = samplingMatches(BENCH_SAMPLING.repeats, "median", BENCH_SAMPLING);
+    expect(res.comparable).toBe(false);
+    expect(res.reason).toContain("median");
+    expect(res.reason).toContain("min");
   });
 });

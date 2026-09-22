@@ -1,10 +1,13 @@
 /**
  * @test REQ-VETO-013
- * @intent 相对回归门的环境前置条件（docs/adr/0002 补遗）：基准与本次采样必须同构环境才可比。
- *         os/arch 不同（Windows 占位基线 vs ubuntu CI）或录制来源不同（本地 vs CI）时，
- *         环境噪声会把网关真实成本淹没——跨环境比较制造的确定性假红与放行同样不可接受。
- *         故不匹配时门 SKIP（显式提示 + exit 0 非阻断），而非误伤或静默通过。
+ * @intent 相对回归门的可比性前置条件（docs/adr/0002 补遗一/补遗二）：基准与本次采样必须
+ *         **同构环境**且**同口径估计量**才可比。
+ *         - 环境：os/arch 不同（Windows 占位基线 vs ubuntu CI）或录制来源不同（本地 vs CI）时，
+ *           环境噪声会把网关真实成本淹没；跨环境比较制造的确定性假红与放行同样不可接受。
+ *         - 口径：基准若用单次采样 / 中位 / 不同 N，与门的估计量不同分布，比较本身失义。
+ *         任一不匹配 → 门 SKIP（显式提示 + exit 0 非阻断），而非误伤或静默通过。
  */
+import type { SamplingSpec } from "./repeat.ts";
 
 export interface BenchEnvironment {
   readonly os: string;
@@ -52,4 +55,32 @@ export function environmentMatches(baselineEnv: unknown, current: BenchEnvironme
 export function isCiCalibrated(baselineEnv: unknown): boolean {
   if (baselineEnv === null || typeof baselineEnv !== "object" || Array.isArray(baselineEnv)) return false;
   return (baselineEnv as Record<string, unknown>).ci === true;
+}
+
+/**
+ * 基准的录制口径 vs 当前门的估计量可否比较（docs/adr/0002 补遗二）。
+ * `_repeats` / `_estimator` 是 schema v4 起随录制写入的口径标记：不同 N 或不同统计量
+ * （如单次采样、N 次取中位、N 次取最小）不是同一个估计量，其差异与跨环境噪声同一量级
+ * （1–2ms 量级的 1.2× 容差只有 0.2–0.33ms 绝对宽度），故判不可比而非误伤。
+ */
+export function samplingMatches(
+  baselineRepeats: unknown,
+  baselineEstimator: unknown,
+  expected: SamplingSpec,
+): EnvGateResult {
+  if (typeof baselineRepeats !== "number" || !Number.isInteger(baselineRepeats) || baselineRepeats < 1) {
+    return { comparable: false, reason: "baseline has no _repeats marker or it is malformed (schema < 4) — re-record required" };
+  }
+  if (typeof baselineEstimator !== "string" || baselineEstimator.trim() === "") {
+    return { comparable: false, reason: "baseline has no _estimator marker or it is malformed (schema < 4) — re-record required" };
+  }
+  if (baselineRepeats !== expected.repeats || baselineEstimator !== expected.estimator) {
+    return {
+      comparable: false,
+      reason:
+        `sampling procedure mismatch: baseline=${baselineEstimator} of ${baselineRepeats} vs ` +
+        `gate=${expected.estimator} of ${expected.repeats}`,
+    };
+  }
+  return { comparable: true, reason: "" };
 }

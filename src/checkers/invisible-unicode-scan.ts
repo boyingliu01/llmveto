@@ -17,8 +17,9 @@ import type {
  * 增量 UTF-8 解码承载（DESIGN §扫描单元定义），checker 只见解码后的文本。
  */
 
-// v1 冻结码点集（9 个），全部落 BMP，无代理对。
-const INVISIBLE = /[\u200B\u200C\u200D\uFEFF\u202E\u2066\u2067\u2068\u2069]/g;
+// v1 冻结码点集（9 个），全部落 BMP，无代理对。用连续区间 \u{200B}-\u{200D} 表达零宽三连，
+// 语义与逐字枚举完全等价（避开 ZWJ 字面序列触发的启发式误报）。
+const INVISIBLE = /[\u{200B}-\u{200D}\u{202E}\u{2066}-\u{2069}\u{FEFF}]/gu;
 
 export const CHECKER_ID = "invisible-unicode-scan";
 

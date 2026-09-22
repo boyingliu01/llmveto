@@ -1,4 +1,7 @@
-import type { Adapter, ConfigId } from "./index.ts";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import type { Adapter, ConfigId, Env } from "./index.ts";
+import { deepMerge, readJsonConfig, writeJsonConfig } from "./config-io.ts";
 
 /**
  * @test REQ-VETO-009
@@ -17,32 +20,45 @@ export const opencodeAdapter: Adapter = {
   name: "opencode",
   MANAGED_CONFIG_IDS,
   buildPatch(gatewayBaseUrl: string): Record<string, unknown> {
-    const url = joinBase(gatewayBaseUrl, "opencode");
+    // 路径路由约定：<gw>/opencode/<provider>，网关从路径推导 client+provider 身份
+    const providerUrl = (key: string) => joinBase(joinBase(gatewayBaseUrl, "opencode"), key);
     return {
       provider: {
-        openai:    { options: { baseURL: url } },
-        anthropic: { options: { baseURL: url } },
-        mock:      { options: { baseURL: url } },
+        openai:    { options: { baseURL: providerUrl("openai") } },
+        anthropic: { options: { baseURL: providerUrl("anthropic") } },
+        mock:      { options: { baseURL: providerUrl("mock") } },
       },
-      env: { OPENCODE_MODELS_URL: url + "/models" },
+      env: { OPENCODE_MODELS_URL: joinBase(gatewayBaseUrl, "opencode") + "/models" },
     };
   },
   detectDrift(current: Record<string, unknown>, gatewayBaseUrl: string): readonly ConfigId[] {
-    const expected = joinBase(gatewayBaseUrl, "opencode");
+    const providerUrl = (key: string) => joinBase(joinBase(gatewayBaseUrl, "opencode"), key);
     const drift: ConfigId[] = [];
     const provider = (current.provider ?? {}) as Record<string, { options?: { baseURL?: string } }>;
     for (const id of MANAGED_CONFIG_IDS) {
       if (id.id === "opencode.env.OPENCODE_MODELS_URL") {
         const env = (current.env ?? {}) as Record<string, string>;
-        if (env.OPENCODE_MODELS_URL !== expected + "/models") drift.push(id);
+        if (env.OPENCODE_MODELS_URL !== joinBase(gatewayBaseUrl, "opencode") + "/models") drift.push(id);
         continue;
       }
       const key = id.id.split(".")[2]; // "opencode.provider.<KEY>.options.baseURL"
       if (!key) continue;
       const url = provider[key]?.options?.baseURL;
-      if (url !== expected) drift.push(id);
+      if (url !== providerUrl(key)) drift.push(id);
     }
     return drift;
+  },
+  defaultConfigPath(env: Env): string {
+    return env.LLMVETO_OPENCODE_CONFIG ?? join(homedir(), ".config", "opencode", "opencode.json");
+  },
+  readCurrentConfig(env: Env): Record<string, unknown> {
+    return readJsonConfig(this.defaultConfigPath(env));
+  },
+  applyManagedConfig(env: Env, gatewayBaseUrl: string): string {
+    const path = this.defaultConfigPath(env);
+    const merged = deepMerge(readJsonConfig(path), this.buildPatch(gatewayBaseUrl));
+    writeJsonConfig(path, merged);
+    return path;
   },
 };
 

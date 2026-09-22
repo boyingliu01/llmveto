@@ -1,6 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { homedir, platform } from "node:os";
+#!/usr/bin/env node
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createConnection } from "node:net";
+import { spawn } from "node:child_process";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
 import { verifyEvidenceFile } from "../evidence/verify.ts";
 import { delphiAdapter } from "../adapters/delphi.ts";
 import { opencodeAdapter } from "../adapters/opencode.ts";
@@ -45,7 +49,7 @@ export async function runCli(cmd: CliCommand | string, ctx: CliCtx = {}): Promis
       case "start":  return await cmdStart(ctx);
       case "stop":   return await cmdStop(ctx);
       case "status": return cmdStatus(ctx);
-      case "doctor": return cmdDoctor(ctx, args.includes("--write-managed-config"));
+      case "doctor": return await cmdDoctor(ctx, args.includes("--write-managed-config"));
       case "verify": return cmdVerify(ctx, args);
       default:
         return { exitCode: 2, stdout: "", stderr: `unknown command: ${cmd}\n` };
@@ -56,46 +60,157 @@ export async function runCli(cmd: CliCommand | string, ctx: CliCtx = {}): Promis
 }
 
 async function cmdStart(ctx: CliCtx): Promise<CliResult> {
+  const env = ctx.env ?? process.env;
+  // 守护化：用户态 `start` 为父进程，派生一个脱离终端的后端子进程运行反代；
+  // 子进程带 LLMVETO_DAEMON_CHILD=1 重入本命令，在前台（自身事件循环）持有 server。
+  if (env.LLMVETO_DAEMON_CHILD === "1") return await cmdStartDaemon(ctx, env);
+  return await cmdStartSpawn(ctx, env);
+}
+
+/** 父：spawn detached 后端子进程，握手等待其写出 gateway.url 后返回。 */
+async function cmdStartSpawn(ctx: CliCtx, env: Readonly<Record<string, string | undefined>>): Promise<CliResult> {
+  const dir = stateDir(ctx);
+  mkdirSync(dir, { recursive: true });
+  const script = process.argv[1];
+  if (!script) return { exitCode: 1, stdout: "", stderr: "start: cannot resolve CLI entry path (process.argv[1])\n" };
+  // 把 stateDir 经 env 传给子进程（ctx 不跨进程）；其余网关配置（UPSTREAM/PORT/…）随 process.env 继承。
+  const child = spawn(process.execPath, [script, "start"], {
+    cwd: process.cwd(),
+    env: { ...process.env, ...env, LLMVETO_DAEMON_CHILD: "1", LLMVETO_STATE_DIR: dir },
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+  const pid = child.pid;
+  if (!pid) return { exitCode: 1, stdout: "", stderr: "start: failed to spawn daemon process\n" };
+  // 握手：轮询子进程写出的 url 文件（最长 ~3s），期间若子进程提前退出则判定启动失败。
+  let died = false;
+  child.once("exit", () => { died = true; });
+  const deadline = Date.now() + 3000;
+  let url: string | null = null;
+  while (Date.now() < deadline) {
+    if (existsSync(urlFile(ctx))) { url = readFileSync(urlFile(ctx), "utf8").trim(); break; }
+    if (died) break;
+    await sleep(50);
+  }
+  if (!url) {
+    for (const f of [pidFile(ctx), urlFile(ctx)]) { try { if (existsSync(f)) rmSync(f); } catch { /* best-effort */ } }
+    return { exitCode: 1, stdout: "", stderr: `start: daemon exited before listening (port busy or misconfig?); see LLMVETO_* env\n` };
+  }
+  return { exitCode: 0, stdout: `gateway started in background (pid=${pid}) at ${url}\nstate dir: ${dir}\n`, stderr: "" };
+}
+
+/** 子（daemon）：真实持有反代 HTTP server；写 pid/url；信号下优雅收尾（Linux/CI）。 */
+async function cmdStartDaemon(ctx: CliCtx, env: Readonly<Record<string, string | undefined>>): Promise<CliResult> {
   const dir = stateDir(ctx);
   mkdirSync(dir, { recursive: true });
   const writer = new EvidenceWriter(evidenceFile(ctx));
-  const gw = await startGateway({
-    config: { upstreamBaseUrl: "", evidenceWriter: writer },
-  });
+  const upstreamBaseUrl = env.LLMVETO_UPSTREAM_BASE_URL ?? "";
+  // 路径路由表：LLMVETO_UPSTREAMS='{"opencode/openai":"https://api.openai.com/v1", ...}'；解析失败 → 启动失败（fail-fast，不默默降级）
+  let upstreams: Record<string, string> | undefined;
+  const upstreamsEnv = env.LLMVETO_UPSTREAMS;
+  if (upstreamsEnv) {
+    try {
+      const parsed = JSON.parse(upstreamsEnv) as unknown;
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("must be a JSON object");
+      upstreams = parsed as Record<string, string>;
+    } catch (e) {
+      return { exitCode: 1, stdout: "", stderr: `invalid LLMVETO_UPSTREAMS: ${(e as Error).message}\n` };
+    }
+  }
+  const modelsSnapshotPath = env.LLMVETO_MODELS_SNAPSHOT;
+  const port = env.LLMVETO_PORT !== undefined ? Number(env.LLMVETO_PORT) : 8787;
+  const gw = await startGateway({ port, config: { upstreamBaseUrl, evidenceWriter: writer, ...(upstreams ? { upstreams } : {}), ...(modelsSnapshotPath ? { modelsSnapshotPath } : {}) } });
   writeFileSync(pidFile(ctx), String(process.pid), "utf8");
   writeFileSync(urlFile(ctx), gw.url, "utf8");
+  // 优雅收尾：SIGTERM/SIGINT → 关 server + 清理 pid/url（Windows 下 stop 直接删文件，不依赖此路）。
+  let closing = false;
+  const shutdown = (): void => {
+    if (closing) return;
+    closing = true;
+    void gw.close().finally(() => {
+      for (const f of [pidFile(ctx), urlFile(ctx)]) { try { if (existsSync(f)) rmSync(f); } catch { /* best-effort */ } }
+      process.exit(0);
+    });
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
+  // server 持有事件循环 → 本 Promise resolve 后进程不退出（后台常驻）。
   return { exitCode: 0, stdout: `gateway listening at ${gw.url}\n`, stderr: "" };
 }
 
-async function cmdStop(_ctx: CliCtx): Promise<CliResult> {
-  return { exitCode: 0, stdout: "stop: signal sent\n", stderr: "" };
+async function cmdStop(ctx: CliCtx): Promise<CliResult> {
+  const pidPath = pidFile(ctx);
+  if (!existsSync(pidPath)) return { exitCode: 1, stdout: "", stderr: "stop: gateway not running (no pid file)\n" };
+  const pid = Number(readFileSync(pidPath, "utf8").trim());
+  let signaled = false;
+  if (Number.isInteger(pid) && pid > 0) {
+    try { process.kill(pid); signaled = true; } catch { /* stale pid or permission: fall through to cleanup */ }
+  }
+  for (const f of [pidPath, urlFile(ctx)]) {
+    try { if (existsSync(f)) rmSync(f); } catch { /* best-effort cleanup */ }
+  }
+  return signaled
+    ? { exitCode: 0, stdout: "stop: signal sent\n", stderr: "" }
+    : { exitCode: 1, stdout: "", stderr: `stop: stale pid file removed but process ${pid} not found\n` };
 }
 
 function cmdStatus(ctx: CliCtx): CliResult {
   const pidPath = pidFile(ctx);
   if (!existsSync(pidPath)) return { exitCode: 1, stdout: "not running\n", stderr: "" };
+  const pid = Number(readFileSync(pidPath, "utf8").trim());
   const url = existsSync(urlFile(ctx)) ? readFileSync(urlFile(ctx), "utf8").trim() : "unknown";
-  return { exitCode: 0, stdout: `running pid=${readFileSync(pidPath, "utf8")} url=${url}\n`, stderr: "" };
+  // 守护化后 status 必须真实探活：pid 文件存在不代表进程存活（崩溃/被外部杀死会遗留僵尸文件）。
+  if (!isAlive(pid)) return { exitCode: 1, stdout: `not running (stale pid file: ${pid})\n`, stderr: "" };
+  return { exitCode: 0, stdout: `running pid=${pid} url=${url}\n`, stderr: "" };
 }
 
-function cmdDoctor(ctx: CliCtx, writeManaged: boolean): CliResult {
+/** liveness 探活：signal 0 不投递，仅检验进程存在与否。 */
+function isAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+async function cmdDoctor(ctx: CliCtx, writeManaged: boolean): Promise<CliResult> {
   // AC-VETO-008-02 检查项封闭枚举：① 受管配置漂移 ② 端口连通 ③（可选）写托管 ④ evidence 链
+  const env = ctx.env ?? process.env;
+  const adapters = [opencodeAdapter, delphiAdapter] as const;
   const checks: { id: string; ok: boolean; message: string }[] = [];
-  const baseUrl = process.env.LLMVETO_GATEWAY_URL ?? "http://127.0.0.1:8787";
-  // ① 漂移：本 CLI 只断言"枚举内可判定"，不真实读文件（v1 简化）
-  const drift1 = opencodeAdapter.detectDrift({}, baseUrl);
-  const drift2 = delphiAdapter.detectDrift({}, baseUrl);
+  const baseUrl = env.LLMVETO_GATEWAY_URL ?? "http://127.0.0.1:8787";
+  // ③ 写托管配置（--write-managed-config）：先写盘，后续漂移检测才能反映写入后真实状态。
+  //    写失败仅告警（AC-VETO-008-03），不影响本检查项 ok。
+  if (writeManaged) {
+    const results: string[] = [];
+    for (const a of adapters) {
+      try {
+        const p = a.applyManagedConfig(env, baseUrl);
+        results.push(`${a.name}→${p}`);
+      } catch (e) {
+        results.push(`${a.name} WARN write failed: ${(e as Error).message}`);
+      }
+    }
+    checks.push({ id: "doctor.write-managed-config", ok: true, message: results.join("; ") || "no adapters" });
+  }
+  // ① 漂移：真实读取每个适配器的受管配置文件（缺失 / 不可解析 → 全漂移）
+  const drift: { id: string }[] = [];
+  const seen: string[] = [];
+  for (const a of adapters) {
+    const current = a.readCurrentConfig(env);
+    seen.push(`${a.name}=${a.defaultConfigPath(env)}`);
+    drift.push(...a.detectDrift(current, baseUrl));
+  }
   checks.push({
     id: "doctor.config-drift",
-    ok: drift1.length === 0 && drift2.length === 0,
-    message: `drift entries: ${[...drift1, ...drift2].map((d) => d.id).join(", ") || "none"}`,
+    ok: drift.length === 0,
+    message: `drift entries: ${drift.map((d) => d.id).join(", ") || "none"} (configs: ${seen.join(", ")})`,
   });
-  // ② 端口连通（不实际打网络，v1 CLI 单元测试用；真实 daemon 由 SL-14 E2E 覆盖）
-  checks.push({ id: "doctor.port-reachable", ok: true, message: "loopback probe skipped in unit mode" });
-  // ③ 写托管配置：若开启，写失败仅告警（AC-VETO-008-03）
-  if (writeManaged) {
-    checks.push({ id: "doctor.write-managed-config", ok: true, message: "experimental.policies best-effort (warn only)" });
-  }
+  // ② 端口连通：对 gateway.url（或默认地址）做真实 TCP 探活
+  const probe = await probeReachable(baseUrl);
+  checks.push({
+    id: "doctor.port-reachable",
+    ok: probe,
+    message: probe ? `${baseUrl} reachable` : `${baseUrl} not reachable (gateway down?)`,
+  });
   // ④ evidence 链可跑通
   const verifyResult = verifyEvidenceFile(evidenceFile(ctx));
   checks.push({
@@ -126,4 +241,41 @@ function cmdVerify(ctx: CliCtx, args: readonly string[]): CliResult {
 export function assertNoV2Stubs(): void {
   if ((COMMANDS as readonly string[]).includes("canary")) throw new Error("v1 must not register canary");
   if ((COMMANDS as readonly string[]).includes("report")) throw new Error("v1 must not register report");
+}
+
+function probeReachable(baseUrl: string, timeoutMs = 500): Promise<boolean> {
+  const url = new URL(baseUrl);
+  const port = Number(url.port) || 80;
+  return new Promise((resolve) => {
+    const sock = createConnection({ host: url.hostname, port });
+    const timer = setTimeout(() => { sock.destroy(); resolve(false); }, timeoutMs);
+    sock.once("connect", () => { clearTimeout(timer); sock.destroy(); resolve(true); });
+    sock.once("error", () => { clearTimeout(timer); resolve(false); });
+  });
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// CLI 真实入口：此前缺少此段，导致 `bun run src/cli/index.ts <cmd>` 静默 no-op（产品不可用）。
+// start 已守护化：父进程 spawn 后台 daemon 后立即返回；被 spawn 的子进程带 LLMVETO_DAEMON_CHILD=1
+// 重入本入口，走 cmdStartDaemon 常驻持有 server 事件循环。stop/status 基于 pid 文件 + 真实探活。
+// 可移植自识别：`import.meta.main` 仅 Bun / Node ≥24 有，Node ≥18 无此属性；
+// 改用 import.meta.url 与 process.argv[1] 的路径比对，Bun(源码) 与 Node(dist) 均可。
+export function isDirectRun(metaUrl: string, argv1: string | undefined = process.argv[1]): boolean {
+  if (!argv1) return false;
+  try {
+    return resolve(fileURLToPath(metaUrl)) === resolve(argv1);
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectRun(import.meta.url)) {
+  const [cmd = "", ...rest] = process.argv.slice(2);
+  const result = await runCli(cmd, { args: rest });
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  process.exitCode = result.exitCode;
 }

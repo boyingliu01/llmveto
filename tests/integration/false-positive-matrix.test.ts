@@ -1,6 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { existsSync, writeFileSync } from "node:fs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { egressSecretScan } from "../../src/checkers/egress-secret-scan.ts";
 import { invisibleUnicodeScanNonStream } from "../../src/checkers/invisible-unicode-scan.ts";

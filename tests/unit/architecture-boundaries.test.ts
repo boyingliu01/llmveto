@@ -80,11 +80,7 @@ describe("architecture boundaries (TEST 契约 #2)", () => {
         const targetDir = fposix.replace(/\/[^/]+$/, "");
         const resolved = join(targetDir, spec).replace(/\\/g, "/").replace(/^(\.\.\/)+/, "");
         const targetLayer = "src/" + resolved.split("/").find((seg) => !seg.startsWith("."));
-        const allowed = allow.some((prefix) => {
-          const norm = (layer + "/" + prefix.replace(/^\.\.\//, "")).replace(/\\/g, "/");
-          return resolved.startsWith(norm.replace(/\/$/, "")) || norm.endsWith("/.") || prefix === "./";
-        });
-        // 简化：只要目标不是本层且不在允许前缀 → 违规。这里对 allow 数组宽松匹配。
+        // 简化：只要目标不是本层且不在允许前缀 → 违规。实际判定见下方 ok（allow 数组参与）。
         const isLocal = spec.startsWith("./");
         const crossLayer = targetLayer !== layer;
         if (crossLayer && !isLocal) {

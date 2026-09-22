@@ -29,7 +29,7 @@ interface Rule {
  */
 const RULES: readonly Rule[] = [
   { id: "openai-sk",           re: /sk-[A-Za-z0-9]{20,}/g },
-  { id: "anthropic-sk-ant",    re: /sk-ant-[A-Za-z0-9_\-]{20,}/g },
+  { id: "anthropic-sk-ant",    re: /sk-ant-[A-Za-z0-9_-]{20,}/g },
   { id: "github-ghp",          re: /ghp_[A-Za-z0-9]{36}/g },
   { id: "aws-akia",            re: /AKIA[0-9A-Z]{16}/g },
   { id: "pem-private-key",     re: /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/g },

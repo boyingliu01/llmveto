@@ -24,13 +24,13 @@ describe("SL-08 adapters (REQ-VETO-009)", () => {
     expect(new Set(all).size).toBe(all.length);
   });
 
-  it("AC-02 buildPatch 生成网关 baseURL 覆写", () => {
+  it("AC-02 buildPatch 生成网关 baseURL 覆写（路径带 provider 段）", () => {
     const patch = opencodeAdapter.buildPatch("http://127.0.0.1:8787");
     const p = patch.provider as Record<string, { options: { baseURL: string } }>;
-    expect(p.openai?.options.baseURL).toBe("http://127.0.0.1:8787/opencode");
-    expect(p.anthropic?.options.baseURL).toBe("http://127.0.0.1:8787/opencode");
+    expect(p.openai?.options.baseURL).toBe("http://127.0.0.1:8787/opencode/openai");
+    expect(p.anthropic?.options.baseURL).toBe("http://127.0.0.1:8787/opencode/anthropic");
     const dp = delphiAdapter.buildPatch("http://127.0.0.1:8787");
-    expect((dp.endpoint as Record<string, string>).chat).toContain("/delphi/v1/chat/completions");
+    expect((dp.endpoint as Record<string, string>).chat).toContain("/delphi/default/v1/chat/completions");
   });
 
   it("AC-03 detectDrift 无漂移 → 空数组", () => {

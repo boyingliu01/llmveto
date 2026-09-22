@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -124,29 +124,50 @@ describe("SL-11 CLI (REQ-VETO-008)", () => {
     rmSync(emptyDir, { recursive: true, force: true });
   });
 
-  it("status：运行中（有 pid + url）→ exit=0 'running pid=... url=...'", async () => {
+  it("status：运行中（存活 pid + url）→ exit=0 'running pid=... url=...'", async () => {
     const d = mkdtempSync(join(tmpdir(), "llmveto-status-run-"));
-    writeFileSync(join(d, "gateway.pid"), "4242", "utf8");
+    writeFileSync(join(d, "gateway.pid"), String(process.pid), "utf8"); // 本 worker 进程必然存活
     writeFileSync(join(d, "gateway.url"), "http://127.0.0.1:9999", "utf8");
     const r = await runCli("status", { stateDir: d });
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("running pid=4242");
+    expect(r.stdout).toContain(`running pid=${process.pid}`);
     expect(r.stdout).toContain("url=http://127.0.0.1:9999");
     rmSync(d, { recursive: true, force: true });
   });
 
   it("status：pid 存在但 url 缺失 → url=unknown 分支", async () => {
     const d = mkdtempSync(join(tmpdir(), "llmveto-status-nourl-"));
-    writeFileSync(join(d, "gateway.pid"), "7777", "utf8");
+    writeFileSync(join(d, "gateway.pid"), String(process.pid), "utf8");
     const r = await runCli("status", { stateDir: d });
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain("url=unknown");
     rmSync(d, { recursive: true, force: true });
   });
 
-  it("stop：noop → exit=0 'stop: signal sent'", async () => {
+  it("status：pid 文件存在但进程已死（僵尸文件）→ 如实报 stale + exit=1", async () => {
+    const d = mkdtempSync(join(tmpdir(), "llmveto-status-stale-"));
+    writeFileSync(join(d, "gateway.pid"), "999999", "utf8"); // 基本不可能存活的 pid
+    writeFileSync(join(d, "gateway.url"), "http://127.0.0.1:8787", "utf8");
+    const r = await runCli("status", { stateDir: d });
+    expect(r.exitCode).toBe(1);
+    expect(r.stdout).toContain("stale pid file");
+    rmSync(d, { recursive: true, force: true });
+  });
+
+  it("stop：无 pid 文件 → exit=1 如实报告未运行（禁止 stub 式假成功）", async () => {
     const r = await runCli("stop", { stateDir: dir });
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("stop: signal sent");
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain("not running");
+  });
+
+  it("stop：stale pid 文件 → kill 失败但清理文件，exit=1 如实报告", async () => {
+    const d = mkdtempSync(join(tmpdir(), "llmveto-stop-"));
+    writeFileSync(join(d, "gateway.pid"), "999999", "utf8");
+    writeFileSync(join(d, "gateway.url"), "http://127.0.0.1:1", "utf8");
+    const r = await runCli("stop", { stateDir: d });
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain("stale pid");
+    expect(existsSync(join(d, "gateway.pid"))).toBe(false);
+    rmSync(d, { recursive: true, force: true });
   });
 });

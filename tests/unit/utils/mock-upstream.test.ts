@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { startMockUpstream, type MockUpstream } from "../../utils/mock-upstream.ts";
 
 // @test REQ-VETO-011
@@ -32,7 +32,6 @@ describe("SL-10 mock-upstream (REQ-VETO-011)", () => {
     // `data: {"t":"\u200b"}\n\n` 中 E2 80 8B 起始位置（"data: {\"t\":\"" = 11 bytes，U+200B 从第 11 起）
     // 在第 12 字节切一刀 → 前两字节 E2 80 属第一片，第三字节 8B 属第二片
     const data = '{"t":"\u200b"}';
-    const frame = "data: " + data + "\n\n";
     // "data: " 6 bytes + '{"t":"' 6 bytes = 12，U+200B 起于第 12 字节
     const offset = Buffer.byteLength('data: {"t":"', "utf8"); // 12
     upstream = await startMockUpstream({

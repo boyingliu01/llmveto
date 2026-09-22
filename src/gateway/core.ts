@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
-import type { IncomingMessage, ServerResponse } from "node:http";
 import { checkersFor } from "./registry.ts";
-import { buildRequestScanUnit, buildResponseScanUnit, isAuthHeader } from "./scan-unit.ts";
+import { buildRequestScanUnit, buildResponseScanUnit } from "./scan-unit.ts";
 import { encodeVetoEvent, parseSseFrames, tryParseJson } from "./sse-tee.ts";
 import { decide, pickScenario, type BehaviorScenario } from "../policy/engine.ts";
 import type { PolicyInput } from "../policy/engine.ts";
@@ -11,11 +10,9 @@ import type {
   ScanWindow,
   StreamChecker,
   NonStreamChecker,
-  Action,
   BodyCapture,
 } from "../shared/types.ts";
 import { EvidenceWriter } from "../evidence/writer.ts";
-import { redactSink } from "../evidence/redact-sink.ts";
 import type { EvidenceFinding } from "../evidence/schema.ts";
 import type { ActionTaken } from "../shared/types.ts";
 
@@ -33,18 +30,18 @@ import type { ActionTaken } from "../shared/types.ts";
  */
 
 export interface GatewayConfig {
-  readonly upstreamBaseUrl: string; // TEST 契约 #1：可注入 mock-upstream
+  readonly upstreamBaseUrl: string; // TEST 契约 #1：可注入 mock-upstream；亦作路径路由未命中时的 catch-all
   readonly evidenceWriter: EvidenceWriter;
   readonly bodyCapture?: BodyCapture;
   readonly clientHeaderName?: string; // 客户端身份头，默认 x-llmveto-client
   readonly providerId?: string;
-}
-
-interface RequestOutcome {
-  readonly action: Action;
-  readonly scenario: BehaviorScenario;
-  readonly findings: readonly EvidenceFinding[];
-  readonly deliveredChunks: number;
+  /**
+   * 路径路由表（REQ-VETO-009/014）：键 `"client/provider"` 或 `"client/*"`，值为该 provider 的 upstream base URL。
+   * 解析优先级：x-llmveto-upstream-url 头 > upstreams["client/provider"] > upstreams["client/*"] > upstreamBaseUrl(catch-all) > fail-closed。
+   */
+  readonly upstreams?: Readonly<Record<string, string>>;
+  /** OpenCode 模型目录快照文件路径；设置后 GET /opencode/models 本地伺服（P1 缓解：锁定 models URL）。 */
+  readonly modelsSnapshotPath?: string;
 }
 
 export class GatewayCore {

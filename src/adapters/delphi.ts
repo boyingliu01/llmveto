@@ -1,4 +1,7 @@
-import type { Adapter, ConfigId } from "./index.ts";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import type { Adapter, ConfigId, Env } from "./index.ts";
+import { deepMerge, readJsonConfig, writeJsonConfig } from "./config-io.ts";
 
 /**
  * @test REQ-VETO-009
@@ -14,16 +17,17 @@ export const delphiAdapter: Adapter = {
   name: "delphi",
   MANAGED_CONFIG_IDS,
   buildPatch(gatewayBaseUrl: string): Record<string, unknown> {
-    const url = gatewayBaseUrl.replace(/\/$/, "") + "/delphi";
+    // 路径路由约定：<gw>/delphi/<provider>/v1/chat/completions；v1 单 endpoint 用 "default" 占位
+    const base = delphiBase(gatewayBaseUrl);
     return {
       endpoint: {
-        chat:   url + "/v1/chat/completions",
-        stream: url + "/v1/chat/completions?stream=1",
+        chat:   base + "/v1/chat/completions",
+        stream: base + "/v1/chat/completions?stream=1",
       },
     };
   },
   detectDrift(current: Record<string, unknown>, gatewayBaseUrl: string): readonly ConfigId[] {
-    const base = gatewayBaseUrl.replace(/\/$/, "") + "/delphi";
+    const base = delphiBase(gatewayBaseUrl);
     const expected: Record<string, string> = {
       "delphi.endpoint.chat":   base + "/v1/chat/completions",
       "delphi.endpoint.stream": base + "/v1/chat/completions?stream=1",
@@ -35,4 +39,20 @@ export const delphiAdapter: Adapter = {
     }
     return drift;
   },
+  defaultConfigPath(env: Env): string {
+    return env.LLMVETO_DELPHI_CONFIG ?? join(homedir(), ".delphi-config.json");
+  },
+  readCurrentConfig(env: Env): Record<string, unknown> {
+    return readJsonConfig(this.defaultConfigPath(env));
+  },
+  applyManagedConfig(env: Env, gatewayBaseUrl: string): string {
+    const path = this.defaultConfigPath(env);
+    const merged = deepMerge(readJsonConfig(path), this.buildPatch(gatewayBaseUrl));
+    writeJsonConfig(path, merged);
+    return path;
+  },
 };
+
+function delphiBase(gatewayBaseUrl: string): string {
+  return gatewayBaseUrl.replace(/\/$/, "") + "/delphi/default";
+}

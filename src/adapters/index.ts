@@ -7,6 +7,10 @@
  * doctor 与 E2E 只在枚举内做漂移断言。
  */
 
+import type { Env } from "./config-io.ts";
+
+export type { Env };
+
 export interface ConfigId {
   /** 稳定 id，用于 doctor / evidence 记录；跨版本不变。 */
   readonly id: string;
@@ -21,4 +25,10 @@ export interface Adapter {
   buildPatch(gatewayBaseUrl: string): Record<string, unknown>;
   /** 从当前用户配置读取，判断是否被漂移（改走它处）；返回漂移的 ConfigId 数组。 */
   detectDrift(currentConfig: Record<string, unknown>, gatewayBaseUrl: string): readonly ConfigId[];
+  /** 受管配置文件路径：env 覆写优先，否则回落到该客户端的真实默认位置。 */
+  defaultConfigPath(env: Env): string;
+  /** 读取磁盘上的真实配置（缺失 / 不可解析 → {}，即全漂移）。 */
+  readCurrentConfig(env: Env): Record<string, unknown>;
+  /** 把 buildPatch 深合并进现有配置并落盘；返回写入路径。写失败抛出，由 doctor 降级为告警。 */
+  applyManagedConfig(env: Env, gatewayBaseUrl: string): string;
 }

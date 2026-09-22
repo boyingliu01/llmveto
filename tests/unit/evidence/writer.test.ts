@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { computeRecordHash, GENESIS_HASH, sealRecord, verifyRecord } from "../../../src/evidence/chain.ts";
 import { redactSink } from "../../../src/evidence/redact-sink.ts";
 import { REQUIRED_FIELDS, validateEvidence } from "../../../src/evidence/schema.ts";
@@ -10,11 +10,6 @@ import { EvidenceWriter } from "../../../src/evidence/writer.ts";
 // @test REQ-VETO-007
 // @intent evidence store：契约 #4 必填字段 + SHA-256 链 + append-only + 崩溃残留半行丢弃
 // @covers AC-VETO-007-01 AC-VETO-007-02 AC-VETO-007-03 AC-VETO-007-04 AC-VETO-007-05
-
-function tmpFile(name = "evidence.jsonl"): string {
-  const dir = mkdtempSync(join(tmpdir(), "llmveto-evidence-"));
-  return join(dir, name);
-}
 
 function sampleInput(overrides: Partial<Parameters<EvidenceWriter["append"]>[0]> = {}) {
   return {
@@ -122,7 +117,8 @@ describe("SL-06 evidence store (REQ-VETO-007)", () => {
   it("sealRecord 纯函数：同输入两次 record_hash 相同", () => {
     const a = sealRecord({ prev_hash: GENESIS_HASH, record: sampleInput({ ts: "2026-09-15T00:00:00.000Z" }) as never });
     const b = sealRecord({ prev_hash: GENESIS_HASH, record: sampleInput({ ts: "2026-09-15T00:00:00.000Z" }) as never });
-    //  event_id 是随机 UUID，故 record_hash 会变。此处显式覆盖 event_id 相同：
+    // sealRecord 为纯函数：不注入 event_id，同入参两次调用 record_hash 必相等（确定性）：
+    expect(a.record_hash).toBe(b.record_hash);
     const base = {
       evidence_version: 1 as const, event_id: "fixed-uuid", seq: 0, ts: "2026-09-15T00:00:00.000Z",
       ...sampleInput(),

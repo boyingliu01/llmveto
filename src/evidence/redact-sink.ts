@@ -12,8 +12,8 @@ import { sha256Hex } from "./chain.ts";
  */
 
 const REDACTED = "[REDACTED]";
-const CRED = /(sk-[A-Za-z0-9]{20,}|sk-ant-[A-Za-z0-9_\-]{20,}|ghp_[A-Za-z0-9]{36}|AKIA[0-9A-Z]{16}|-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----)/g;
-const INVISIBLE = /[\u200B\u200C\u200D\uFEFF\u202E\u2066\u2067\u2068\u2069]/g;
+const CRED = /(sk-[A-Za-z0-9]{20,}|sk-ant-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{36}|AKIA[0-9A-Z]{16}|-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----)/g;
+const INVISIBLE = /[\u{200B}-\u{200D}\u{202E}\u{2066}-\u{2069}\u{FEFF}]/gu;
 
 export interface RedactResult {
   readonly mode: BodyCapture;

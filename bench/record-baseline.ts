@@ -1,8 +1,8 @@
 // @no-test-required: bench 工具（可执行脚本），复刻 check-regression.ts 的 runner 编排；解析契约与 check 侧共用 bench/runner-format.ts（R8-B-M3）。核心判定由 regression-formula.test.ts 覆盖，估计量由 repeat.test.ts 覆盖。
 import { spawnSync } from "node:child_process";
-import { realpathSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { arch, cpus, platform } from "node:os";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { G1_TTFT_P95_MAX_MS, G1_TTFT_P99_MAX_MS, G2_THRESHOLDS, G3_THRESHOLDS } from "./regression-formula.ts";
 import { BENCH_SAMPLING, minOf } from "./repeat.ts";
 import { G1_LINE_RE, g2LineRe, g3LineRe } from "./runner-format.ts";
@@ -55,15 +55,27 @@ function canonicalPath(p: string): string {
 // 折叠**身份**（R10R1-B-1：路径归一只折叠名字，同一字节另有名字时折叠不掉）。`dev:ino` 由 libuv 在
 // 三平台统一暴露——win32 下即卷序列号 + FileId（非"win32 无 inode"）。实测 win32/NTFS 上硬链接、
 // NTFS 备用数据流、UNC/admin-share（`\\localhost\d$\…`）三类别名形态的 dev/ino 与 tracked 文件全等，
-// `\\?\` 设备命名空间与 `subst` 盘则本就被 realpath 折叠。任一路径 stat 失败（尚不存在，或 ACL 令读取被拒
-// ——两者皆 catch-all 静默退让，见 docs/adr/0002 补遗一残余 ①）、或文件系统不报文件 ID（`ino === 0` 是常见
-// 哨兵值，两个不同文件会假等）→ null，该条判据退让给路径折叠。
+// `\\?\` 设备命名空间与 `subst` 盘则本就被 realpath 折叠。任一路径 stat 失败（尚不存在，或 ACL 令读取被拒）、
+// 或文件系统不报文件 ID（`ino === 0` 是常见哨兵值，两个不同文件会假等）→ null，该条判据退让给路径折叠。
+// 退让**不是**同一回事（R10R3-A-m4/B-m3/C-m2）：out 侧 stat 失败是合法高频场景（首次录制目标尚不存在），
+// 告警会刷屏，故保持静默；tracked 侧 stat 失败即异常事件且使全部别名形态失效，另加定向告警（见下）。
 function fileIdentity(p: string): string | null {
   try {
     const st = statSync(p);
     return st.ino === 0 ? null : `${st.dev}:${st.ino}`;
   } catch {
     return null;
+  }
+}
+
+// 区分 `fileIdentity` 返回 null 的两种成因：stat 抛错（异常，值得告警）vs 文件系统不报文件 ID
+// （`ino === 0` 哨兵，正常降级，不该告警）。
+function statThrows(p: string): boolean {
+  try {
+    statSync(p);
+    return false;
+  } catch {
+    return true;
   }
 }
 
@@ -75,6 +87,8 @@ function fileIdentity(p: string): string | null {
 // 文件后走前两判据。
 // 非 CI 覆写 tracked 路径须显式传参（如 bench/baseline.local.json）；CI record job 不受影响
 // （信任边界与残余面清单见 docs/adr/0002 补遗一·写入路径守卫）。
+// 本守卫**只判"是不是受保护文件"，不判"写不写得下去"**；后者是采样前的 `assertWritableOutPath` 预检
+// （R10R3-B-m4/C-m1），两件事不合并、顺序也在守卫之后，以免拒绝理由被混成一条。
 if (outPath.trim() === "") {
   // `bun run` 会剥掉空 argv（落到"无参"分支），故本分支只在直接以 node 调用时可达——两入口差异见
   // docs/adr/0002 验证节，避免读者以 `bun run bench:record ""` 观测不到而误判守卫未生效。
@@ -107,6 +121,48 @@ if ((sameName || sameInode) && process.env.CI !== "true") {
       `(e.g. \`bun run bench:record bench/baseline.local.json\`); authoritative re-record is the CI record job (docs/adr/0002)`,
   );
 }
+// tracked 基线的 stat 抛错 → 身份判据整体缺席（R10R3-A-m4/B-m3/C-m2）。这与 `outIdentity === null`
+// 不同类：out 路径尚不存在是合法高频场景，警告会刷屏；而 TRACKED_BASELINE 在仓内必在，stat 失败本身
+// 即异常事件（ACL 拒绝 / 损坏 / 盘未挂载），一旦发生 sameInode 恒假、守卫静默降级为纯名字判定，
+// 硬链接 / UNC / ADS 宿主别名三类别名形态全部失去拦截。健康路径永不触发 → 零刷屏。
+// 与 `ino === 0`（文件系统不报文件 ID，正常降级，见 docs/adr/0002 补遗一残余①）严格区分：后者不告警，
+// 否则在 9p / 部分网络盘上每次运行都刷。
+if (trackedIdentity === null && statThrows(TRACKED_BASELINE)) {
+  console.warn(
+    `[record-baseline] WARNING: stat on ${TRACKED_BASELINE} failed; the identity criterion is disabled for this run ` +
+      `and only the path-name check protects the tracked baseline`,
+  );
+}
+// 写可达性预检（R10R3-B-m4/C-m1）：守卫只管 tracked 家族，不校验"这个 out 路径写不写得下去"。
+// 错拼目录 / 只读卷 / 空宿主（`:stream` 折叠后）此前要跑满 10×3 采样才在 writeFileSync 处 ENOENT，
+// 白烧约 90s 且失败信号指向错误。改为采样前即刻 throw。**不做创建探测**（不 mkdir、不 touch、
+// 不以 "a" 模式打开——那会留下 0 字节文件或改动 mtime），也不宣称消除 TOCTOU：预检与写之间的窗口
+// 与残余①②同型，本步只把"必然失败"提前到失败最便宜处。
+function assertWritableOutPath(p: string): void {
+  if (p.trim() === "") {
+    throw new Error(`invalid out path ${outPath}: its host is empty (a bare ":stream" suffix has no file to write to)`);
+  }
+  const dir = dirname(p);
+  if (!existsSync(dir)) {
+    throw new Error(`out path ${p}: parent directory ${dir} does not exist (create it first; bench:record never mkdirs)`);
+  }
+  try {
+    accessSync(dir, constants.W_OK);
+  } catch (e) {
+    throw new Error(`out path ${p}: parent directory ${dir} is not writable (${String(e)})`);
+  }
+  if (existsSync(p)) {
+    if (!statSync(p).isFile()) {
+      throw new Error(`out path ${p} exists but is not a regular file`);
+    }
+    try {
+      accessSync(p, constants.W_OK);
+    } catch (e) {
+      throw new Error(`out path ${p} is not writable (${String(e)})`);
+    }
+  }
+}
+assertWritableOutPath(outHost);
 
 const CHECKERS = ["egress-secret-scan", "invisible-unicode-scan", "model-label-consistency"] as const;
 

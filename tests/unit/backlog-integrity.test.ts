@@ -9,8 +9,9 @@ import { describe, expect, it } from "vitest";
  * 六个 ID 未在任何 tracked 载体承接，即该类事故。三条规格（本表要求实现前先定死）：
  *   ① 守卫放置：单测门 + CI 步骤。vitest 是 pre-commit 钩子与 `bun run test` 的必经门；R10R1-A-M1/C-M1
  *      另在 `.github/workflows/bench.yml` 的 bench job 加独立阻断步，使强制面覆盖到"绕过本地钩子直接进入
- *      main 的提交"这一升级前唯一的空档。该步由 R10R2-A-m2/B-2/C-m1 从"只跑本文件"扩为
- *      `bunx vitest run tests/unit tests/utils bench`（判据公式与估计量口径的同源测试一并纳入，实测 1.7s）。
+ *      main 的提交"这一升级前唯一的空档。该步由 R10R2-A-m2/B-2/C-m1 从"只跑本文件"扩为单测面，
+ *      再由 R10R3-A-M1 定形为 `find` 三个根目录产出的**逐个文件路径**列表（判据公式与估计量口径的
+ *      同源测试一并纳入；用例数随批次漂移故不在此写死，本机墙钟 <2s）。
  *   ② 合法删除 vs 静默丢失：显式 ID 锁清单 + **超集**断言（比对表行 ID 列，不做整文件 substring 匹配，
  *      否则"行被删、ID 仍在正文他处被提及"会漏判）。本表惯例是"行不删、只改状态列"，
  *      因此锁清单等于全集；静默丢失（脚本自毁、误 revert、写截断）直接 fail，而**合法**裁剪某行必须
@@ -30,6 +31,14 @@ import { describe, expect, it } from "vitest";
  *     成文）：分隔线单元含内部空格（`| -- -- |` 型）的 `|` 块不认作表格；`\\|`（双反斜杠紧跟竖线）被折叠进
  *     同一格，而 GFM 认作"转义反斜杠 + 列分隔符"而拆两格。两者当前登记处均无实例（`grep '^```'` = 0、
  *     分隔线一律 `|---|`），ID 丢失仍由锁清单兜底。
+ *   - 围栏识别另有两处曾在 R10R2 引入、R10R3 已按 GFM 收口的偏差（A-m2 / B-m1 / B-m2）：闭合行带 info string
+ *     （` ```ts `）不再被当闭合（此前其后示例表会变成幻影表 → 多认表，正是有害方向）；缩进 >3 空格的 ` ``` `
+ *     行不再开启/闭合围栏（此前 4 空格缩进的缩进代码会被当围栏，把它后面的真实登记处表吞掉 → 假红）。
+ *     现实现与 GFM 一致并由 fixture 固化；残余偏差是开启行的 info string 内容不做校验（GFM 只禁 ``` 围栏的
+ *     info string 含反引号），当前无实例。
+ *   - 行数棘轮下界**恒等于当前实测行数**（历史 55=55、68=68），这是设计而非假红：任何合法裁剪都必须同批
+ *     下调本常量并进 diff（与下调锁清单同一动作，走查可见）。看到"下界 = 实测"不要反射式放宽——
+ *     先确认删的是哪一行、为何删（登记处「状态列约定」同步成文此惯例，R10R3-A-m3/C-m1）。
  */
 
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -106,6 +115,19 @@ const LOCKED_IDS = [
   "R10R2-B-5",
   "R10R2-C-m3",
   "R10R2-A-m4",
+  "R10R3-A-M1",
+  "R10R3-A-m1",
+  "R10R3-A-m2",
+  "R10R3-A-m3",
+  "R10R3-A-m4",
+  "R10R3-A-N1",
+  "R10R3-B-m1",
+  "R10R3-B-m2",
+  "R10R3-B-m3",
+  "R10R3-B-m4",
+  "R10R3-C-m1",
+  "R10R3-C-m2",
+  "R10R3-C-m3",
 ] as const;
 
 /** 规范 ID 记号；`R2-A-M2 / R2-C-M1` 型合写行按 `/` 拆开，`（并入 R8-B-M1）` 型说明格不入选。 */
@@ -145,10 +167,28 @@ interface MarkdownTable {
 }
 
 /**
+ * 取一行的围栏标记（` ``` ` / `~~~` 前缀），按 GFM 判该行的**角色**（开启 or 闭合），不匹配返回 null。
+ * 两条 GFM 规则是 R10R2 inFence 的欠账、R10R3 收口（A-m2 / B-m1 / B-m2）：
+ *   - 缩进 >3 空格（tab 记 4）的 ` ``` ` 行是**缩进代码内容**，既不开启围栏也不闭合它；
+ *   - 闭合行**不得带 info string** —— ` ```ts ` 在 GFM 里只是围栏内的一行文本，把它当闭合会让其后的
+ *     示例表格变成幻影表（多认表 = 有害方向，正是 R10R2-A-m1 要堵的类）。
+ */
+function fenceMarker(raw: string, role: "open" | "close"): string | null {
+  const lead = /^[ \t]*/.exec(raw)?.[0] ?? "";
+  if (lead.replace(/\t/g, "    ").length > 3) return null;
+  const t = raw.trim();
+  const marker = /^(`{3,}|~{3,})/.exec(t)?.[0];
+  if (marker === undefined) return null;
+  if (role === "close" && new Set(t).size !== 1) return null;
+  return marker;
+}
+
+/**
  * 按块解析 markdown 表格：连续 `|` 开头行构成一块，且第二行必须是全 `-`/`:` 分隔线，否则不视为表格
  * （正文里以 `|` 起始的引用行、ASCII 竖排段都不入表）。**代码围栏内的 `|` 行一律不入表**
  * （R10R2-A-m1/B-Minor-1：文档示例表格会虚增棘轮行数——幻影行可掩护真实行被删，还会把缺「状态」列的
- * 示例表变成假红源）。围栏按 GFM 取开启串的字符与长度，须以同字符、不小于该长度的串闭合。
+ * 示例表变成假红源）。围栏按 GFM：开启/闭合行的缩进均限 ≤3 空格（tab 记 4），闭合行须为同字符、
+ * 不小于开启长度的**纯**标记串（带 info string 的行按 GFM 只是内容，R10R3-A-m2/B-m1/B-m2 收口）。
  */
 function parseTables(md: string): MarkdownTable[] {
   const tables: MarkdownTable[] = [];
@@ -166,13 +206,13 @@ function parseTables(md: string): MarkdownTable[] {
   let fence: { readonly ch: string; readonly len: number } | null = null;
   for (const line of md.split(/\r?\n/)) {
     const t = line.trim();
-    const marker = /^(`{3,}|~{3,})/.exec(t)?.[0] ?? "";
+    const marker = fenceMarker(line, fence === null ? "open" : "close");
     if (fence !== null) {
-      if (marker !== "" && (marker[0] ?? "") === fence.ch && marker.length >= fence.len) fence = null;
+      if (marker !== null && marker[0] === fence.ch && marker.length >= fence.len) fence = null;
       flush();
       continue;
     }
-    if (marker !== "") {
+    if (marker !== null) {
       fence = { ch: marker[0] ?? "`", len: marker.length };
       flush();
       continue;
@@ -250,8 +290,10 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
   it("每条数据行的格数与该表表头一致，且 ID/状态两格非空（拦截写截断与半行覆盖）", () => {
     const rows = allRows(readFileSync(path, "utf8"));
     // 行数棘轮：只增不减。裁剪行须同步下调本常量——与下调锁清单同样是刻意且进 diff 的动作。
-    // 68 = R10 R2 批次后的实测行数（8 张 ID 表）。
-    const MIN_BACKLOG_ROWS = 68;
+    // 下界**恒取实测行数**（历史 55=55、68=68、当前 81=81）：这不是假红，而是设计（"合法裁剪必须同批
+    // 改常量"的机器化）；见文件头「能力边界」末条与登记处「状态列约定」（R10R3-A-m3/C-m1 成文）。
+    // 81 = R10 R3 批次后的实测行数（9 张 ID 表）。
+    const MIN_BACKLOG_ROWS = 81;
     expect(rows.length, `${BACKLOG_REL} 表行数低于棘轮下界 ${String(MIN_BACKLOG_ROWS)}（当前 ${String(rows.length)}）`).toBeGreaterThanOrEqual(
       MIN_BACKLOG_ROWS,
     );
@@ -320,5 +362,29 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
     expect(idColumn(fixture)).toEqual(new Set(["R9-Z-2"]));
     // 未闭合围栏把其后内容一并排除（保守方向：少认表）——真实文件若被打断，行数棘轮断言会亮红，不会静默失守。
     expect(parseTables(fixture).length).toBe(1);
+  });
+
+  it("解析器自检（防空转）：围栏的 GFM 缩进与 info string 两条闭合规则（R10R3-A-m2/B-m1/B-m2）", () => {
+    // ① 带 info string 的行按 GFM 只是围栏内容，不得充当闭合 → 其后的示例表**不该**入表。
+    const infoString = [
+      "```md",
+      "```ts",
+      "| ID | 状态 |",
+      "|---|---|",
+      "| R9-FAKE-TS | OPEN |",
+      "```",
+    ].join("\n");
+    expect(fenceMarker("```ts", "close")).toBeNull();
+    expect(fenceMarker("```", "close")).toBe("```");
+    expect(parseTables(infoString).length, "闭合行带 info string → GFM 仍在围栏内，幻影表不得入表").toBe(0);
+    expect(idColumn(infoString).has("R9-FAKE-TS")).toBe(false);
+    // ② 4 空格缩进的 ``` 在 GFM 是缩进代码，不开启围栏 → 其后的**真实**表必须入表（少认 = 假红方向）。
+    const indented = ["正文", "    ```", "| ID | 状态 |", "|---|---|", "| R9-REAL-IND | OPEN |", "    ```"].join("\n");
+    expect(fenceMarker("    ```", "open")).toBeNull();
+    expect(fenceMarker("   ```", "open"), "GFM 允许 ≤3 空格缩进的围栏").toBe("```");
+    expect(idColumn(indented), "4 空格缩进行不该吞掉真表").toEqual(new Set(["R9-REAL-IND"]));
+    // ③ 长度与字符仍须配平：短的/异字符的闭合串不闭合。
+    expect(fenceMarker("````", "open")).toBe("````");
+    expect(fenceMarker("```", "close")?.length).toBe(3);
   });
 });

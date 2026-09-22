@@ -31,11 +31,25 @@ jobs:
         with: { bun-version: latest }
       - run: bun install --frozen-lockfile
       # 纯单测面（含 Minor 登记处完整性守卫，R7-B2；强制面由 R10R1-A-M1/C-M1 收口、R10R2-A-m2/B-2/C-m1
-      # 扩面）：显式文件面而非全量 vitest ——全量的 tests/integration + tests/e2e 未在本 workflow 环境验证过，
-      # 在此引入会把一个纯守卫步变成不可控假红源。该对称缺口登记于 .sprint-state/bench-backlog.md（观测项）。
-      # 阻断性：本步非零退出即 bench job 红（早于三台 runner，失败信号最快、最便宜；本机实测 20 文件 169 用例 1.7s）。
+      # 扩面、R10R3-A-M1 定形为显式**文件**列表）：显式文件列表而非全量 vitest ——全量的
+      # tests/integration + tests/e2e 未在本 workflow 环境验证过，在此引入会把一个纯守卫步变成不可控假红源。
+      # 该对称缺口登记于 .sprint-state/bench-backlog.md（观测项）。
+      # **为何不写裸目录名**（R10R3-A-M1，Major）：vitest 的位置参数是对测试文件路径的**子串过滤**、
+      # 不前缀锚定，`bunx vitest run … bench` 会把任何路径含 `bench` 字样的文件（未来的
+      # `tests/integration/bench-*.test.ts`、`tests/e2e/benchmark.test.ts` 等）静默纳入本阻断步，
+      # 恰好重新引入上一段要避免的假红源。实测：放一个 `tests/integration/bench-sentinel.test.ts`，
+      # 裸目录名形态 21 文件 / 显式文件列表形态 20 文件。`find` 的三个根目录因此是**作用域锚点**，
+      # 交给 vitest 的一律是逐个真实文件路径；列表为空即 fail（绝不退化成全量）。
+      # 阻断性：本步非零退出即 bench job 红（早于三台 runner，失败信号最快、最便宜；本机实测墙钟 <2s，
+      # 用例数随批次漂移故不写死）。
       - name: Unit + registry integrity guard
-        run: bunx vitest run tests/unit tests/utils bench
+        run: |
+          mapfile -d '' -t guard_files < <(find tests/unit tests/utils bench -name '*.test.ts' -print0 | sort -z)
+          if [ "${#guard_files[@]}" -eq 0 ]; then
+            echo "guard step matched no test files; refusing to fall back to a full vitest run" >&2
+            exit 1
+          fi
+          bunx vitest run "${guard_files[@]}"
       # 三台 runner 的独立步骤仅供人读（绝对门 print-only，ADR-0002 v2 决策）；除上方的单测守卫外，
       # 本 job 唯一的性能阻断步是 Regression check。`| tee` 已使退出码取末命令（`bash -e` 无 pipefail），此处再显式 `|| true`
       # 把"不阻断"写成契约 —— 避免将来有人加 pipefail/去 tee 时，把 print-only 变成真阻断

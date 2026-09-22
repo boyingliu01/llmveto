@@ -1,6 +1,6 @@
 {
   "name": "llmveto",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local security gateway that vetoes malicious LLM relay traffic — deterministic verification, fail-closed blocking, tamper-evident audit trail.",
   "type": "module",
   "license": "MIT",
@@ -10,10 +10,16 @@
     "bun": ">=1.1"
   },
   "bin": {
-    "llmveto": "./src/cli/index.ts"
+    "llmveto": "./dist/cli/index.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "llmveto": "bun run src/cli/index.ts",
+    "build": "tsc -p tsconfig.build.json",
     "start": "bun run src/cli/index.ts start",
     "stop": "bun run src/cli/index.ts stop",
     "status": "bun run src/cli/index.ts status",
@@ -22,7 +28,9 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
+    "typecheck:dist": "tsc -p tsconfig.build.json --noEmit",
     "lint": "oxlint src tests",
+    "bench:record": "bun run bench/record-baseline.ts",
     "clean": "rimraf dist coverage"
   },
   "devDependencies": {

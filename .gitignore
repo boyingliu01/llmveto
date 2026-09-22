@@ -4,6 +4,7 @@ node_modules/
 # Build output
 dist/
 build/
+*.tsbuildinfo
 
 # Test coverage (xp-gate pre-commit hook reads coverage/coverage-summary.json)
 coverage/
@@ -11,8 +12,10 @@ coverage/
 # Local runtime state (gateway pid/log/state)
 .llmveto/
 
-# Evidence store (may contain sensitive request metadata) — never commit
-var/evidence/
+# Local runtime state & scratch under var/ (compiled binaries, logs, tmp, evidence).
+# Evidence store may contain sensitive request metadata — never commit. Only *.ts sources are tracked.
+var/*
+!var/*.ts
 
 # Sprint worktrees (isolated dev branches)
 .worktrees/

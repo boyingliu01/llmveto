@@ -193,6 +193,17 @@ const LOCKED_IDS = [
   "R11R5-B-m5",
   "R11R5-C-m1",
   "R11R5-C-m2",
+  "R11R6-A-M1",
+  "R11R6-A-m1",
+  "R11R6-B-m1",
+  "R11R6-B-m2",
+  "R11R6-B-m3",
+  "R11R6-B-m4",
+  "R11R6-B-m5",
+  "R11R6-C-M1",
+  "R11R6-C-M2",
+  "R11R6-C-m1",
+  "R11R6-C-m2",
 ] as const;
 
 /** 规范 ID 记号；`R2-A-M2 / R2-C-M1` 型合写行按 `/` 拆开，`（并入 R8-B-M1）` 型说明格不入选。 */
@@ -357,9 +368,11 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
     // 行数棘轮：只增不减。裁剪行须同步下调本常量——与下调锁清单同样是刻意且进 diff 的动作。
     // 下界**恒取实测行数**（历史 55=55、68=68，其后各批同样恒等，见下一行注释）：这不是假红，而是设计（"合法裁剪必须同批
     // 改常量"的机器化）；见文件头「能力边界」末条与登记处「状态列约定」（R10R3-A-m3/C-m1 成文）。
-    // 143 = R11 R6 批次后的实测数据行数（17 张 ID 表，本批新增 8 行 = `R11R5-A-*` 1 + `R11R5-B-*` 5 +
+    // 143 = R11 R6 批次后的实测数据行数（17 张 ID 表，该批新增 8 行 = `R11R5-A-*` 1 + `R11R5-B-*` 5 +
     // `R11R5-C-*` 2，全部为走查来源、无自查与事故来源）。
-    const MIN_BACKLOG_ROWS = 143;
+    // 154 = R11 R7 批次后的实测数据行数（18 张 ID 表，本批新增 11 行 = `R11R6-A-*` 2 + `R11R6-B-*` 5 +
+    // `R11R6-C-*` 4；3 Major + 8 Minor，同样全为走查来源）。
+    const MIN_BACKLOG_ROWS = 154;
     expect(rows.length, `${BACKLOG_REL} 表行数低于棘轮下界 ${String(MIN_BACKLOG_ROWS)}（当前 ${String(rows.length)}）`).toBeGreaterThanOrEqual(
       MIN_BACKLOG_ROWS,
     );

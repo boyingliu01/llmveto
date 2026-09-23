@@ -204,6 +204,23 @@ const LOCKED_IDS = [
   "R11R6-C-M2",
   "R11R6-C-m1",
   "R11R6-C-m2",
+  "R11R7-A-M1",
+  "R11R7-A-m1",
+  "R11R7-A-m2",
+  "R11R7-A-m3",
+  "R11R7-B-M1",
+  "R11R7-B-M2",
+  "R11R7-B-m1",
+  "R11R7-B-m2",
+  "R11R7-B-m3",
+  "R11R7-B-m4",
+  "R11R7-B-m5",
+  "R11R7-C-m1",
+  "R11R7-C-m2",
+  "R11R7-C-m3",
+  "R11R7-C-m4",
+  "R11R7-SR-1",
+  "R11R7-SR-2",
 ] as const;
 
 /** 规范 ID 记号；`R2-A-M2 / R2-C-M1` 型合写行按 `/` 拆开，`（并入 R8-B-M1）` 型说明格不入选。 */
@@ -240,6 +257,33 @@ function splitRow(line: string): string[] {
 interface MarkdownTable {
   readonly header: readonly string[];
   readonly rows: readonly (readonly string[])[];
+}
+
+/**
+ * 以 `|` 起首却不以 `|` 收尾的行 —— GFM 表格行必须单行，末格**内部**换行会把该行从中截断。
+ * 围栏内不判（示例文本里的竖排行不归表格解析管，与 `parseTables` 同一口径）。
+ * 本条存在的理由见 `R11R7-SR-2`：这类截断恰好在"格数与表头一致"断言的盲区里（截断点之后的格还留着，
+ * 前半仍解析成满格数），所以它需要一条独立的、按**行**而非按**格**判的断言。
+ */
+function unterminatedTableLines(md: string): string[] {
+  const bad: string[] = [];
+  let fence: { readonly ch: string; readonly len: number } | null = null;
+  const lines = md.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? "";
+    const marker = fenceMarker(line, fence === null ? "open" : "close");
+    if (fence !== null) {
+      if (marker !== null && marker[0] === fence.ch && marker.length >= fence.len) fence = null;
+      continue;
+    }
+    if (marker !== null) {
+      fence = { ch: marker[0] ?? "`", len: marker.length };
+      continue;
+    }
+    const t = line.trim();
+    if (t.startsWith("|") && !t.endsWith("|")) bad.push(`${String(i + 1)}: ${t.slice(0, 40)}`);
+  }
+  return bad;
 }
 
 /**
@@ -372,7 +416,10 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
     // `R11R5-C-*` 2，全部为走查来源、无自查与事故来源）。
     // 154 = R11 R7 批次后的实测数据行数（18 张 ID 表，本批新增 11 行 = `R11R6-A-*` 2 + `R11R6-B-*` 5 +
     // `R11R6-C-*` 4；3 Major + 8 Minor，同样全为走查来源）。
-    const MIN_BACKLOG_ROWS = 154;
+    // 171 = R11 R8 批次后的实测数据行数（19 张 ID 表，本批新增 17 行 = `R11R7-A-*` 4 + `R11R7-B-*` 7 +
+    // `R11R7-C-*` 4 + `R11R7-SR-*` 2；3 Major + 12 Minor + 自查 2）。
+    // 注：行数 ≠ ID 数（171 行 / 173 ID），算式定义在登记处头部「三种计数的定义体」，此处只引不算第二源。
+    const MIN_BACKLOG_ROWS = 171;
     expect(rows.length, `${BACKLOG_REL} 表行数低于棘轮下界 ${String(MIN_BACKLOG_ROWS)}（当前 ${String(rows.length)}）`).toBeGreaterThanOrEqual(
       MIN_BACKLOG_ROWS,
     );
@@ -388,6 +435,24 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
       return problems;
     });
     expect(malformed, `表行结构不合该表表头契约`).toEqual([]);
+  });
+
+  it("表格行单行契约：以 `|` 起首的行须以 `|` 收尾（R11R7-SR-2，拦末格内换行的静默截断）", () => {
+    const md = readFileSync(path, "utf8");
+    const bad = unterminatedTableLines(md);
+    expect(bad, `被换行截断的表行（尾部文字会脱离表格、不进入任何断言）：\n  ${bad.join("\n  ")}`).toEqual([]);
+    // 防空转，并固化"为什么上一条断言不够"：把一条真表行的收尾 `|` 去掉，本条必须转红，而**格数不变**
+    // ——即截断点之后的格仍在，上一条按格数判据看不见它（R11 R7 批落地时实测 `malformed=none`）。
+    const lines = md.split(/\r?\n/);
+    const target = lines.findIndex((l) => l.trim().startsWith("| R11R7-A-M1 "));
+    expect(target, "自检前提失效：登记处里找不到 `R11R7-A-M1` 的表行").toBeGreaterThanOrEqual(0);
+    const row = lines[target] ?? "";
+    const cut = row.replace(/\|\s*$/, "");
+    expect(cut.length, "自检前提失效：该行不以 `|` 收尾，fixture 无截断可造").toBeLessThan(row.length);
+    expect(splitRow(cut).length, "截断后格数应仍等于截断前，否则上一条断言已覆盖本条、本条冗余").toBe(
+      splitRow(row).length,
+    );
+    expect(unterminatedTableLines(md.replace(row, cut))).toHaveLength(1);
   });
 
   it("守卫自检（防空转）：ID 列覆盖锁清单，且人为删行形态确会被拦", () => {

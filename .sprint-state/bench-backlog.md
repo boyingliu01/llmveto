@@ -376,6 +376,42 @@ R10 R5（第三处置复评轮，评审对象 = 收口提交 `4bbea37`，即 R10
   64KB:10 / 512KB:40ms、G3 20/50/120ms）未触碰；`bench/baseline.json` md5 仍为
   `3ebfaa9f6a71ecf7cb7b0d91355e2525`。
 
+### R11 R1 批次（R11 匿名轮走查意见 + 走查期仓库重建事故 → 本收口提交，2026-09-23）
+
+R11 R1（匿名轮，评审对象 = R11 的 ①②③ 面落点）：A 提出 **2 Major + 5 Minor**，B / C 另有意见但
+本轮结论随事故作废（见下表 `R11-INC-1`）。8 个 ID = 走查来源 7 + 事故来源 1。下表处置的落点全部在
+**入库面**（判据/测试/CI/文档），故 Round 1 证据作废**不**影响这些处置的可验证性——每条都能被当前
+HEAD 的用例、`bench.yml` 原文或 ADR 文本复核。
+
+| ID | 位置 | 内容 | 来源 | 状态 |
+|----|------|------|------|------|
+| R11R1-A-M1 | `docs/adr/0002` 补遗四·验证节末条 | 卷面写"上述三个 `var/` 探针脚本随本批收口删除，故此处引用是历史记录而非可复跑入口"，但该节全部数字（40/0、25/15）只在**被删的脚本**里成立：一段 tracked 文档把结论钉在无人能复跑的入口上。且 `!var/*.ts` 使 `.ts` 探针**可被 `git add`**，"随批删除"并非任何一道门保证的性质 | A | 已消化（改写为成文约定：**凡 ADR/登记处写作 `var/…` 的路径都是 gitignored 的本机 scratch、不是可复跑入口；回归保护一律以入库面为准**，历史批次未加此限定的同类引用按本条同解。同批把该节数字换成用**入库期望表**复跑出的 104/0（正向）与 61/43（负向）） |
+| R11R1-A-M2 | `bench/out-path-guard.test.ts` 与 linux 探针各持一份形态清单 | 预推送通道与 CI 执行面**各自**手写同一批判据结论 → 两条面之间没有蕴含关系，"探针绿"不蕴含"那族字符串判据在 posix 宿主上绿"；这是 `R11-CI-1` ②（同一事实两个源）的失效方向在**测试面**的复现 | A | 已消化（新增 `bench/out-path-guard.cases.ts`：形态 × 期望的**单表**，测试与探针都只读它。Gate 5A 以首行 `@no-test-required` 出路收口——给一张数据表写断言等价于断言它等于自己，恒真；要红只能通过消费者——**未**使用 `SKIP_GATE_5A_BLOCK` 后门。仍未闭残余如实命名：vitest 自身的 `runIf`/`skipIf` 分支选择、`chmod 0` 的 EPERM 可观测性、符号链接能力探测仍只由 CI 的 linux runner 兑现，见 `R10R2-A-m2`） |
+| R11R1-A-m1 | `bench/out-path-guard.ts` 的私有 `lexicalForPlat` | ADR 承诺"词法回退按被建模平台解释分隔符"的等价性钉成了用例，但那条是 `it.runIf(win32)` → linux CI 上整条 skip，即**写进 tracked 文档的承诺在 CI 里零守护**；且函数私有，外部探针无法独立断言 | A | 已消化（改**导出** + 增一条平台无关的纯字符串断言用例（6 支 `\`→`/` 与 UNC 形态，两平台 CI 都跑）。导出理由与 `identityOf` 同族——判据里平台相关的那半条要有平台无关的可测面——并把该理由写进**导出注释**而非只写在 ADR） |
+| R11R1-A-m2 | `bench/out-path-guard.test.ts` 头部「uncovered 面」清单 | 反斜杠别名（`bench\baseline.json::$DATA`）的**身份**判据腿在 posix 宿主上不可达（realpath 把整串当成一个文件名），故同一条用例在两个宿主上"绿的不是同一条腿"，而清单未记这一条 | A | 已消化（清单新增第 4 条成文。判据不改：闭它需要真实 win32 runner，属既有结构性缺口 `R10R2-A-m2`，不以恒真断言冒充覆盖） |
+| R11R1-A-m3 | `.github/workflows/bench.yml` 守卫步的两个 `mktemp` | 清理写成三处内联 `rm -f`，第二次 `mktemp` 自身失败时 `bash -e` 直接杀掉脚本 → 第一个临时文件无人清 | A | 已消化（两变量先置空串、`trap 'rm -f "$list_in" "$list_out"' EXIT` 挂在赋值**之前**，三处内联清理删除。实测 `rm -f ""` 静默返回 0 且不覆盖退出状态：沙箱两条红在带 trap 的体上仍以 rc=1 抵达 runner） |
+| R11R1-A-m4 | 同上前 `mapfile` 之后的空数组分支 | 加了"每根至少 1 命中"断言后，该分支在当前锚点列表下已**不可达**，留着形同重复断言，将来容易被顺手删掉 | A | 已消化（不删，加注释写明它针对的是"未来新增一根不受前两条管辖的根"这一形状，属防御性兜底而非当前失效路径的重复断言） |
+| R11R1-A-m5 | 仓库根 `.gitignore` 的 `var/*` + `!var/*.ts` | A 建议在 `var/` 内再加一层兜底 `.gitignore`，以防 scratch 误入库。与本仓既有硬约束冲突：`!var/*.ts` 的存在理由正是保 `var/mock-relay.ts` 可跟踪（本地试用依赖），加兜底会把它一并挡掉 | A | **拒绝并成文**（不改 `.gitignore`；改以"var/ 引用性质"约定收口（本表 `R11R1-A-M1`），并把"误 `git add` 一个 `.ts` 探针"的风险写进同条 ADR 文字。拒绝理由登记于此，避免下轮重提） |
+| R11-INC-1 | 走查执行工装（`var/delphi-r11/`）与本仓 `.git` | Round 1 三家执行期间，评审进程把**被测仓库的工作目录整个重建**了：`.git` 于当日 08:23 重新 `clone`，原六笔 R11 提交（`d1f1db6`…`9c22b03`）在对象库中不可恢复（`git cat-file -t` 全部报"not a valid object"，reflog 仅存 `clone: from …`）。后果两条：① Round 1 的证据链作废（三家绑定到已不存在的 HEAD）；② 当时未提交的面丢失 | 事故（非走查来源） | 已消化（**Containment 顺序**：先逐笔核对 diffstat / `bench/baseline.json` md5 / 冻结面 `git diff --exit-code` / 全量测试，确认 ①②③ 面内容忠实；再手工重建丢失的 ④⑤ 面（即本表所在批次）；最后以新 HEAD **重跑 Round 1**。卷面追加硬纪律：评审期**禁止任何 git 写操作**（clone / reset / checkout / stash / clean），探针限定在 `var/r11b-<ID>/`，`var/delphi-r11` 视为只读。**如实登记**：本轮 R1 意见按"发现材料"采用，不作 Gate MW 证据） |
+
+- **裁决口径**：本表 **8 行 = 走查来源 7（A 的 2 Major + 5 Minor）+ 事故来源 1**。因 `R11-INC-1`，
+  Round 1 的三份专家输出**不能**充当证据（`write-evidence.cjs` 的 `commit === HEAD` 断言当场会拒），
+  处置照常落地、评审照常重跑——两者不互相顶替。
+- **本批代码面清单**（延续 `R10R3-A-N1` 的四面拆分）：① 判据面 = `bench/out-path-guard.ts`；② CI 执行面
+  = `.github/workflows/bench.yml`；③ 文档面 = `docs/adr/0002` 补遗四；④ 测试面 + 本登记处（期望表
+  `bench/out-path-guard.cases.ts` + `bench/out-path-guard.test.ts` 改写 + 锁清单 +8、棘轮同批上调）。
+  **顺序颠倒须披露**：本批 ④ 先于 ③ 落地（`b2cbde4` → `4959f50` → `4426b9b` → `cbe355c` → `de727ab`），
+  与惯例的 ①→②→③→④ 相反，原因是 `R11-INC-1` 后需要**尽快把重建面提交进 git 对象库**，
+  即"防止再次丢失"优先于"叙事顺序"。
+- **验证**：① 本机 `bunx vitest run bench/out-path-guard.test.ts` → 33 passed / 1 skipped；② 真实 linux
+  正向 104/104 rc=0 + 修复前模块（`git show 4bbea37:bench/out-path-guard.ts` 现取）负向 61/43 rc=1，
+  两支**共用同一张期望表**，脚本退出条件写死为"正向必 rc=0、负向必有红"；③ 守卫步沙箱从 `bench.yml`
+  原文抽 `run:` 体跑六路径（含 runner 真实口径 `bash -eo pipefail`）；④ 全量门 + `bunx tsc --noEmit` +
+  `bunx oxlint`。逐条数字与失效形态清单见 `docs/adr/0002` 补遗四验证节。
+- **冻结面零改动自证**：`git diff --exit-code 4bbea37..HEAD -- bench/regression-formula.ts bench/baseline.json
+  bench/record-baseline.ts` 为 0；判据公式 `* 1.2` / `> 2` 与三台门阈值常量未触碰；`bench/baseline.json`
+  md5 仍为 `3ebfaa9f6a71ecf7cb7b0d91355e2525`。
+
 ## 备注
 
 - **编号谱系**：`R7-C-R2` ← R7 R1 原始报告中的 `C-R7-2`（内容一致，仅统一为 `R7-<专家>-<序号>` 型）。

@@ -271,6 +271,12 @@ R10 批（五轮才过一次共识门，终局 HEAD `4bbea37`）推送后，benc
 
 ### 影响（Consequences）
 
+- **R11 走查轮（Round 1）在本条决策上追加两项结构改动**：① 期望值单点化——形态清单与期望判定从
+  "测试里一份、探针里另一份"合并为 `bench/out-path-guard.cases.ts` 一张表（A-M2：预推送通道与 CI
+  执行面自此共用同一批判据结论，"探针绿"可蕴含"那族判据在 posix 宿主上绿"）；② `lexicalForPlat`
+  由私有改为**导出**并配平台无关的纯字符串断言（A-m1：本 ADR 承诺的"等价性"此前只由一条
+  `it.runIf(win32)` 用例钉住，而那条在 linux CI 上被 skip = 写进 tracked 文档的承诺在 CI 零守护）。
+  导出理由与 `identityOf` 同族：判据里平台相关的那半条要有平台无关的可测面，不是为不存在的需求加抽象。
 - 判据冻结面零改动：`bench/regression-formula.ts` 与 `bench/baseline.json` 全程 `git diff --exit-code` 为空，`* 1.2` / `> 2` 与三台门阈值常量未被触碰。
 - CI 守卫步顺带收口 R5 两家独立提出的同族邻居面：`R10R5-A-m1` + `R10R5-B-m2`（三个 `[ -d ]` 锚点只证"目录在"、不证"目录里有货"→ 每根加"至少匹配 1 个 `*.test.ts`"断言，取**零漂移**形态而非断计数，并保持为一道**有意的绊线**：某个根的测试被合法迁走时，本步要求在同一笔提交里删掉该锚点）、`R10R5-A-m2`（`sort -z -o F F` 的 in-place 同时性依赖改为两个 `mktemp` 文件）。
 - **如实披露**：`-o F F` 在本机 coreutils 上与异文件形态**逐字节相同**（21 文件 / 750 字节，未复现损坏），该条是**预防性**收口而非缺陷修复；判据是不把正确性压在未承诺的实现细节上。
@@ -280,22 +286,32 @@ R10 批（五轮才过一次共识门，终局 HEAD `4bbea37`）推送后，benc
 
 ### 验证
 
-- 本机 win32：`bunx vitest run bench/out-path-guard.test.ts` → 32 passed / 1 skipped（skip 的是符号链接用例，见上条归因订正）；`bunx tsc --noEmit` 干净。
+- 本机 win32：`bunx vitest run bench/out-path-guard.test.ts` → 33 passed / 1 skipped（skip 的是符号链接用例，见上条归因订正；34 为该文件用例总数，含本批走查轮新增的那条 `lexicalForPlat` 纯字符串断言）；`bunx tsc --noEmit` 干净。
 - **真实 linux 正向**：WSL Ubuntu + node v24（`wsl.exe bash var/negctl-linux-r11.sh`，一条命令同时跑正/负
   两个沙箱；探针本体是 `node --experimental-strip-types var/probe-linux-r11.ts`，仓库根为 cwd）→
-  `platform=linux`，**40 条断言全过 / 0 失败 / rc=0**。覆盖：CI 红灯 ①（六种流形态 win32 建模下
-  `refusal='stream'` 且 `sameName` 为真，含 `bench\\baseline.json::$DATA`）、CI 红灯 ②（`fate.plat === "win32"`
-  且空流名/含冒号流名/反斜杠宿主尾冒号四型各即刻 throw）、posix 建模对照组（同一批 `:` 形态 `refusal=null`，
-  win32 判据不得越平台误伤）、词法回退按 plat 解释 `\`。
+  `platform=linux`，**104 条断言全过 / 0 失败 / rc=0**（node v24.21.0）。覆盖：CI 红灯 ①（六种流形态
+  win32 建模下 `refusal='stream'` 且 `sameName` 为真，含 `bench\\baseline.json::$DATA`）、CI 红灯 ②
+  （`fate.plat === "win32"` 且空流名/含冒号流名/反斜杠宿主尾冒号各即刻 throw）、posix 建模对照组（同一批
+  `:` 形态 `refusal=null`，win32 判据不得越平台误伤）、词法回退按 plat 解释 `\`、宿主折叠的字符串层。
 - **真实 linux 负向对照**（判别力自证，同一脚本的第二支）：把 `4bbea37`（R10 终局、推送后转红的那个 HEAD）
-  的 `bench/out-path-guard.ts` 经 `git show` 现取放进同一沙箱复跑同一探针 → **25 passed / 15 failed / rc=1**，
-  红在 `[ci-red-1] bench\\baseline.json::$DATA`、`[ci-red-1/synth]`、全部 `[ci-red-2]`（`fate.plat` 为
-  `undefined`、预检不 throw）与四条 `[new]` 分隔符断言。脚本以"正向必须 rc=0、负向必须有红"为退出条件，
-  否则自身报错——即探针不是恒真堆。
-- 守卫步沙箱：`node var/probe-workflow-guard-r11.cjs` → 从 `bench.yml` **原文抽取** `run:` 体（只替换末行 `bunx vitest run`，避免探针与真文件漂移），六路径全过：真实仓 21 文件 WOULD-RUN / 缺锚点 rc=1 并指名 / 锚点在但无 `*.test.ts` rc=1 并指名 / 锚点被剪枝 rc=1 / 三根齐 rc=0 / `sort` 双临时文件形态无损（并报告 in-place 形态在本机亦逐字节相同）。
-- **上述三个 `var/` 探针脚本随本批收口删除，故此处引用是**历史记录**而非可复跑入口**（`var/*` 除 `!var/*.ts`
-  外本就不入库；此前批次的同类引用如 `var/probe-workflow-guard.sh` 亦已不在了）。重建成本很低：正向探针
-  只需 `node --experimental-strip-types` 装载 `bench/out-path-guard.ts` 后逐条断言，负向支的修复前模块由
-  `git show <red-head>:bench/out-path-guard.ts` 现取（不落 tracked 副本，否则被 jscpd/archlinter 当代码克隆告警）。
-  **回归保护不依赖这些脚本**：跨平台断言已作为 `bench/out-path-guard.test.ts` 的用例入库，CI 的 linux runner
-  就是它们的执行环境——本批两条红灯正是由该文件自己抓到的。探针补的只是"推送前"这一段可见性。
+  的 `bench/out-path-guard.ts` 经 `git show` 现取放进 `mktemp -d` 沙箱，复跑**同一支探针、同一张期望表**
+  → **61 passed / 43 failed / rc=1**，红在 `[win32/refusal] bench\baseline.json::$DATA`（expected
+  `"stream"` got `null`）与 `[win32/sameName]` 同形、全部 `[*/fatePlat]`（`fate.plat` 为 `undefined`）、
+  四条 `[precheck/throw]`（预检不 throw）与四条 `[lex/*]`（该函数当时**尚未导出**，探针取
+  `<<not exported>>` 哨兵 → 必红）。脚本以"正向必须 rc=0、负向必须有红"为退出条件，否则自身报错——
+  即探针不是恒真堆。
+- **探针与 CI 用例共用一张期望表**（R11 R1 对 A-M2 的处置）：上两支跑的**不再是两套断言**——形态清单与
+  期望判定住在 `bench/out-path-guard.cases.ts`，`bench/out-path-guard.test.ts`（CI 执行面）与
+  `var/probe-linux-r11.ts`（预推送 linux 面）都只读它。因此"探针绿"现在**蕴含**"那族字符串判据在 posix
+  宿主上也绿"，两者无从各自漂移。仍未闭的残余（本通道不声称）：vitest 自身的 `runIf`/`skipIf` 分支选择、
+  `chmod 0` 的 EPERM 可观测性、符号链接能力探测——这些仍只由 CI 的 linux runner 兑现（`R10R2-A-m2`）。
+- 守卫步沙箱：`node var/probe-workflow-guard-r11.cjs` → 从 `bench.yml` **原文抽取** `run:` 体（只替换末行 `bunx vitest run`，避免探针与真文件漂移），六路径实跑全过：① 真实仓三根齐 → rc=0 / `WOULD-RUN count=21`；② 同一体在 `bash -n`、`bash -e`、`bash -eo pipefail` 三口径下语法与退出码双过（runner 的 `shell: bash` 实为 `--noprofile --norc -eo pipefail`，本地默认只有 `-e`，`| grep -q .` 这类管道的退出码差异只在 pipefail 口径下才暴露）；③ 沙箱三根齐 → rc=0（证明下面两条红来自断言而非环境噪声）；④ 整根缺失 → rc=1 且 stderr 指名 `'tests/utils' is missing`；⑤ 锚点在但用例被迁走 → rc=1 且指名 `'bench' holds no *.test.ts`；⑥ `sort` 的异文件形态与 in-place 形态在本机 21 行逐字节相同（承上条：预防性对照，非缺陷复现）。**④⑤ 同时是本批新加 `trap … EXIT` 的退出码自证**——两条红必须以 rc=1 抵达 runner，若 trap 吞掉失败状态则这两条立刻变绿。
+- **`var/` 引用的性质 = 本机 scratch，不是可复跑入口**（R11R1-A-M1 与 A-m5 的处置）：本 ADR 与登记处里
+  凡写作 `var/…` 的路径都是 **gitignored 的评审探针**，除 `!var/*.ts` 外不入库，随时可能不在本机之外被任何
+  人复得；引用它们只是为了说明"当时用什么形态得到的结论"，**不**作为回归保护。本批现役两支是
+  `var/probe-linux-r11.ts` + `var/negctl-linux-r11.sh`（重建成本很低：期望表已入库，探针只是 import 它并
+  换个 runner；负向支的修复前模块由 `git show <red-head>:bench/out-path-guard.ts` 现取，**不落 tracked
+  副本**，否则被 jscpd 当代码克隆告警）。**回归保护一律以入库面为准**：跨平台断言住在
+  `bench/out-path-guard.test.ts` + `bench/out-path-guard.cases.ts`，CI 的 linux runner 就是它们的执行环境
+  ——R11 那两条红灯正是由该测试文件自己抓到的。历史批次里未加此限定的 `var/…` 引用（如
+  `var/probe-workflow-guard.sh`、`var/mut-guard-r4.mjs`）按本条同解：它们是当时的实跑记录，不是入口。

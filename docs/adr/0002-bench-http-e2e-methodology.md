@@ -93,7 +93,7 @@ Code-walkthrough 评审（R1）指出本 ADR 的空缺：正文规定"权威基�
 - **身份判据的别名形态实测**（R10R1-B-1，dev=119610712 / ino=1688849860291391 与 tracked 全等）：`mklink /H`（硬链接）、`baseline.json:<已存在的 stream>`（NTFS 备用数据流）、`//localhost/d$/…` 与 `\\localhost\d$\…`（admin share）、`\\?\d:\…`（设备命名空间）、`subst X:` 盘 → 六形态端到端全部 refuse；探针结束后 `bench/baseline.json` md5 不变、`git status` 干净（ADS 经 `fs.unlinkSync("…:probestream")` 单独删除，`dir /r` 复核无残留）。⚠️ **该轮"ADS 已收口"的结论不泛化**（R10R2-C-M1）：出题方与 B 各自验的字面量流名**恰好都是已被前序探针创建过的流**，流不存在时 stat 抛错、判据退让，"六形态全部 refuse"对 `:<任意新流名>` 不成立——收口面由上条宿主折叠矩阵重新覆盖。**分工**：出题方与 B 各自独立构造并复现，C 的相反结论（字面短名文件）已否证。
 - **探针的 shell 转义陷阱**（R10 R2 出题方踩坑，成文以免后人误判"守卫未生效"）：Git Bash 下 `'\\localhost\d$\…'` 形式的反斜杠会被剥成单 `\`，传给 bun 的是一个**真实不存在的别的路径**（`\localhost\d$\…` → 解析到当前盘根），守卫按语义放行该路径、最终在 `writeFileSync` 处 ENOENT 退出——这不是穿透（tracked 主流零改动，实测 md5 与 `git status` 自证），但会**白跑一整套 10×3 采样**。UNC 形态一律改用正斜杠 `//localhost/d$/…` 传入。
 - **登记处守卫的执行面**（R10R1-A-M1/C-M1；R10R2-A-m2/B-2/C-m1 扩面；R10R3-A-M1 定形为**显式文件列表**）：CI bench job 的守卫步已由"只跑 `tests/unit/backlog-integrity.test.ts`"扩为单测面，并进一步改为以 `find` 的三个根目录（仅作作用域锚点）产出 `-print0` 文件列表、`mapfile -d` 收进数组、逐个真实文件路径入 vitest（本机墙钟 <2s；**用例数不写死**——上批把"20 文件 169 用例"当事实写进三处 tracked 文字，下一批实测即 170，属可漂移计数被当作命题，由 R10R3-A-m1 订正）。**为何必须是文件而非目录**（R10R3-A-M1，Major）：vitest 的位置参数是对测试文件路径的**子串过滤**、不前缀锚定，写 `… bench` 会把任何路径含 `bench` 字样的未来文件（`tests/integration/bench-*.test.ts`、`tests/e2e/benchmark.test.ts`）静默纳入这个阻断步，恰好重新引入"未在本 workflow 环境验证过的 e2e = 不可控假红源"这一该步注释明确要避免的形态；列表为空即刻 `exit 1`，绝不退化成全量。判别力实测：临时放一个 `tests/integration/bench-sentinel-probe.test.ts`，裸目录名形态 21 文件 / 显式文件列表形态 20 文件（探针验后即删）。判据公式（`bench/regression-formula.test.ts`）与 min-of-N 估计量（`bench/repeat.test.ts`）这两个"改了就会静默改变门语义"的面自此在 CI 执行面内。`tests/integration/**` 与 `tests/e2e/**`（共 12 文件）**仍无 CI 执行面**，且本仓唯一 workflow 就是 bench.yml（无任何 test job）——该对称缺口作为观测项登记于 `.sprint-state/bench-backlog.md`（`R10R2-A-m2`），不由本步冒充已消。**同批的 fail-loud 半边**（R10R4-B-M1，Major；R10R4-A-m1/C-m2 同因）：`mapfile -d '' -t … < <(find …)` 的**进程替换丢弃 find 退出码**（`bash -e` 管不到替换内部），故锚点目录被重命名/拆分时 find 只喷 stderr、其余根照常产出，本步以**缩减后的文件集转绿**——方向是假绿，比上段"多纳入"的假红更隐蔽。现三步收口：① 三个作用域锚点先各自 `[ -d ]` 显式断言，缺哪个就指名哪个；② `find` / `sort -z` 的退出码**直接**判定（列表先落临时文件，不再走进程替换）；③ `mapfile` 改从该临时文件读。实测四路径（`var/probe-workflow-guard.sh`，在 `mktemp -d` 沙箱里复刻锚点目录的**空壳**跑判定前缀，**不在真实仓内移动或改名任何目录**）：三锚点齐全 → 列表非空、rc=0；缺任一锚点 → rc=1 且文案**指名是哪个根**；`find` 自身非零 → rc=1；列表为空 → rc=1。**同一"缺锚点"形态喂给修复前的旧体**（`mapfile < <(find … | sort -z)`）→ **rc=0 且文件集静默缩减**，这是本条 Major 的正身证据。另：旧批在真实仓做过一次等价观测（三根缺一 → 少一个根的文件数而 rc=0），与沙箱结论同向。**文件集是动态求得的**，故新增受测文件（如本批的 `bench/out-path-guard.test.ts`）自动进入该阻断步，无需改 workflow。
-- **写可达性预检实跑**（win32-x64，R10R3-B-m4/C-m1 收口后）：`bench/nosuchdir-r3/out.json` → **0.18s** 内 `error: out path …: parent directory bench/nosuchdir-r3 does not exist`（收口前该形态跑满 10×3 采样、约 80–90s 后才 ENOENT）；`:probestream`（宿主折叠后为空串）→ `invalid out path …: its host is empty`；对照零误伤：`bench/baseline.local.json` 照旧进入采样直至被 timeout 截断。守卫面本身无回归——tracked 本名 / 新流名 `:brandnewstream` / `mklink /H` 硬链接别名三形态各自 refuse，三种文案分支（无后缀 / `(an NTFS alternate data stream of it)` / `(same file identity via an alias path)`）逐字正确；探针后 `bench/baseline.json` md5 `3ebfaa9f6a71ecf7cb7b0d91355e2525` 不变、无 `bench/baseline.local.json` 残留、`git status` 干净。**R10 R4 增补两支**：**① 流名字面约束**（R10R4-A-m2）——上一条里的 `file:` / `file::` / `file:a:b` / `file:a:b:c` 四型此前穿过守卫、跑满采样才在 `open` 处 ENOENT（"宿主折叠后为空串"只覆盖 `baseline.json:` 一型，多级流的宿主非空故不触发该支）；现由 `assertWritableOutPath()` 在 win32 上按"流名非空且不含 `:`"即刻 throw，措辞直接说明该形态**即使宿主存在也必然失败**（实测四型各自 0.x s 截停，合法流名 `:tag` / `:$DATA` 零误伤）。**② 目录腿的平台边界**（R10R4-B-m2，成文而非整改）：`accessSync(dir, W_OK)` 在 win32 近乎恒真——libuv 的只读位检查对目录忽略，ACL deny 会假阳性放行；故本预检的目录可写性只在 posix 上有意义，父目录**存在性**两平台都可靠。文件腿（目标若存在须是可写普通文件）两平台均可靠。据此不在 win32 上假装测 ACL，测试面以 `it.skipIf` 标注该能力探测而不写恒真断言。
+- **写可达性预检实跑**（win32-x64，R10R3-B-m4/C-m1 收口后）：`bench/nosuchdir-r3/out.json` → **0.18s** 内 `error: out path …: parent directory bench/nosuchdir-r3 does not exist`（收口前该形态跑满 10×3 采样、约 80–90s 后才 ENOENT）；`:probestream`（宿主折叠后为空串）→ `invalid out path …: its host is empty`；对照零误伤：`bench/baseline.local.json` 照旧进入采样直至被 timeout 截断。守卫面本身无回归——tracked 本名 / 新流名 `:brandnewstream` / `mklink /H` 硬链接别名三形态各自 refuse，三种文案分支（无后缀 / `(an NTFS alternate data stream of it)` / `(same file identity via an alias path)`）逐字正确；探针后 `bench/baseline.json` md5 `3ebfaa9f6a71ecf7cb7b0d91355e2525` 不变、无 `bench/baseline.local.json` 残留、`git status` 干净。**R10 R4 增补两支**：**① 流名字面约束**（R10R4-A-m2）——上一条里的 `file:` / `file::` / `file:a:b` / `file:a:b:c` 四型此前穿过守卫、跑满采样才在 `open` 处 ENOENT（"宿主折叠后为空串"只覆盖 `baseline.json:` 一型，多级流的宿主非空故不触发该支）；现由 `assertWritableOutPath()` 在 win32 上按"流名非空且不含 `:`"即刻 throw，措辞直接说明该形态**即使宿主存在也必然失败**（实测四型各自 0.x s 截停，合法流名 `:tag` / `:$DATA` 零误伤）。**② 目录腿的平台边界**（R10R4-B-m2，成文而非整改）：`accessSync(dir, W_OK)` 在 win32 近乎恒真——libuv 的只读位检查对目录忽略，ACL deny 会假阳性放行；故本预检的目录可写性只在 posix 上有意义，父目录**存在性**在本地盘的典型失败（缺目录 / 只读卷）两平台都可靠；**例外是 UNC**（R10R5-C-m2）：不可达或无权限的共享根会让 `existsSync` 报 false 而 `accessSync` 抛 `EACCES`，落进后一条腿的 catch，故该支文案只说"无法确认可写"并带出原始 errno，不断言"该目录被设为不可写"。文件腿（目标若存在须是可写普通文件）两平台均可靠。据此不在 win32 上假装测 ACL，测试面以 `it.skipIf` 标注该能力探测而不写恒真断言。
 - **tracked 侧定向告警实跑**（R10R3-A-m4）：把 cwd 换到没有 `bench/` 的目录（`var/`）令 `statSync("bench/baseline.json")` 真实抛错 → 打印 `[record-baseline] WARNING: stat on bench/baseline.json failed; the identity criterion is disabled for this run and only the path-name check protects the tracked baseline`，随后被上一条预检 fail-loud 截停；仓根正常 cwd 下该告警**零输出**（负向自证：健康路径不刷屏）。`ino === 0`（文件系统不报 ID）一支按设计不告警，靠 `statThrows()` 与"stat 抛错"分开。
 - **登记处守卫的判别力（变异 + 负例，全程不触 tracked 文件）**：把 shipped parser 按花括号配平抠出后在 `var/` 的**内存副本**上逐条删规则——删"闭合行须纯 marker"→ info-string 用例回归为 1 张幻影表 / 幻影 ID 入列；删"缩进 ≤3 空格"→ 4 空格缩进用例的真表被吞（`tables=0`）；两条各自只红自己那面，证明 fixture 有判别力而非空转（R10R3-A-m2/B-m1/B-m2）。负例：人为删一行登记处 → 棘轮 81→80、超集 83→82、缺 ID 三项**同时**为假（R10R3-A-m3/C-m1 的"下界恒=实测"即以此形态成立）。
 
@@ -243,3 +243,59 @@ G1 p95 三次跨度 1.554 → 1.948（**+25%**）已超 20% 容差；而 **p50 �
 | **method-SKIP** | 基准 `_repeats`/`_estimator` 与门口径不一致（或缺标记，schema < 4） | 以**当前口径**重录基准并提交 `bench/baseline.json`（本地重录不算，须 CI record job 产物） |
 
 `check-regression.ts` 的 SKIP 输出按子因分支打印不同 remediation（口径漂移 → 按当前口径重录；基线已是 CI 录制 → 判定权在同构 CI 运行；基线仍是本地占位 → 待办是录权威基线并提交）。历史教训：`730f82e` 之前的重录待办以"本地重录后 SKIP 消失"作为收尾凭据，但那只是 environment-SKIP 在本地消失，与 method-SKIP 的收尾（CI 重录 + 提交）不是同一件事。
+
+## 补遗四（2026-09-23）：`plat` 注入的可达边界 —— 宿主绑定的 API 折不动，平台事实源不许有两个
+
+### 背景（Context）
+
+R10 批（五轮才过一次共识门，终局 HEAD `4bbea37`）推送后，bench job 在 **16 秒**内转红：守卫步 `Unit + registry integrity guard` 抓到 `bench/out-path-guard.test.ts` 的 **2 条**用例（198 passed / 2 failed / 2 skipped）。失败发生在**阻断步的最前面**、三台 runner 之前，正是该步的设计用途。值得注意的是它的方向：本批把守卫段抽成受测模块并让 `plat` 成为测试注入点，动机就是"CI 在 linux，win32 专有分支否则永不可达"；结果注入点本身漏了两处，而这两处**在 win32 本机全绿**。
+
+两条红灯各自的第一手事实（`gh run view 35794494636 --log-failed`）：
+
+1. `AssertionError: expected [ 'bench\\baseline.json::$DATA', null ] to deeply equal [ 'bench\\baseline.json::$DATA', 'stream' ]`（`out-path-guard.test.ts:122`）——win32 分隔符写法的宿主折叠后 `sameName` 为假。
+2. `AssertionError: expected [Function] to throw an error`（`out-path-guard.test.ts:314`）——`assertWritableOutPath` 对空流名/含冒号流名**不拒**。
+
+### 决策（Decision）
+
+**根因 ①：`plat` 形参改得动我们写的判据，改不动宿主绑定的 API。** `realpathSync.native` 与 `node:path` **默认导出**的 `resolve`/`dirname` 一律按**宿主**解释 `\`：linux 上 `bench\\baseline.json` 是一个含反斜杠的**单个文件名**，posix 的 `resolve` 不会把它折成 `bench/baseline.json`。于是"反斜杠变体折进 tracked 家族"这条判据在 CI 上从未真正走过——本机之所以看着对，是因为 win32 的 `realpathSync.native` 直接成功，压根没进词法回退分支。
+
+- 修法：新增私有 `lexicalForPlat(p, plat)`，在 **win32 建模**下把 `\` 规范化为 `/`，**只**接入 `canonicalPath` 的**词法回退分支**与 `assertWritableOutPath` 的 `dirname` 取父处。
+- **为什么不接 realpath 分支**：win32 上 `\\?\\d:\\…`（设备命名空间）与 UNC 形态由 `realpathSync.native` 自己折回宿主长名，那是 `plat` 之外的**独立防线**；把它们也改写成 `/` 可能让 realpath 失配，等于把一条真实存在的保护换成"认不出别名 → 放行"。改写方向因此限定为"只在本来就已经失败的分支上补齐语义"，**只增拒绝**。
+- 该等价性（真实 win32 宿主上"把 `\` 换成 `/`"不改变任何判定）不当作显然，钉成 `it.runIf(win32)` 用例。
+
+**根因 ②：同一个平台事实有两个源，二者可以不一致。** `assertWritableOutPath(fate, plat = platform())` 的第二个形参与 `fate.outHost` 的折叠平台构成**隐式契约**；用例只给 `inspectOutPath` 传了 `plat`，预检便按宿主平台取默认值 → 流名判据整条跳过。这是 R5 走查意见 `R10R5-A-m3` 预言的失效形态，被 CI 以真实红灯兑现（多轮走查的价值实证：意见在推送前判为 Minor，推送后立刻是唯一的红源）。
+
+- 修法：`OutPathFate` 携带 `readonly plat`，由 `inspectOutPath` 与 `outHost` **同源产出**；`assertWritableOutPath(fate)` **删去**第二形参。调用方自此拿不到第二个平台入口，不一致在类型层不可表达。生产侧 `record-baseline.ts` 无改动（本来就是单参调用）。
+
+**预推送复现路径：CI 是唯一 linux 执行环境这一事实本身就是盲区。** vitest 的原生绑定（rolldown）随宿主平台分发，无法在 win32 的 `node_modules` 里跑 linux 版；本机 WSL 提供了一条**不依赖测试框架**的复现通道：`node --experimental-strip-types` 直接装载 `bench/out-path-guard.ts` 的判据模块，对 linux 宿主复跑那 2 条红灯用例的等价断言。它不进 CI、不被任何门依赖，只是把"只有 CI 能证的东西"提前到推送前。
+
+### 影响（Consequences）
+
+- 判据冻结面零改动：`bench/regression-formula.ts` 与 `bench/baseline.json` 全程 `git diff --exit-code` 为空，`* 1.2` / `> 2` 与三台门阈值常量未被触碰。
+- CI 守卫步顺带收口 R5 两家独立提出的同族邻居面：`R10R5-A-m1` + `R10R5-B-m2`（三个 `[ -d ]` 锚点只证"目录在"、不证"目录里有货"→ 每根加"至少匹配 1 个 `*.test.ts`"断言，取**零漂移**形态而非断计数，并保持为一道**有意的绊线**：某个根的测试被合法迁走时，本步要求在同一笔提交里删掉该锚点）、`R10R5-A-m2`（`sort -z -o F F` 的 in-place 同时性依赖改为两个 `mktemp` 文件）。
+- **如实披露**：`-o F F` 在本机 coreutils 上与异文件形态**逐字节相同**（21 文件 / 750 字节，未复现损坏），该条是**预防性**收口而非缺陷修复；判据是不把正确性压在未承诺的实现细节上。
+- `identityAbsent` 的 `false` 端到端腿（M-k）与 `identityOf` 混类（M-d）在 linux CI 上**都**存活，此前只命名了一条；现两条一起写进测试头（`R10R5-C-m1`）。
+- 两处**叙述**订正（非代码缺陷）：`R10R5-B-m1`——`f:` / `f:a:b` 与 `file:` / `file:a:b` 不是一回事，单字母前缀是**盘符相对**形态（实测 cwd 置于 `var/` 下 `openSync("D:h.txt:w9","wx")` 创建成功），恒 ENOENT 的只是**多字母宿主**那一组；代码行为本就正确（`f:a:b` 折到宿主 `f:a` + 流名 `b`，是合法可写形态），故只改注释与措辞。`R10R5-B-m3`——R5 卷面把唯一 skip 用例归因为"W_OK 可观测性自校准"，实测 skip 的是**符号链接**用例（该 shell 无建链特权）；文件腿 `chmod 0` 后 `accessSync(W_OK)` 在 node/bun 双运行时均 EPERM（可观测且真实通过），目录腿才近乎恒真（与 `R10R4-B-m2` 成文一致）。
+- `R10R5-C-m2`：不可达/无权限的 **UNC 共享根**在 win32 上是 `existsSync=false` + `accessSync` 抛 EACCES，落进 catch 却被表述成"not writable"，诊断失真（后果良性：仍采样前 fail-fast）。文案改为 `cannot be verified as writable` 并带出原始 errno；上文验证节"父目录存在性两平台都可靠"一句补 UNC 限定。旧 `record-baseline.ts` 即存在此措辞，非本批回归。
+
+### 验证
+
+- 本机 win32：`bunx vitest run bench/out-path-guard.test.ts` → 32 passed / 1 skipped（skip 的是符号链接用例，见上条归因订正）；`bunx tsc --noEmit` 干净。
+- **真实 linux 正向**：WSL Ubuntu + node v24（`wsl.exe bash var/negctl-linux-r11.sh`，一条命令同时跑正/负
+  两个沙箱；探针本体是 `node --experimental-strip-types var/probe-linux-r11.ts`，仓库根为 cwd）→
+  `platform=linux`，**40 条断言全过 / 0 失败 / rc=0**。覆盖：CI 红灯 ①（六种流形态 win32 建模下
+  `refusal='stream'` 且 `sameName` 为真，含 `bench\\baseline.json::$DATA`）、CI 红灯 ②（`fate.plat === "win32"`
+  且空流名/含冒号流名/反斜杠宿主尾冒号四型各即刻 throw）、posix 建模对照组（同一批 `:` 形态 `refusal=null`，
+  win32 判据不得越平台误伤）、词法回退按 plat 解释 `\`。
+- **真实 linux 负向对照**（判别力自证，同一脚本的第二支）：把 `4bbea37`（R10 终局、推送后转红的那个 HEAD）
+  的 `bench/out-path-guard.ts` 经 `git show` 现取放进同一沙箱复跑同一探针 → **25 passed / 15 failed / rc=1**，
+  红在 `[ci-red-1] bench\\baseline.json::$DATA`、`[ci-red-1/synth]`、全部 `[ci-red-2]`（`fate.plat` 为
+  `undefined`、预检不 throw）与四条 `[new]` 分隔符断言。脚本以"正向必须 rc=0、负向必须有红"为退出条件，
+  否则自身报错——即探针不是恒真堆。
+- 守卫步沙箱：`node var/probe-workflow-guard-r11.cjs` → 从 `bench.yml` **原文抽取** `run:` 体（只替换末行 `bunx vitest run`，避免探针与真文件漂移），六路径全过：真实仓 21 文件 WOULD-RUN / 缺锚点 rc=1 并指名 / 锚点在但无 `*.test.ts` rc=1 并指名 / 锚点被剪枝 rc=1 / 三根齐 rc=0 / `sort` 双临时文件形态无损（并报告 in-place 形态在本机亦逐字节相同）。
+- **上述三个 `var/` 探针脚本随本批收口删除，故此处引用是**历史记录**而非可复跑入口**（`var/*` 除 `!var/*.ts`
+  外本就不入库；此前批次的同类引用如 `var/probe-workflow-guard.sh` 亦已不在了）。重建成本很低：正向探针
+  只需 `node --experimental-strip-types` 装载 `bench/out-path-guard.ts` 后逐条断言，负向支的修复前模块由
+  `git show <red-head>:bench/out-path-guard.ts` 现取（不落 tracked 副本，否则被 jscpd/archlinter 当代码克隆告警）。
+  **回归保护不依赖这些脚本**：跨平台断言已作为 `bench/out-path-guard.test.ts` 的用例入库，CI 的 linux runner
+  就是它们的执行环境——本批两条红灯正是由该文件自己抓到的。探针补的只是"推送前"这一段可见性。

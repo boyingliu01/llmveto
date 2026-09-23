@@ -23,16 +23,25 @@ import {
 //
 // 平台注记：宿主折叠与流名字面约束都是 **win32 专有**判据，而 CI 跑在 linux。`plat` 形参是这些分支在 CI 上
 //         唯一可达的路径（理由见 out-path-guard.ts 的 hostPath 文档注）。凡涉及 win32 判据的断言一律显式传 plat。
+//         "显式传"这件事本身有过一次实测翻车（R10 推送后的 CI 红）：`assertWritableOutPath` 曾自带第二个
+//         `plat` 形参，用例只给 `fate` 传了 `plat` → 预检按**宿主**平台取默认值 → 流名判据在 linux 上整条被跳过
+//         （本机 win32 全绿）。现在平台随 `OutPathFate.plat` 一起产出，测试与生产都拿不到第二个平台事实源。
 //
 // 已命名的 uncovered 面（不以恒真断言冒充覆盖）：
 //   1. `UNC //localhost/d$/…`、`\\?\d:\…`、8.3 短名三类的**端到端**折叠需要 win32 realpath 与 admin-share
 //      权限配合，在 linux CI 上必然得到"看环境的假绿/假红"。其**字符串层**判据（宿主折叠 + 盘符冒号不剥）
 //      已在第一组跨平台覆盖；端到端人工复跑记录见 docs/adr/0002 补遗一·验证节。
+//      注：`\` 型分隔符写法**不再**属于本条——词法回退按被建模的平台解释分隔符后，它在两平台都折得到
+//      （见下方 "词法回退按**被建模的平台**解释" 一条；R10 推送前这里曾是一条 linux 假红）。
 //   2. **整棵文件系统都报 `ino === 0`**（9p / 部分网络盘）这一环境本身造不出来，故"在该环境上跑一次真实
 //      录制"不在覆盖面内。但**判据本身**已两处受测：`identityOf` 的哨兵退让是平台无关的纯函数断言；
 //      win32 上 `\\.\NUL` 是一个真实存在、`statSync` 成功且报 `dev=0 ino=0` 的路径（本机实测），
 //      故"`ino === 0` 时身份判据退让**且不该告警**"这一整链在 `runIf(win32)` 用例里端到端成立。
 //      CI（linux）只跑前者——后者标注为平台专有，不写成恒真断言冒充跨平台覆盖。
+//   3. 承上：`identityAbsent` 的**两个方向**里，`true`（tracked 侧 stat 抛错 → 定向告警）走真实缺失宿主、
+//      平台无关，CI 必跑；`false`（`ino === 0` 的正常降级 → 不许告警）的端到端腿只有 win32 的 NUL 用例钉住。
+//      故变异 M-d（两类 null 混类）与 M-k（`identityAbsent` 恒假）在 linux CI 上**都**存活，平台无关的
+//      `identityOf` 半支必红。两条一起命名，不只报其中一条（R10R5-C-m1）。
 
 const W = "win32";
 const L = "linux";
@@ -113,6 +122,35 @@ describe("canonicalPath：名字折叠（realpath 优先，退化词法；大小
     expect(canonicalPath(upper, "darwin")).toBe(canonicalPath(lower, "darwin"));
     expect(canonicalPath(upper, L)).not.toBe(canonicalPath(lower, L));
   });
+
+  it("词法回退按**被建模的平台**解释 `\\`（linux CI 上也折得动 win32 分隔符）", () => {
+    // 两侧都不存在的合成宿主：realpath 在三平台一致抛错 → 必走词法回退，故本条判的是 `lexicalForPlat`
+    // 本身，而不是宿主文件系统的脾气。R10 推送前这里是**一条 linux 假红**：posix 的 `resolve` 把 `\`
+    // 当普通文件名字符，`bench\\no-such-family.json` 折不到 `bench/no-such-family.json`。
+    expect(canonicalPath("bench\\no-such-family.json", W)).toBe(canonicalPath(SYNTH, W));
+    expect(canonicalPath("bench\\no-such-family.JSON", W)).toBe(canonicalPath(SYNTH, W));
+    // 同一形态在 posix 建模下**不得**被折成分隔符（win32 判据不得越平台误伤）。这条只在宿主非 win32 时
+    // 有意义：win32 宿主的 `resolve` 自己就把 `\` 当分隔符，与 plat 无关，故不在此断言。
+    if (process.platform !== "win32") {
+      expect(canonicalPath("bench\\no-such-family.json", L)).not.toBe(canonicalPath(SYNTH, L));
+    }
+  });
+
+  it.runIf(process.platform === "win32")(
+    "win32 宿主上「把 `\\` 换成 `/`」不改变任何判定（lexicalForPlat 的等价性承诺，非显然）",
+    () => {
+      // 文档注里"生产两平台行为逐字不变"的整条论证押在这个等价性上，所以把它钉成断言而不是叙述。
+      for (const [back, fwd] of [
+        ["bench\\baseline.json", TRACKED_BASELINE],
+        ["bench\\baseline.local.json", "bench/baseline.local.json"],
+        ["bench\\no-such-family.json", "bench/no-such-family.json"],
+      ] as const) {
+        expect(canonicalPath(back, W)).toBe(canonicalPath(fwd, W));
+        expect(inspectOutPath(back, { plat: W }).refusal).toBe(inspectOutPath(fwd, { plat: W }).refusal);
+        expect(fileIdentity(back)).toBe(fileIdentity(fwd));
+      }
+    },
+  );
 });
 
 describe("inspectOutPath：tracked 家族拒绝矩阵（补遗一的 17 形态，改为自动化）", () => {

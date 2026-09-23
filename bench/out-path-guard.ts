@@ -15,6 +15,25 @@ import { dirname, resolve } from "node:path";
 export const TRACKED_BASELINE = "bench/baseline.json";
 
 /**
+ * 建模 win32 时按 win32 的分符规则解释 `\`（R10R5，CI 实测驱动）。
+ *
+ * 为什么需要：`plat` 形参的立意是"在没有 win32 文件系统的 linux 上建模 win32 语义"，但宿主是 posix 的
+ * 那两处（`realpathSync.native` 与默认导出的 `resolve`/`dirname`）都把 `\` 当**普通文件名字符**，于是
+ * `bench\baseline.json` 在 linux 上永远折不到 `bench/baseline.json` —— 这条折叠在 CI 上不可达，
+ * 只在 win32 本机因 `realpath` 成功而"看起来对"（实测：同一用例 win32 绿 / linux 红）。
+ *
+ * 为什么**只**用于词法回退分支：win32 上 `\\?\d:\…`（设备命名空间）与 UNC 由 `realpathSync.native`
+ * 自己折回宿主长名，那是 `plat` 之外的独立防线；把这些形态也改写成 `/` 反而可能让 realpath 失配，
+ * 把一条真实存在的保护改成"认不出别名 → 放行"。改写方向因此是"只在本来就已经失败的分支上补齐语义"。
+ * 在真实 win32 宿主上这条替换**不改变任何判定结果**：win32 的 `resolve`/`existsSync`/`statSync` 同时
+ * 接受 `/` 与 `\`，两种写法指向同一路径（该等价性由测试用例「win32 宿主上「把 `\\` 换成 `/`」不改变
+ * 任何判定（lexicalForPlat 的等价性承诺，非显然）」钉死，而非当作显然）。
+ */
+function lexicalForPlat(p: string, plat: string): string {
+  return plat === "win32" ? p.replace(/\\/g, "/") : p;
+}
+
+/**
  * 折叠**宿主**（R10R2-C-M1）：win32 上 `:` 只可能来自 NTFS 备用数据流引用（文件名本身禁用该字符）。
  * realpath 与 statSync 对**尚不存在**的流一律 ENOENT → 名字与身份双判据同时为假，
  * `bench/baseline.json:<任意新流名>` 即可穿透守卫、把整份基线写进受保护文件的备用流（此前"ADS 已收口"
@@ -44,7 +63,7 @@ export function canonicalPath(p: string, plat: string = platform()): string {
   try {
     canonical = realpathSync.native(p);
   } catch {
-    canonical = resolve(p);
+    canonical = resolve(lexicalForPlat(p, plat));
   }
   return plat === "win32" || plat === "darwin" ? canonical.toLowerCase() : canonical;
 }
@@ -118,6 +137,10 @@ export function assertOutPathArg(outPath: string): void {
 export interface OutPathFate {
   readonly outPath: string;
   readonly outHost: string;
+  /** 本次折叠所**建模**的平台。随 `outHost` 一起产出，使下游预检不可能用另一个平台解释同一个宿主
+   *  （R10R5-A-m3；该隐式契约在 R10 推送后由 CI 实测翻车：linux 上 `fate(form, W)` 的宿主是 win32
+   *  折叠结果，而 `assertWritableOutPath` 的第二形参默认取真实平台 → 流名判据被整条跳过）。 */
+  readonly plat: string;
   readonly sameName: boolean;
   readonly sameInode: boolean;
   /** 身份判据是否**整体缺席**（tracked 侧 stat 抛错，而非 `ino === 0` 的正常降级）——仅此情形告警。 */
@@ -151,6 +174,7 @@ export function inspectOutPath(
   return {
     outPath,
     outHost,
+    plat,
     sameName,
     sameInode,
     identityAbsent: trackedIdentity === null && statThrows(tracked),
@@ -179,23 +203,31 @@ export function refusalMessage(via: RefusalVia): string {
  * 不以 "a" 模式打开——那会留下 0 字节文件或改动 mtime），也不宣称消除 TOCTOU：预检与写之间的窗口
  * 与残余①②同型，本步只把"必然失败"提前到失败最便宜处。
  *
- * 平台边界（R10R4-B-m2 成文）：目录侧的 `W_OK` 在 win32 近乎恒真——libuv 的 `fs.access` 只看只读
- * **属性**且对目录忽略该属性，故 ACL deny 的目录会假阳性放行（后果仅退回"跑满采样后 ENOENT"的旧行为，
- * 无正确性损失）；Linux（CI 与 record job 所在处）由内核 `access(2)` 真拦。文件侧的 `W_OK` 两平台都可靠。
+ * 平台边界（R10R4-B-m2 成文；R10R5-C-m2 补 UNC 一支）：目录侧的 `W_OK` 在 win32 近乎恒真——libuv 的
+ * `fs.access` 只看只读**属性**且对目录忽略该属性，故 ACL deny 的目录会假阳性放行（后果仅退回"跑满采样后
+ * ENOENT"的旧行为，无正确性损失）；Linux（CI 与 record job 所在处）由内核 `access(2)` 真拦。文件侧的
+ * `W_OK` 两平台都可靠（实测 node/bun 双运行时 `chmod 0` 后皆 EPERM）。
+ * 另：不可达／无权限的 **UNC 共享根**在 win32 上是 `existsSync=false` + `accessSync` EACCES，落进下面的
+ * catch 时并不代表"该目录被设为不可写"，故文案只说"无法确认可写"并带出原始 errno。
+ *
+ * 折叠平台**只能有一个事实源**（R10R5-A-m3）：本函数此前有两个 `plat`（`fate` 内一个、形参一个），
+ * 二者不一致时会出现"宿主按 win32 折叠、流名判据按 linux 跳过"的组合——R10 推送后 CI 正是以这个形态
+ * 变红的。现在 `plat` 随 `OutPathFate` 一起产出，调用方无从再传第二个。
  */
-export function assertWritableOutPath(
-  fate: OutPathFate,
-  plat: string = platform(),
-): void {
-  const { outPath, outHost } = fate;
+export function assertWritableOutPath(fate: OutPathFate): void {
+  const { outPath, outHost, plat } = fate;
   if (outHost.trim() === "") {
     throw new Error(
       `invalid out path ${outPath}: its host is empty (a bare ":stream" suffix has no file to write to)`,
     );
   }
   // NTFS 流名的字面约束（R10R4-A-m2）：宿主折叠后剩下的后缀若是 `:` + (空串 | 含冒号)，该路径**写不出**
-  // 任何东西——实测 `f:`、`f::`、`f:a:b` 三种形态即使宿主存在也一律 ENOENT（`f:tag`、`f:$DATA` 才合法）。
-  // 此前预检只看宿主，这三类穿过预检、跑满 10×3 采样才在 writeFileSync 处失败，正是本函数要消灭的形态。
+  // 任何东西。实测以**多字母宿主**为准：`file:` / `file::` / `file:a:b` / `file:a:b:c` 即使 `file` 存在
+  // 也一律 ENOENT（`file:tag`、`file:$DATA` 才合法）。
+  // 注（R10R5-B-m1 订正）：**单字母**前缀是盘符而非文件名，不能混进上面那组——`f:` 被 `hostPath` 判为
+  // 盘符根（`outPath` 原样返回，本条折叠不发生、整支跳过），`f:a:b` 折到宿主 `f:a` + 流名 `b`，
+  // 是**合法可写**形态（实测：cwd 置于 `var/` 下 `openSync("D:h.txt:w9","wx")` → 创建成功）。
+  // 此前预检只看宿主，尾冒号那几类穿过预检、跑满 10×3 采样才在 writeFileSync 处失败，正是本函数要消灭的形态。
   // posix 上 `:` 是普通文件名字符（且 hostPath 恒等 → 后缀为空），故整条判据只在 win32 生效。
   if (plat === "win32" && outHost !== outPath) {
     const stream = outPath.slice(outHost.length + 1);
@@ -206,7 +238,7 @@ export function assertWritableOutPath(
       );
     }
   }
-  const dir = dirname(outHost);
+  const dir = dirname(lexicalForPlat(outHost, plat));
   if (!existsSync(dir)) {
     throw new Error(
       `out path ${outHost}: parent directory ${dir} does not exist (create it first; bench:record never mkdirs)`,
@@ -215,7 +247,10 @@ export function assertWritableOutPath(
   try {
     accessSync(dir, constants.W_OK);
   } catch (e) {
-    throw new Error(`out path ${outHost}: parent directory ${dir} is not writable (${String(e)})`);
+    // 措辞中性化（R10R5-C-m2）：win32 上"不可达/无权限的 UNC 共享根"在这里是 EACCES 而非 ENOENT，
+    // 上一条 `existsSync` 已判 false，故会走到这里——但"不可达"不等于"不可写"，故主句只说"无法确认可写"，
+    // 并把原始 errno 一并带出供诊断。
+    throw new Error(`out path ${outHost}: parent directory ${dir} cannot be verified as writable (${String(e)})`);
   }
   if (existsSync(outHost)) {
     if (!statSync(outHost).isFile()) {

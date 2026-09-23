@@ -337,6 +337,45 @@ ID 变体订正为 4 处、把 A 的"登记为已知残余"候选修法改为代
   `record-baseline.ts` 的改动全部是**守卫段搬家**（判据、文案、顺序逐字保持），采样协议与输出口径未变；
   `bench.yml` 只改守卫步（三台 runner 与 Regression check 逐字节未变）。
 
+### R10 R5 批次（`4bbea37` 的第三处置复评轮走查意见 → R11 收口，2026-09-23）
+
+R10 R5（第三处置复评轮，评审对象 = 收口提交 `4bbea37`，即 R10 R4 九个 ID 的处置）：A / B / C **三家
+首次全 APPROVED**（0.90 / 0.90 / 0.92，0 Critical / 0 Major）→ 比值下确界 0.90 达门且裁决一致，共识门
+**第五次才过**。8 个 ID 全为 Minor（下表）。**本批另有 1 个非走查来源 ID**：推送后 CI 16 秒转红抓到的
+根因 ①（下表 `R11-CI-1`）——它不在任何专家的 R5 意见内，是"CI 是唯一 linux 执行环境"这一结构性盲区
+的产物，故单独立行而非塞进 `R10R5-A-m3`。下表全部 ID 经出题方**独立实测**坐实（含两处对 R5 卷面 §3
+声称证据的订正：skip 归因、`f:`-型恒 ENOENT 的表述）：
+
+| ID | 位置 | 内容 | 来源 | 状态 |
+|----|------|------|------|------|
+| R11-CI-1 | `bench/out-path-guard.ts` `canonicalPath` 词法回退 + `assertWritableOutPath` 的 `plat` 第二形参 | 推送后 CI 的 `Unit + registry guard` 步 16 秒转红，2 条用例红在阻断步最前面（正是该步设计用途），而**本机 win32 全绿**：① 反斜杠别名（`bench\baseline.json::$DATA`）的宿主折叠在 linux 上不成立——`plat` 形参改得动本仓判据，改不动**宿主绑定**的 `realpathSync.native` 与 `node:path` 默认导出的 `resolve`/`dirname`，linux 上那是一整个含反斜杠的文件名；② `assertWritableOutPath(fate, plat = platform())` 与 `fate.outHost` 的折叠平台构成**两个平台事实源**，用例只给 `inspectOutPath` 传 `plat` → 流名判据整条跳过。`R10R5-A-m3` 在推送前已把 ② 判为 Minor 并预言该失效形态 | CI 真实红灯（非走查来源） | 已消化（① 新增私有 `lexicalForPlat(p, plat)`，**只**接词法回退分支与 `dirname` 取父处；不接 realpath 分支的理由与"只增拒绝"的方向论证见 `docs/adr/0002` 补遗四，等价性钉成 `it.runIf(win32)` 用例。② `OutPathFate` 携带 `readonly plat`、由 `inspectOutPath` 与 `outHost` **同源产出**，`assertWritableOutPath` **删去**第二形参 → 不一致在类型层不可表达；生产侧 `record-baseline.ts` 本就是单参调用，零改动。预推送复现通道：WSL + `node --experimental-strip-types` 直取判据模块，见 ADR 补遗四验证节） |
+| R10R5-A-m1 | `.github/workflows/bench.yml` 守卫步的三个 `[ -d ]` 锚点 | 锚点断言只证"目录**在**"，不证"目录里**有货**"：某根被合法清空（其测试迁走而未同步本步）时，`find` 返回空、其余两根照常 → 该根**静默少跑**，与 `R10R4-B-M1` 同方向（假绿），只是触发形态从"目录不见"降到"目录空转" | A | 已消化（每根加"至少匹配 1 个 `*.test.ts`"断言：`find "$root" -name '*.test.ts' -print -quit \| grep -q .`。取**零漂移**形态而非断言文件计数（`R10R3-A-m1` 的"可漂移计数不得当命题"）。并成文为**有意绊线**：某根测试被合法迁走时，本步要求在同一笔提交里删掉该锚点——这是要求而非漏洞） |
+| R10R5-B-m2 | 同上（三个锚点的"有货"面） | B 独立提出的同族邻居：`[ -d ]` 三兄弟对"目录在而其中无任何受测文件"同样放行，与 `R10R4-B-M1` 的"缩减文件集静默转绿"同一失效方向（假绿），只是本批把 find 换成锚点后该面仍在 | B | 已消化（**并入 `R10R5-A-m1`**，两家同一诉求取同一形态收口，不单开第二笔改动） |
+| R10R5-A-m2 | `.github/workflows/bench.yml` 守卫步的 `sort -z "$list_in" -o "$list_out"` | `sort -z -o F F` 的 in-place 形态把正确性压在 coreutils **未承诺的同时性**上（若先截断输出再读输入即毁列表），而毁形方式是"列表变短 → 少跑而转绿"，不是报错 | A | 已消化（改两个不同 `mktemp` 文件，彻底消除该同时性依赖。**如实披露**：本机 coreutils 上 in-place 与双文件形态**逐字节相同**（21 文件 / 750 字节），未复现损坏——本条是**预防性**收口而非缺陷修复，判据是不把正确性压在未承诺的实现细节上） |
+| R10R5-A-m3 | `bench/out-path-guard.ts` `assertWritableOutPath` 签名 | 带默认值的第二形参 `plat = platform()` 与 `fate` 内已折叠的 `plat` 并存 = **同一事实两个源**，调用方漏传即静默跳过 win32 专有判据；A 在 R5 就点名"这会被 CI 以真实红灯兑现"（后被 `R11-CI-1` 兑现） | A | 已消化（删第二形参，`plat` 单一事实源随 `fate` 同源产出；见本表 `R11-CI-1` 支 ②） |
+| R10R5-B-m1 | `bench/out-path-guard.ts` 流名判据的注释措辞 | 卷面与本仓注释把 `f:` / `f:a:b` 与 `file:` / `file:a:b` 混为一谈（统称"恒 ENOENT"）。实测两者不是一回事：单字母前缀是**盘符相对**形态（把 cwd 置于 `var/` 下 `openSync("D:h.txt:w9","wx")` **创建成功**），恒 ENOENT 的只是**多字母宿主**那一组。代码行为本就正确（`f:a:b` 折到宿主 `f:a` + 流名 `b`，是合法可写形态），错的是叙述 | B | 已消化（**订正措辞、不改判据**：注释按"多字母宿主 vs 单字母盘符"分列。若照原措辞写死判据反而会误拒合法形态，故这是措辞缺陷而非代码缺陷——B 自己亦如此定性） |
+| R10R5-B-m3 | R5 卷面 §3 的 skip 归因 | 卷面称唯一 skip 用例是"W_OK 可观测性自校准（win32 `chmod 0` 后 `accessSync` 仍成功）"。实测该 shell 下 skip 的是**符号链接**用例（无建链特权）；文件腿 `chmod 0` 后 `accessSync(W_OK)` 在 node/bun 双运行时均 **EPERM**（真实可观测且真实通过），只有**目录腿**近乎恒真（与 `R10R4-B-m2` 成文一致） | B | 已消化（订正卷面与测试头注的归因；`R10R4-B-m2` 的"win32 目录 ACL 不可探测"结论不变。**教训成文**：声称证据须附复跑命令与当场输出，凭记忆写"唯一 skip 是什么"会错） |
+| R10R5-C-m1 | `bench/out-path-guard.test.ts` 头部「uncovered 面」清单 | 头注只命名了 `M-d`（`identityOf` 混类）一条平台专有存活支；实测 `M-k`（`identityAbsent` 恒假的端到端腿）在 linux CI 上**同样**存活。两条一起写，读者才不会以为"只有那半条依赖 win32" | C | 已消化（测试头注把 `M-d` 与 `M-k` 并列为第 2/3 条 uncovered 项，不改代码——补 linux 覆盖需要真实 win32 runner，属既有结构性缺口，见 `R10R2-A-m2`） |
+| R10R5-C-m2 | `bench/out-path-guard.ts` `assertWritableOutPath` 的目录 catch 文案 | 不可达或无权限的 **UNC 共享根**在 win32 上是 `existsSync` 报 false、`accessSync` 抛 `EACCES`，落进"无法确认存在"之外的另一条腿，却被文案表述成 `parent directory … is not writable` → 诊断失真（后果良性：仍在采样前 fail-fast）。旧 `record-baseline.ts` 即有此措辞，非 R11 回归 | C | 已消化（文案改 `cannot be verified as writable (${String(e)})` 并带出原始 errno；ADR 验证节"父目录存在性两平台都可靠"补 UNC 例外限定） |
+| R11-SR-1 | `.github/workflows/bench.yml` 守卫步新增的 `find … -print -quit \| grep -q .` 管道 | 出题方走查前自查：本仓多处 tracked 文字断言"GitHub 默认注入 `bash -e`、**无** `pipefail`"，该断言从未实测；而 A-m1/B-m2 的新体恰好引入了一个管道，其正确性方向（谁的非零退出会杀脚本）取决于这两个标志。四组合 × 各 30 次实测：`-print -quit` 使 `find` 打印一条即自行退出，`grep` 关管道时已无写入 → 四种标志组合同构，判定不受 runner 标志漂移影响。对照候选命令替换形 `hits=$(find …)` 在 `-e` 下会被 `find` 非零退出**直接杀掉脚本**（丢定向文案）→ 更差，故保留管道形 | 自查（走查前） | 已消化（**降级而非判据化**：新体不依赖该断言，两处显式 `\|\| true` 兜底（`bench.yml:96` / ADR:144）；实测结论写进 `bench.yml` 注释与 ADR，"未验证的 runner 约定"自此不再是任何一条判据的前提） |
+
+- **裁决口径**：本表 **10 行 = 走查 Minor 8 + 非走查来源 2**（`R11-CI-1` 来自 CI 真实红灯、`R11-SR-1`
+  来自出题方走查前自查）。三家 R5 下确界 0.90 且裁决一致 → R10 批共识门第五次通过、`4bbea37` 推送，
+  随后 CI 转红即 `R11-CI-1`。
+- **本批代码面清单**（延续 `R10R3-A-N1` 的四面拆分，R11 另加 ⑤）：① 判据面 = `bench/out-path-guard.ts`
+  + `bench/out-path-guard.test.ts`；② CI 执行面 = `.github/workflows/bench.yml`；③ 文档面 =
+  `docs/adr/0002` 补遗四；④ 测试面 + 本登记处（锁清单 +10、棘轮随实测同批上调）；⑤ 自查订正面 =
+  `lexicalForPlat` 文档注错字与 `R11-SR-1` 登记。
+- **验证**：① 本机 `bunx vitest run bench/out-path-guard.test.ts`；② 真实 linux 正向 + 修复前模块负向
+  对照（`git show 4bbea37:bench/out-path-guard.ts` 现取），退出条件写死为"正向必 rc=0、负向必有红"；
+  ③ 守卫步沙箱从 `bench.yml` **原文抽取** `run:` 体（只替换末行 `bunx vitest run`）跑六路径；
+  ④ 登记处 parser 变异与人为删行；⑤ `R11-SR-1` 的四 shell 标志组合实测（`bash` / `bash -e` /
+  `bash -o pipefail` / `bash -e -o pipefail`）。落点与逐条数字见 `docs/adr/0002` 补遗四验证节。
+- **冻结面零改动自证**：`git diff --exit-code 4bbea37..HEAD -- bench/regression-formula.ts bench/baseline.json
+  bench/record-baseline.ts` 为 0；判据公式 `* 1.2` / `> 2` 与三台门阈值常量（G1 5/12ms、G2 8KB:3 /
+  64KB:10 / 512KB:40ms、G3 20/50/120ms）未触碰；`bench/baseline.json` md5 仍为
+  `3ebfaa9f6a71ecf7cb7b0d91355e2525`。
+
 ## 备注
 
 - **编号谱系**：`R7-C-R2` ← R7 R1 原始报告中的 `C-R7-2`（内容一致，仅统一为 `R7-<专家>-<序号>` 型）。

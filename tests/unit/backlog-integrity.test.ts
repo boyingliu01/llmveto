@@ -39,9 +39,15 @@ import { describe, expect, it } from "vitest";
  *     行不再开启/闭合围栏（此前 4 空格缩进的缩进代码会被当围栏，把它后面的真实登记处表吞掉 → 假红）。
  *     现实现与 GFM 一致并由 fixture 固化；残余偏差是开启行的 info string 内容不做校验（GFM 只禁 ``` 围栏的
  *     info string 含反引号），当前无实例。
- *   - 行数棘轮下界**恒等于当前实测行数**（历史 55=55、68=68），这是设计而非假红：任何合法裁剪都必须同批
- *     下调本常量并进 diff（与下调锁清单同一动作，走查可见）。看到"下界 = 实测"不要反射式放宽——
- *     先确认删的是哪一行、为何删（登记处「状态列约定」同步成文此惯例，R10R3-A-m3/C-m1）。
+ *   - 行数棘轮常量**恒等于当前实测行数**（历史 55=55、68=68），且自 `R11R8-A-m1` / `B-m2` 起断言方向由
+ *     "只增不减的 `≥`"改为**恒等**：文档一直主张等号而机器只守下界，于是"多出一行"（幻影表、正文竖排段被认成表、
+ *     一行被拆成两行）全都不红，而这类形态恰恰会掩护同一批悄悄删掉另一行。任何合法改动（裁行 **或** 加行）都必须
+ *     同批改本常量并进 diff（与下调锁清单同一动作，走查可见）。看到"常量 = 实测"不要反射式放宽——
+ *     先确认动的是哪一行、为何动（登记处「状态列约定」同步成文此惯例，R10R3-A-m3/C-m1）。
+ *   - 表结构另有两条**互补**的行级断言，各自的盲区都成文写在对应 `it` 里：`unterminatedTableLines`
+ *     只拦"以 `|` 起首却不以 `|` 收尾"这一类截断（`R11R7-SR-2`），首格形状断言只拦"首格既非规范 ID 也不在
+ *     `IDLESS_ROW_CELLS`"这一类异形（`R11R8-C-M1`）。两者共同的残余是"拆出的后半格数、收尾、首格形状三件全合"，
+ *     那已是内容错误而非结构破损，归上面第一条「能力边界」（语义真伪由走查判）。
  */
 
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -221,10 +227,34 @@ const LOCKED_IDS = [
   "R11R7-C-m4",
   "R11R7-SR-1",
   "R11R7-SR-2",
+  "R11R8-A-M1",
+  "R11R8-B-M1",
+  "R11R8-B-M2",
+  "R11R8-B-M3",
+  "R11R8-C-M1",
+  "R11R8-A-m1",
+  "R11R8-B-m2",
+  "R11R8-A-m2",
+  "R11R8-B-m4",
+  "R11R8-C-m1",
+  "R11R8-B-m1",
+  "R11R8-B-m7",
+  "R11R8-B-m5",
+  "R11R8-B-m6",
+  "R11R8-B-m3",
+  "R11R8-SR-1",
 ] as const;
 
 /** 规范 ID 记号；`R2-A-M2 / R2-C-M1` 型合写行按 `/` 拆开，`（并入 R8-B-M1）` 型说明格不入选。 */
 const ID_TOKEN = /^R[A-Za-z0-9]*-[A-Za-z0-9-]+$/;
+
+/**
+ * ID 表里首格刻意**不写**规范 ID 的说明行（按整格全文匹配）。它就是登记处头部「三种计数的定义体」① 里
+ * 那句"ID 格写成非 ID 的说明行"，也是差值算式中被减去的 `无 ID 行数`。
+ * 新增这类行必须同批把整格文案登记进来 —— 与下调棘轮同型：刻意、进 diff、走查可见。每条又都被下面的
+ * "白名单不自腐"断言要求仍能在文件里找到，所以删那行时漏删条目同样会红。
+ */
+const IDLESS_ROW_CELLS = ["（并入 R8-B-M1）"] as const;
 
 /**
  * 拆一行表格。**转义 `\|` 不作分隔符**（R10R1-C-m1：旧实现裸 `split("|")`，一旦某格文案含 `\|`
@@ -264,6 +294,9 @@ interface MarkdownTable {
  * 围栏内不判（示例文本里的竖排行不归表格解析管，与 `parseTables` 同一口径）。
  * 本条存在的理由见 `R11R7-SR-2`：这类截断恰好在"格数与表头一致"断言的盲区里（截断点之后的格还留着，
  * 前半仍解析成满格数），所以它需要一条独立的、按**行**而非按**格**判的断言。
+ * **本条的边界**（`R11R8-B-m3` / `C-M1` 成文，勿把"能红"读成"全覆盖"）：只拦"以 `|` 起首却不以 `|` 收尾"
+ * 这一类；一行被拆成两行**且两行都以 `|` 收尾**时本条为绿，那类破坏改由首格形状断言（身份维）与行数**恒等**
+ * 断言（数量维）拦，三条互不冗余、共同残余见各自 `it` 内注释。
  */
 function unterminatedTableLines(md: string): string[] {
   const bad: string[] = [];
@@ -369,6 +402,23 @@ function allRows(md: string): { readonly table: MarkdownTable; readonly row: rea
   return backlogTables(md).flatMap((table) => table.rows.map((row) => ({ table, row })));
 }
 
+/**
+ * ID 表里"看不出这是一条登记行"的首格：既不合 `ID_TOKEN` 形状（按 `/` 拆开后逐段判），也不在
+ * `IDLESS_ROW_CELLS` 白名单内。空首格**不在本函数管辖**——那由「格数与 ID/状态非空」那条断言报，
+ * 一处破坏只留一处红，归属才清楚（R11R8-C-M1 / B-m3 / A-m1）。
+ */
+function nonIdFirstCells(md: string): string[] {
+  return allRows(md).flatMap(({ row }) => {
+    const first = (row[0] ?? "").trim();
+    if (first === "") return [];
+    const parts = first.split("/").map((p) => p.replace(/`/g, "").trim());
+    if (parts.every((p) => ID_TOKEN.test(p))) return [];
+    return (IDLESS_ROW_CELLS as readonly string[]).includes(first)
+      ? []
+      : [`首格既非规范 ID 也不在 IDLESS_ROW_CELLS：[${first.slice(0, 46)}]`];
+  });
+}
+
 /** 删去某个 ID 的表行（按解析后的首格匹配，不按字面 `| ID |` 前缀——空格/转义变体同样要能删中）。 */
 function dropRowWithId(md: string, id: string): string {
   const keep = md
@@ -409,20 +459,24 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
 
   it("每条数据行的格数与该表表头一致，且 ID/状态两格非空（拦截写截断与半行覆盖）", () => {
     const rows = allRows(readFileSync(path, "utf8"));
-    // 行数棘轮：只增不减。裁剪行须同步下调本常量——与下调锁清单同样是刻意且进 diff 的动作。
+    // 行数棘轮：自 R11R8-A-m1/B-m2 起取**恒等**而非下界（常量名保留 `MIN_` 前缀是历史名，登记处多批按此名引用，
+    // 改名会造出第二处口径）。登记处「行数棘轮约定」一直成文的是"常量**恒等于**实测"，而机器只守了 `≥`：
+    // 于是"多出一行"（幻影表、把正文竖排段认成表、一行被拆成两行）全都不红，而这类形态恰恰会掩护
+    // "同一批悄悄删掉另一行"。取等号后那条文档主张第一次有机读的那一半；剩余额度 = 登记处同条 bullet 里
+    // 写明的"一批内 +N 与 −N 自我抵消"，那进 diff、由走查可见，不由本断言假装能拦。
     // 下界**恒取实测行数**（历史 55=55、68=68，其后各批同样恒等，见下一行注释）：这不是假红，而是设计（"合法裁剪必须同批
     // 改常量"的机器化）；见文件头「能力边界」末条与登记处「状态列约定」（R10R3-A-m3/C-m1 成文）。
-    // 143 = R11 R6 批次后的实测数据行数（17 张 ID 表，该批新增 8 行 = `R11R5-A-*` 1 + `R11R5-B-*` 5 +
-    // `R11R5-C-*` 2，全部为走查来源、无自查与事故来源）。
-    // 154 = R11 R7 批次后的实测数据行数（18 张 ID 表，本批新增 11 行 = `R11R6-A-*` 2 + `R11R6-B-*` 5 +
-    // `R11R6-C-*` 4；3 Major + 8 Minor，同样全为走查来源）。
-    // 171 = R11 R8 批次后的实测数据行数（19 张 ID 表，本批新增 17 行 = `R11R7-A-*` 4 + `R11R7-B-*` 7 +
+    // 171 = R11 R8 批次后的实测数据行数（19 张 ID 表，该批新增 17 行 = `R11R7-A-*` 4 + `R11R7-B-*` 7 +
     // `R11R7-C-*` 4 + `R11R7-SR-*` 2；3 Major + 12 Minor + 自查 2）。
-    // 注：行数 ≠ ID 数（171 行 / 173 ID），算式定义在登记处头部「三种计数的定义体」，此处只引不算第二源。
-    const MIN_BACKLOG_ROWS = 171;
-    expect(rows.length, `${BACKLOG_REL} 表行数低于棘轮下界 ${String(MIN_BACKLOG_ROWS)}（当前 ${String(rows.length)}）`).toBeGreaterThanOrEqual(
-      MIN_BACKLOG_ROWS,
-    );
+    // 187 = R11 R9 批次后的实测数据行数（20 张 ID 表，本批新增 16 行 = `R11R8-A-*` 3 + `R11R8-B-*` 10 +
+    // `R11R8-C-*` 2 + `R11R8-SR-*` 1；5 Major + 10 Minor + 自查 1）。
+    // 注：行数 ≠ ID 数（187 行 / 189 ID），算式定义在登记处头部「三种计数的定义体」，此处只引不算第二源。
+    const MIN_BACKLOG_ROWS = 187;
+    expect(
+      rows.length,
+      `${BACKLOG_REL} 表行数 ≠ 棘轮常量 ${String(MIN_BACKLOG_ROWS)}（当前 ${String(rows.length)}）：` +
+        `少行 = 静默丢失或合法裁剪未同批下调常量；多行 = 幻影表 / 竖排段被认成表 / 一行被拆成两行`,
+    ).toBe(MIN_BACKLOG_ROWS);
     const malformed = rows.flatMap(({ table, row }) => {
       const problems: string[] = [];
       if (row.length !== table.header.length) {
@@ -453,6 +507,43 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
       splitRow(row).length,
     );
     expect(unterminatedTableLines(md.replace(row, cut))).toHaveLength(1);
+  });
+
+  it("ID 表每行首格须合规范 ID 形状，或整格命中 IDLESS_ROW_CELLS（R11R8-C-M1 / B-m3 / A-m1）", () => {
+    const md = readFileSync(path, "utf8");
+    expect(nonIdFirstCells(md), "登记处出现无法识别为登记行的表行").toEqual([]);
+    const rows = allRows(md);
+    // 白名单不自腐：条目若已不在文件里（那行被合法裁掉却忘了同批删条目），本条转红。
+    const stale = IDLESS_ROW_CELLS.filter((c) => !rows.some(({ row }) => (row[0] ?? "").trim() === c));
+    expect(stale, `IDLESS_ROW_CELLS 有条目已不在登记处：${stale.join(", ")}`).toEqual([]);
+    // 长度与「三种计数的定义体」的差值算式对齐：本数组长度 = 算式里的 `无 ID 行数`。
+    // 判"有无 ID"只看首格 `/` 前的那一段（合写行 `R2-A-M2 / R2-C-M1` 的首段是规范 ID，不算无 ID 行）。
+    const idlessRows = rows.filter(({ row }) => {
+      const head = ((row[0] ?? "").trim().split("/")[0] ?? "").replace(/`/g, "").trim();
+      return !ID_TOKEN.test(head);
+    });
+    expect(idlessRows.length, "无 ID 说明行数与 IDLESS_ROW_CELLS 长度不等").toBe(IDLESS_ROW_CELLS.length);
+
+    // 防空转，并固化"本条与 SR-2 那条、与行数恒等那条**三者互不冗余**"：一条真行被换行**拆成两行**、两行都以
+    // `|` 收尾且格数仍等于表头时，SR-2 那条（按行判收尾）与「格数与非空」那条**皆为绿**——本条从"身份"这一维
+    // 红（拆出的后半首格是散文），行数恒等那条从"数量"那一维红（`+1` 行）。两条红互补而非替代：把某行首格
+    // 改写成散文而**不增行**时，只有本条能红；造一张行格皆规整的幻影表时，只有恒等能红。
+    // fixture 即前者的形态等价物（格数与表头一致、两行都以 `|` 收尾、行数变化不在本 fixture 的判据内）。
+    const fixture = [
+      "| ID | 位置 | 内容 | 来源 | 状态 |",
+      "|---|---|---|---|---|",
+      "| R9-Z-9 | bench/x.ts | 真行 | R9 A | 已消化 |",
+      "| （被拆出的后半，首格是散文） | bench/x.ts | 补记 | R9 A | 已消化 |",
+    ].join("\n");
+    expect(nonIdFirstCells(fixture), "自检前提失效：fixture 里的散文首格没被判为异形").toHaveLength(1);
+    expect(unterminatedTableLines(fixture), "本条要拦的正是 SR-2 那条看不见的形态，故此处必须为空").toEqual([]);
+    expect(
+      allRows(fixture).every(({ table, row }) => row.length === table.header.length),
+      "同上：格数那条也看不见它，故 fixture 每行格数须仍等于表头",
+    ).toBe(true);
+    // **残余**（成文，不假装覆盖）：若拆出的后半同时满足"格数等于表头 + 以 `|` 收尾 + 首格形似规范 ID"，
+    // 本条与 SR-2 那条都为绿。那已经不是一个**结构**破损而是一条**内容**错误（两行各自都像合法登记行），
+    // 落在本文件头「能力边界」第一条（状态列语义真伪由走查判）的语义域内，不由字符串检查冒充。
   });
 
   it("守卫自检（防空转）：ID 列覆盖锁清单，且人为删行形态确会被拦", () => {

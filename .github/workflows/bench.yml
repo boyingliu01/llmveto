@@ -73,21 +73,26 @@ jobs:
               exit 1
             fi
           done
+          list_in=""
+          list_out=""
+          # 两个临时文件在赋值**之前**就挂上 EXIT trap（R11R1-A-m3）：否则第二次 `mktemp` 失败时
+          # `bash -e` 直接杀脚本，第一个临时文件没人清。runner 是一次性的，故这是整洁性问题而非泄漏面。
+          trap 'rm -f "$list_in" "$list_out"' EXIT
           list_in="$(mktemp)"
           list_out="$(mktemp)"
           if ! find tests/unit tests/utils bench -name '*.test.ts' -print0 > "$list_in"; then
             echo "guard step: find over the three scope roots failed" >&2
-            rm -f "$list_in" "$list_out"
             exit 1
           fi
           if ! sort -z "$list_in" -o "$list_out"; then
             echo "guard step: sort -z on the file list failed" >&2
-            rm -f "$list_in" "$list_out"
             exit 1
           fi
           mapfile -d '' -t guard_files < "$list_out"
-          rm -f "$list_in" "$list_out"
           if [ "${#guard_files[@]}" -eq 0 ]; then
+            # 防御性兜底：上面三条 `[ -d ]` 与三条"至少 1 命中"已使本分支在当前锚点列表下**不可达**
+            # （R11R1-A-m4）。留着是针对"未来有人往列表里加一个不受前两条管辖的根"这一形状，
+            # 不是当前失效路径的重复断言。
             echo "guard step matched no test files; refusing to fall back to a full vitest run" >&2
             exit 1
           fi

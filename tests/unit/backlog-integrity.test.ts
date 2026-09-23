@@ -44,10 +44,29 @@ import { describe, expect, it } from "vitest";
  *     一行被拆成两行）全都不红，而这类形态恰恰会掩护同一批悄悄删掉另一行。任何合法改动（裁行 **或** 加行）都必须
  *     同批改本常量并进 diff（与下调锁清单同一动作，走查可见）。看到"常量 = 实测"不要反射式放宽——
  *     先确认动的是哪一行、为何动（登记处「状态列约定」同步成文此惯例，R10R3-A-m3/C-m1）。
+ *     **恒等断言有两条独立盲区，不是一条**（`R11R9-A-M2` / `B-M5` 成文；此前只写了第一条，会让读者以为
+ *     恒等已覆盖全部"多行"场景）：① 一批内同时 `+N` 行、`−N` 行的自我抵消；② 插一张行格皆规整的幻影表
+ *     **并把本常量同向上调**（常量迁就幻影）。②不可机器判——本常量就是这条断言自身的意图，任何常量都可被
+ *     同批改写，给它再加一条"常量变化量须等于净增行数"的元断言只是把可改写的常量挪了个位置。机器能保证的
+ *     是那批**必须改本常量才会绿**，即它必然进 diff、走查必然看得见；登记处「行数棘轮约定」按此成文。
  *   - 表结构另有两条**互补**的行级断言，各自的盲区都成文写在对应 `it` 里：`unterminatedTableLines`
  *     只拦"以 `|` 起首却不以 `|` 收尾"这一类截断（`R11R7-SR-2`），首格形状断言只拦"首格既非规范 ID 也不在
  *     `IDLESS_ROW_CELLS`"这一类异形（`R11R8-C-M1`）。两者共同的残余是"拆出的后半格数、收尾、首格形状三件全合"，
  *     那已是内容错误而非结构破损，归上面第一条「能力边界」（语义真伪由走查判）。
+ *     **两维互补的强度要说准**（`R11R9-A-M3` / `B-M6`）："被拆出的后半首格**必**为散文"不成立——拆点落在
+ *     ID 单元内部时（`| R11R9-` 换行 `A-m1 | … |`）后半首格仍合 `ID_TOKEN` 形状，此时**只有**行数恒等能红。
+ *     故准确表述是"身份维**通常**先红、数量维恒红"；反过来一张行格皆规整的幻影表**只有**恒等能红（锁清单
+ *     是超集方向、白名单不自腐，两者对幻影都无增量）。
+ *   - `IDLESS_ROW_CELLS` 是首格异形行的**唯一**豁免口，扩写它的标准（`R11R9-C-m1` 成文）：仅当登记处新增一行
+ *     **刻意不带** `R…-…` ID 的说明行时才可加条目，且必须同批在登记处头部「三种计数的定义体」的差值算式里
+ *     数到它——该断言要求白名单长度恒等于实测无 ID 行数，单独塞一条豁免而不造出真无 ID 行会直接红。
+ *   - 自 `R11R9-A-M1` / `B-M1` / `C-M2` 起，本文件还管**批内交付物**两件：起点小节及其之后每批正文须含
+ *     linux 三数记号、须申报与实测相等的 `限定词行数=N`。两条都只**数串**，不判语义：前者判"记号在不在"，
+ *     一批写 `滤前 0 滤后 0 @@ 0` 照样绿，数对不对由走查复跑那条 git 命令判；后者判"申报与实测是否一致"，
+ *     不判"这一行该不该带限定词"。即它们把旧措辞义务里**可数**的那一半抬进了 CI 阻断面，剩下那一半仍是散文。
+ *     两条**同守 `startFound`**（起点小节标题被改 ⇒ 两条同时红，而不是第二条静默管零批——该不对称由
+ *     `R11R10-SR-2` 的一次实跑探针暴露并补齐）。第一条按**整批正文**数记号：同一记号在该批出现多次时，
+ *     删其中一处不红、须全删才红，故"报在同一条 bullet 里"仍只由头部那句散文条款管（严于本断言，刻意的）。
  */
 
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -243,6 +262,33 @@ const LOCKED_IDS = [
   "R11R8-B-m6",
   "R11R8-B-m3",
   "R11R8-SR-1",
+  "R11R9-A-M1",
+  "R11R9-B-M1",
+  "R11R9-C-M2",
+  "R11R9-A-M2",
+  "R11R9-B-M5",
+  "R11R9-A-M3",
+  "R11R9-B-M6",
+  "R11R9-B-M2",
+  "R11R9-B-M3",
+  "R11R9-B-M4",
+  "R11R9-B-M7",
+  "R11R9-B-M8",
+  "R11R9-C-M1",
+  "R11R9-A-m1",
+  "R11R9-B-m2",
+  "R11R9-A-m2",
+  "R11R9-C-m2",
+  "R11R9-B-m1",
+  "R11R9-A-m4",
+  "R11R9-B-m3",
+  "R11R9-B-m4",
+  "R11R9-A-m3",
+  "R11R9-A-m5",
+  "R11R9-C-m1",
+  "R11R10-SR-1",
+  "R11R10-SR-2",
+  "R11R10-SR-3",
 ] as const;
 
 /** 规范 ID 记号；`R2-A-M2 / R2-C-M1` 型合写行按 `/` 拆开，`（并入 R8-B-M1）` 型说明格不入选。 */
@@ -253,6 +299,9 @@ const ID_TOKEN = /^R[A-Za-z0-9]*-[A-Za-z0-9-]+$/;
  * 那句"ID 格写成非 ID 的说明行"，也是差值算式中被减去的 `无 ID 行数`。
  * 新增这类行必须同批把整格文案登记进来 —— 与下调棘轮同型：刻意、进 diff、走查可见。每条又都被下面的
  * "白名单不自腐"断言要求仍能在文件里找到，所以删那行时漏删条目同样会红。
+ * **扩写标准**（`R11R9-C-m1` 成文，防止本数组变成万能豁免口）：仅当登记处新增一行**刻意不带** `R…-…` ID 的
+ * 说明行时才可加条目，且必须同批把它数进头部「三种计数的定义体」差值算式里的"无 ID 行数"——下面的
+ * 长度对齐断言要求本数组长度恒等于实测无 ID 行数，所以"只想放行一条异形行"而没造出真无 ID 行，会直接红。
  */
 const IDLESS_ROW_CELLS = ["（并入 R8-B-M1）"] as const;
 
@@ -419,6 +468,80 @@ function nonIdFirstCells(md: string): string[] {
   });
 }
 
+/** 批次小节标题：`### …… 批次（……）`——登记处每一批的正文以此为界（`## 备注` 级不算）。 */
+const BATCH_HEADING = /^### .+批次（/;
+
+/** 一条义务从哪一批起受下面两条机器断言管辖。 */
+const OBLIGATION_FROM = "### R11 R10 批次";
+
+/**
+ * linux 重跑义务的**三数记号**（`R11R9-A-M1` / `B-M1` / `C-M2` 三家同题的机器化）。
+ * 旧判据的前件是"某批**宣布**本批无需重跑"——那是个需要读者识别的言语动作，"不宣布"（沉默、
+ * 或改用"本批不涉及判据代码"这类同义说法）就在判据之外，是第五代逃逸。本条把判据换成
+ * **该批正文里有没有这三个记号**：不再识别动作，只数串在不在。起点按**文档顺序**取，
+ * 于是任何新批次自动落入管辖，无需自报"我是起算批"（那正是 `R11R8-SR-1` 起算批补丁的自指面，
+ * 由 `R11R9-B-M2` 报出）。
+ */
+const LINUX_NUMBER_TOKENS = ["滤前", "滤后", "@@"] as const;
+
+/** 状态列限定词（登记处「状态列约定」`R11R4-C-m1` 起）：纯措辞义务必须显式声明它不是机器门。 */
+const QUALIFIER = "成文义务，非机器门";
+
+interface BatchSection {
+  readonly heading: string;
+  readonly body: string;
+}
+
+/** 按 `### …… 批次（` 切批：返回每批的标题行与该批正文（到下一批标题或下一个 `## ` 小节为止）。 */
+function batchSections(md: string): BatchSection[] {
+  const out: { heading: string; body: string[] }[] = [];
+  let cur: { heading: string; body: string[] } | null = null;
+  for (const line of md.split(/\r?\n/)) {
+    if (BATCH_HEADING.test(line)) {
+      cur = { heading: line.trim(), body: [] };
+      out.push(cur);
+      continue;
+    }
+    if (/^##(?!#)/.test(line)) {
+      cur = null;
+      continue;
+    }
+    if (cur !== null) cur.body.push(line);
+  }
+  return out.map((s) => ({ heading: s.heading, body: s.body.join("\n") }));
+}
+
+/** 起点及其之后的所有批次小节；`startFound=false` 时由调用方判红，不静默返回空集。 */
+function managedSections(md: string): { readonly startFound: boolean; readonly managed: readonly BatchSection[] } {
+  const all = batchSections(md);
+  const at = all.findIndex((s) => s.heading.startsWith(OBLIGATION_FROM));
+  return { startFound: at >= 0, managed: at < 0 ? [] : all.slice(at) };
+}
+
+/** 一批正文里 linux 三数记号的缺项（空数组 = 该批齐）。 */
+function missingLinuxTokens(section: BatchSection): string[] {
+  return LINUX_NUMBER_TOKENS.filter((t) => !section.body.includes(t));
+}
+
+/** 该批各 ID 表里状态列含限定词的行数（状态列位置按表头推导，不硬编码格号）。 */
+function qualifiedRows(body: string): number {
+  let n = 0;
+  for (const table of backlogTables(body)) {
+    const idx = table.header.findIndex((h) => h.trim() === "状态");
+    if (idx < 0) continue;
+    for (const row of table.rows) {
+      if ((row[idx] ?? "").includes(QUALIFIER)) n += 1;
+    }
+  }
+  return n;
+}
+
+/** 该批「裁决口径」自报的 `限定词行数=N`；未申报返回 null（`R11R9-B-m3`：自报计数与实际不符的机器化）。 */
+function declaredQualifierRows(body: string): number | null {
+  const m = /限定词行数=(\d+)/.exec(body);
+  return m === null ? null : Number(m[1]);
+}
+
 /** 删去某个 ID 的表行（按解析后的首格匹配，不按字面 `| ID |` 前缀——空格/转义变体同样要能删中）。 */
 function dropRowWithId(md: string, id: string): string {
   const keep = md
@@ -463,15 +586,20 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
     // 改名会造出第二处口径）。登记处「行数棘轮约定」一直成文的是"常量**恒等于**实测"，而机器只守了 `≥`：
     // 于是"多出一行"（幻影表、把正文竖排段认成表、一行被拆成两行）全都不红，而这类形态恰恰会掩护
     // "同一批悄悄删掉另一行"。取等号后那条文档主张第一次有机读的那一半；剩余额度 = 登记处同条 bullet 里
-    // 写明的"一批内 +N 与 −N 自我抵消"，那进 diff、由走查可见，不由本断言假装能拦。
+    // 写明的**两条**已知盲区（`R11R9-A-M2` / `B-M5` 起由"仅剩一条"改写为并列两条）：① 一批内 `+N` 与 `−N`
+    // 自我抵消（行数净变化为零）；② 常量迁就幻影表（同批插一张规整幻影表并把本常量同向上调）。
+    // ② 不可由元断言承接：机器读的"常量"与"实测"是同一个表达式，同向上调恒绿，另立事实源即造第二数。
+    // 两条都进 diff、由走查可见，不由本断言假装能拦。
     // 下界**恒取实测行数**（历史 55=55、68=68，其后各批同样恒等，见下一行注释）：这不是假红，而是设计（"合法裁剪必须同批
     // 改常量"的机器化）；见文件头「能力边界」末条与登记处「状态列约定」（R10R3-A-m3/C-m1 成文）。
     // 171 = R11 R8 批次后的实测数据行数（19 张 ID 表，该批新增 17 行 = `R11R7-A-*` 4 + `R11R7-B-*` 7 +
     // `R11R7-C-*` 4 + `R11R7-SR-*` 2；3 Major + 12 Minor + 自查 2）。
     // 187 = R11 R9 批次后的实测数据行数（20 张 ID 表，本批新增 16 行 = `R11R8-A-*` 3 + `R11R8-B-*` 10 +
     // `R11R8-C-*` 2 + `R11R8-SR-*` 1；5 Major + 10 Minor + 自查 1）。
-    // 注：行数 ≠ ID 数（187 行 / 189 ID），算式定义在登记处头部「三种计数的定义体」，此处只引不算第二源。
-    const MIN_BACKLOG_ROWS = 187;
+    // 214 = R11 R10 批次后的实测数据行数（21 张 ID 表，本批新增 27 行 = `R11R9-A-*` 8 + `R11R9-B-*` 12 +
+    // `R11R9-C-*` 4 + `R11R10-SR-*` 3；13 Major + 11 Minor + 自查 3）。
+    // 注：行数 ≠ ID 数（214 行 / 216 ID），算式定义在登记处头部「三种计数的定义体」，此处只引不算第二源。
+    const MIN_BACKLOG_ROWS = 214;
     expect(
       rows.length,
       `${BACKLOG_REL} 表行数 ≠ 棘轮常量 ${String(MIN_BACKLOG_ROWS)}（当前 ${String(rows.length)}）：` +
@@ -526,8 +654,10 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
 
     // 防空转，并固化"本条与 SR-2 那条、与行数恒等那条**三者互不冗余**"：一条真行被换行**拆成两行**、两行都以
     // `|` 收尾且格数仍等于表头时，SR-2 那条（按行判收尾）与「格数与非空」那条**皆为绿**——本条从"身份"这一维
-    // 红（拆出的后半首格是散文），行数恒等那条从"数量"那一维红（`+1` 行）。两条红互补而非替代：把某行首格
-    // 改写成散文而**不增行**时，只有本条能红；造一张行格皆规整的幻影表时，只有恒等能红。
+    // 红（拆出的后半首格是散文），行数恒等那条从"数量"那一维红（`+1` 行）。**"本条先红"不是恒真**
+    // （`R11R9-A-M3` / `B-M6`）：拆点落在 ID 单元内部时（`| R11R9-` 换行 `A-m1 | … |`）后半首格仍合
+    // `ID_TOKEN` 形状，本条为绿，只有恒等那条红。准确的分工是"身份维**通常**先红、数量维**恒**红"；
+    // 反向一张行格皆规整的幻影表则**只有**恒等能红（锁清单超集方向与白名单不自腐对幻影都无增量）。
     // fixture 即前者的形态等价物（格数与表头一致、两行都以 `|` 收尾、行数变化不在本 fixture 的判据内）。
     const fixture = [
       "| ID | 位置 | 内容 | 来源 | 状态 |",
@@ -544,6 +674,73 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
     // **残余**（成文，不假装覆盖）：若拆出的后半同时满足"格数等于表头 + 以 `|` 收尾 + 首格形似规范 ID"，
     // 本条与 SR-2 那条都为绿。那已经不是一个**结构**破损而是一条**内容**错误（两行各自都像合法登记行），
     // 落在本文件头「能力边界」第一条（状态列语义真伪由走查判）的语义域内，不由字符串检查冒充。
+  });
+
+  it("自起点起的每一批正文须含 linux 义务三数记号（R11R9-A-M1 / B-M1 / C-M2 的机器化）", () => {
+    const md = readFileSync(path, "utf8");
+    const { startFound, managed } = managedSections(md);
+    // 起点未命中 = 本条会静默管零批 → 必须红，且指名要改的是本常量而不是小节标题。
+    expect(startFound, `登记处找不到起点小节「${OBLIGATION_FROM}…」；改标题须同批改本常量`).toBe(true);
+    expect(managed.length, "起点之后零批次小节 = 本条空转").toBeGreaterThanOrEqual(1);
+    const missing = managed.flatMap((s) => {
+      const miss = missingLinuxTokens(s);
+      return miss.length === 0 ? [] : [`${s.heading.slice(0, 30)} 缺记号：${miss.join("、")}`];
+    });
+    expect(
+      missing,
+      `${BACKLOG_REL} 里起点之后的某批未交付 linux 三数（\`滤前\`/\`滤后\`/\`@@\`）——` +
+        `本条把"有没有报"从**识别言语动作**改成**数串在不在**，故沉默、同义改写、报在他条 bullet 都拦得住`,
+    ).toEqual([]);
+
+    // 防空转：起点后第二批缺 `@@` 必须红，补齐必须绿；且证明"起点之前不受管辖"这一支是真的。
+    const before = ["### R11 R9 批次（旧批，不受管辖）", "正文只有 滤前 与 滤后。", ""].join("\n");
+    const gap = `${before}### R11 R10 批次（起点）\n滤前 9 滤后 0。\n\n### R11 R11 批次（下一批）\n滤前 9 滤后 0 @@ 3。\n`;
+    const fixed = gap.replace("滤前 9 滤后 0。\n", "滤前 9 滤后 0 @@ 3。\n");
+    const gapManaged = managedSections(gap);
+    expect(gapManaged.startFound, "fixture 前提失效：没命中起点").toBe(true);
+    expect(gapManaged.managed.map((s) => s.heading), "起点之前那批不该入管辖").toEqual([
+      "### R11 R10 批次（起点）",
+      "### R11 R11 批次（下一批）",
+    ]);
+    expect(gapManaged.managed.flatMap(missingLinuxTokens), "缺 `@@` 的那批必须被点名").toEqual(["@@"]);
+    expect(managedSections(fixed).managed.flatMap(missingLinuxTokens), "补齐后必须为绿").toEqual([]);
+    // **残余**（成文，不假装覆盖）：本条只判**记号在不在**，不判**数对不对**——一批写 `滤前 0 滤后 0 @@ 0`
+    // 也绿。数的真伪由走查复跑那条 git 命令判（与文件头「能力边界」第一条同一语义域）。
+  });
+
+  it("自起点起的每一批须申报「限定词行数=N」且与实测相等（R11R9-B-m3 的机器化）", () => {
+    const md = readFileSync(path, "utf8");
+    const { startFound, managed } = managedSections(md);
+    // 与上一条同一形状：起点未命中 = 本条静默管零批。两条都要守，缺一条就是半套（`R11R10-SR-2` 的实跑发现）。
+    expect(startFound, `登记处找不到起点小节「${OBLIGATION_FROM}…」；改标题须同批改本常量`).toBe(true);
+    const problems = managed.flatMap((s) => {
+      const declared = declaredQualifierRows(s.body);
+      const measured = qualifiedRows(s.body);
+      if (declared === null) return [`${s.heading.slice(0, 30)} 未申报 限定词行数=N`];
+      return declared === measured ? [] : [`${s.heading.slice(0, 30)} 申报 ${String(declared)} ≠ 实测 ${String(measured)}`];
+    });
+    expect(
+      problems,
+      `${BACKLOG_REL} 的该批自报状态列限定词行数与实测不符或未申报——本条堵的是"自报计数靠自觉"` +
+        `（Round 9 出卷方自报 9、评审员数出 15、实测 8，三个数只有本条能判谁对）`,
+    ).toEqual([]);
+
+    // 防空转：三类形态（相等 / 不等 / 未申报）各验一次，且状态列位置由表头推导（此处故意把状态放第 3 列）。
+    const head = "| ID | 状态 | 位置 |\n|---|---|---|\n";
+    const two = `| R9-Q-1 | 已消化（${QUALIFIER}） | bench/a.ts |\n| R9-Q-2 | 已消化（机器改动） | bench/b.ts |\n`;
+    const sec = (decl: string): string => `### R11 R10 批次（起点）\n${head}${two}${decl}\n`;
+    expect(qualifiedRows(`${head}${two}`), "fixture 前提失效：状态列第 2 列应数出 1 行").toBe(1);
+    expect(declaredQualifierRows(sec("限定词行数=1")), "同上：申报值应可读").toBe(1);
+    expect(managedSections(sec("限定词行数=1")).managed.flatMap((s) =>
+      declaredQualifierRows(s.body) === qualifiedRows(s.body) ? [] : ["red"],
+    )).toEqual([]);
+    expect(managedSections(sec("限定词行数=7")).managed.flatMap((s) =>
+      declaredQualifierRows(s.body) === qualifiedRows(s.body) ? [] : ["red"],
+    )).toEqual(["red"]);
+    expect(managedSections(sec("")).managed.flatMap((s) => (declaredQualifierRows(s.body) === null ? ["red"] : []))).toEqual([
+      "red",
+    ]);
+    // **残余**：本条判"申报与实测是否一致"，**不判"该行该不该带限定词"**——后者是语义判断，仍归走查。
   });
 
   it("守卫自检（防空转）：ID 列覆盖锁清单，且人为删行形态确会被拦", () => {

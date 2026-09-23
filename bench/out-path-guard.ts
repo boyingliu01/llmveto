@@ -15,7 +15,7 @@ import { dirname, resolve } from "node:path";
 export const TRACKED_BASELINE = "bench/baseline.json";
 
 /**
- * 建模 win32 时按 win32 的分符规则解释 `\`（R10R5，CI 实测驱动）。
+ * 建模 win32 时按 win32 的分隔符规则解释 `\`（R10R5，CI 实测驱动）。
  *
  * 为什么需要：`plat` 形参的立意是"在没有 win32 文件系统的 linux 上建模 win32 语义"，但宿主是 posix 的
  * 那两处（`realpathSync.native` 与默认导出的 `resolve`/`dirname`）都把 `\` 当**普通文件名字符**，于是
@@ -28,8 +28,13 @@ export const TRACKED_BASELINE = "bench/baseline.json";
  * 在真实 win32 宿主上这条替换**不改变任何判定结果**：win32 的 `resolve`/`existsSync`/`statSync` 同时
  * 接受 `/` 与 `\`，两种写法指向同一路径（该等价性由测试用例「win32 宿主上「把 `\\` 换成 `/`」不改变
  * 任何判定（lexicalForPlat 的等价性承诺，非显然）」钉死，而非当作显然）。
+ *
+ * 为什么**导出**：上面那句"钉死"用的用例是 `it.runIf(win32)`，即在 linux CI 上被 skip —— 一条写进
+ * tracked 文档的承诺在 CI 里零守护（R11R1-A-m1）。导出本函数后，"改写规则本身"（win32 建模下 `\`→`/`、
+ * 其余平台恒等）是一条**不碰文件系统、两平台都跑**的纯字符串断言；`it.runIf(win32)` 那条继续钉它声称的
+ * 等价性。与 `identityOf` 同一动机：判据里"平台相关的那半条"要有平台无关的可测面。
  */
-function lexicalForPlat(p: string, plat: string): string {
+export function lexicalForPlat(p: string, plat: string): string {
   return plat === "win32" ? p.replace(/\\/g, "/") : p;
 }
 

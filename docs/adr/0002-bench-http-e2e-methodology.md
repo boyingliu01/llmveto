@@ -357,6 +357,15 @@ R10 批（五轮才过一次共识门，终局 HEAD `4bbea37`）推送后，benc
     期望表在库，探针只是 import 那张表换个 runner。
   - 所以本节 linux 数字的性质是**一次性观测**，不是可回归断言；跨平台回归保护恒以入库面（`bench/out-path-guard.test.ts`
     + `cases.ts` 跑在 CI linux runner）为准。
+  - **linux 实跑锚点 = `de727ab`**（`R11R4-SR-1` 成文；登记处头部「触发条件」的 linux 重跑义务以本行为准）：
+    上面两支数字（104/0 与 61/43）跑的是 `de727ab` 那两份字节。此后探针读的两件只变过一次（`e946a0f`），且该次
+    改动**不含任何非注释行**——`git diff -U0 de727ab..HEAD -- bench/out-path-guard.ts bench/out-path-guard.cases.ts`
+    过滤掉 `+++`/`---` 与以 `//`、`*`、`/*` 开头（含缩进）的行后为空，故判据与期望表的**语义**自上次实跑以来未变，
+    本节点数对它仍成立。两句限定：① 锚点是"上次实跑所读的 commit"，**不是**"上一批 HEAD"——按批次取基准会让每批
+    各自的"本批未变"同时为真而链条整体失真（这正是 `R11R4-SR-1` 兑现的缺陷）；② 比较取语义面而非字节面，因为
+    注释也算字节变、而本机的 WSL 通道被权限层拦下，触发即无法兑现。判据或表数据**真的**再变时：推送前必须重跑
+    正/负双向、把数字回写本条并把锚点下移到实跑所读的 commit，且首次重跑要一并记录 node/WSL 版本与探针脚本 hash
+    作为比对基线（`R11R4-C-m2`）。
 - 守卫步沙箱：`node var/probe-workflow-guard-r11.cjs` → 从 `bench.yml` **原文抽取** `run:` 体（只替换末行 `bunx vitest run`，避免探针与真文件漂移），六路径实跑全过：① 真实仓三根齐 → rc=0 / `WOULD-RUN count=21`；② 同一体在 `bash -n`、`bash -e`、`bash -eo pipefail` 三口径下语法与退出码双过（runner 的 `shell: bash` 实为 `--noprofile --norc -eo pipefail`，本地默认只有 `-e`，`| grep -q .` 这类管道的退出码差异只在 pipefail 口径下才暴露）；③ 沙箱三根齐 → rc=0（证明下面两条红来自断言而非环境噪声）；④ 整根缺失 → rc=1 且 stderr 指名 `'tests/utils' is missing`；⑤ 锚点在但用例被迁走 → rc=1 且指名 `'bench' holds no *.test.ts`；⑥ `sort` 的异文件形态与 in-place 形态在本机 21 行逐字节相同（承上条：预防性对照，非缺陷复现）。**④⑤ 同时是本批新加 `trap … EXIT` 的退出码自证**——两条红必须以 rc=1 抵达 runner，若 trap 吞掉失败状态则这两条立刻变绿。
 - **`var/` 引用的性质 = 本机 scratch，不是可复跑入口**（R11R1-A-M1 与 A-m5 的处置）：本 ADR 与登记处里
   凡写作 `var/…` 的路径都是 **gitignored 的评审探针**，除 `!var/*.ts` 外不入库，随时可能不在本机之外被任何

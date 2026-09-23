@@ -11,8 +11,9 @@
   `R6-C2`/`R7-B2` 已随 R10 批次收口，R10 匿名轮 18 个 ID 已随 R10 R1 收口提交处置，R10 交换轮 13 个 ID
   （1 Major + 12 Minor）随 R10 R2 收口提交处置，R10 修复复评轮 13 个 ID（1 Major + 11 Minor + 1 跟踪项）
   随 R10 R3 收口提交处置，R10 第二处置复评轮 9 个 ID（1 Major + 8 Minor）随本批 R10 R4 收口提交处置，
-  均 2026-09-22/23。**R11 三批 26 个 ID**（匿名轮 8：走查 7 + 仓库重建事故 `R11-INC-1` 1；交换轮 Round 1
-  10 个：4 Major + 6 Minor；复评轮 Round 2 8 个：全 Minor）随 R11 R1/R2/R3 三个收口提交处置，均 2026-09-23。
+  均 2026-09-22/23。**R11 四批 30 个 ID**（匿名轮 8：走查 7 + 仓库重建事故 `R11-INC-1` 1；交换轮 Round 1
+  10 个：4 Major + 6 Minor；复评轮 Round 2 8 个：全 Minor；复评轮 Round 3 4 个：全 Minor）随 R11 R1/R2/R3/R4
+  四个收口提交处置，均 2026-09-23。
   留痕项 `R9-A-3`/`R9R2-A-N1` 挂在下次 CI record 自愈
 - **跟踪项到期与升级**（R10R4-C-m1 起成文）: 状态列写作 `OPEN（跟踪项）` 的行**必须在同一行内**给出
   可自动触发的升级条件（形如"若第 N 批仍未落地 → 升 Major"）。缺该条件的跟踪项不得登记，只能写成
@@ -21,7 +22,17 @@
 - **逾期处理**: 必须在下一次开发会话的首项处理并向用户报告，不得静默顺延
   （该纪律的定义体与上下文见 `git show 8bb8020:.sprint-state/bench-rerecord-todo.md`）
 - **触发条件**: 任何触碰 `bench/`、`.github/workflows/bench.yml` 或 `docs/adr/0002` 的提交，
-  应先消化本表中对应项；「ADR 挂账」的行随 `docs/adr/0002` 的下次修订合并落地（已于补遗三收口）
+  应先消化本表中对应项；「ADR 挂账」的行随 `docs/adr/0002` 的下次修订合并落地（已于补遗三收口）。
+  **推送前的 linux 重跑义务（`R11R3-C-m1` 起成文）**：凡 `bench/out-path-guard.ts` 或
+  `bench/out-path-guard.cases.ts`（linux 探针实际读的那两件）字节再变，推送前**必须**重跑正/负双向探针并把
+  数字回写 ADR 验证节，不得沿用上一轮数字。"本批未重跑"只在两者逐字节未变时才成立，且必须在批次「验证」
+  bullet 里以 `git diff --name-only <上一轮 HEAD> -- bench/` 的空输出为证——否则"未重跑"会随批次累积成
+  没人再核的隐性漂移。
+  **本机 win32 实跑义务（`R11R3-C-m2` 起成文）**：win32 宿主上跑 `bun run test`（= vitest 全量）与
+  `bunx vitest run bench/out-path-guard.test.ts` 是**成文义务**而不是惯例，可证伪形式 = 各批「验证」bullet
+  必须带 win32 实跑数字，缺该行的批次由下一轮走查按违规判（`it.runIf(win32)` 那一族只有 win32 宿主兑现得了，
+  CI 不守护，见 `R11R2-C-m1` 与 ADR 补遗四）。仍**不采**"仓库内脚本机器强制"：本仓无收口脚本，xp-gate 的
+  pre-push 是仓外全局钩子（与 `R11R2-C-m1` 拒 ① 同一条理由）。
 - **命名空间说明**: 本文件位于 `.sprint-state/`（sprint 生命周期目录）。当前未被 `.gitignore` 覆盖、
   无自毁条款、脚本与 CI 均无清理引用，且同目录已有长期 tracked 的 `decisions.md`/`feedback-log.md`，
   故不受待办自毁影响；若将来引入 sprint 目录清理机制，本文件须一并迁移至 `docs/` 或 `bench/`（或显式豁免）。
@@ -430,7 +441,7 @@ B **REQUEST_CHANGES / 0 Critical / 2 Major / 5 Minor**，C **APPROVED 但 `major
 | R11R1-B-m1 | `assertWritableOutPath` 的 `existsSync` / `statSync` / `accessSync` 三腿 | `lexicalForPlat` 接了词法面却没接宿主 FS 腿 → "建模泄漏/建模不完整" | B | **拒绝并成文**（不改代码：预检的职责是回答"待会儿 `writeFileSync(字面名)` 开得开吗"，把字面名改写后再探探的是**另一个**文件的可写性，比"探不到"更错。词法可按建模平台解释、宿主文件系统不可 —— 与补遗四 `plat` 可达边界同一条。落点 = `lexicalForPlat` 文档注新增一段 + 测试头 uncovered 清单新增第 5 条，二者互指） |
 | R11R1-B-m2 | `docs/adr/0002` 补遗四·验证节末条 | 写"本批现役两支"，同节实际提到三支探针（linux 正向 / linux 负向 / 守卫步六路径） | B | 已消化（改为列举式"三支"并点名第三支及其用途，顺带把句子拆成不依赖计数也能读的形状） |
 | R11R1-B-m3 | `docs/adr/0002` 补遗四·影响节 ② | "`lexicalForPlat` 由私有改为**导出**"在压扁的区间 diff 里不可读（该函数整条是新增行） | B | 已消化（改为"本批新增并导出（首笔私有、同批第二笔改导出）"，并明写"以此处为准而非以区间 diff 为准"。这是 `R11R1-B-M2` 同一族的**区间 vs 单笔**口径问题，两处一并收口） |
-| R11R1-B-m4 | `bench/out-path-guard.cases.ts` 的 `GUARD_FORM_CASES` 由四族 `.map()` 展开 | 某族成员被误删则表**静默变短**，无断言会红 | B | 已消化（并入下条 `R11R1-C-M2` 的元断言族：`MIN_FORMS` 各族**下界** + 变异 M1 实跑红在「分组守恒」。下界惯例承 `MIN_BACKLOG_ROWS`（`R10R3-A-m3` 已裁决"零余量、合法裁剪须同批下调"），能力边界一并成文：挡净减与误标，**不**挡等量替换） |
+| R11R1-B-m4 | `bench/out-path-guard.cases.ts` 的 `GUARD_FORM_CASES` 由四族 `.map()` 展开 | 某族成员被误删则表**静默变短**，无断言会红 | B | 已消化（并入下条 `R11R1-C-M2` 的元断言族：`MIN_FORMS` 各族**下界** + 变异 M1 实跑红在「分组守恒」。下界惯例承 `MIN_BACKLOG_ROWS`（`R10R3-A-m3` 已裁决"零余量、合法裁剪须同批下调"），能力边界一并成文：挡净减与误标，**不**挡等量替换。**勘误指针（`R11R3-B-m1`）**：该边界后被收窄为"只挡**撞名**的等量替换，不挡不撞名的那一类"——原句"不挡等量替换"过宽（把唯一性断言已有的覆盖面说没了），分类见 R11 R4 批次与 ADR 补遗四·影响节；原文照存不改写。） |
 | R11R1-B-m5 | 卷包 ③「登记处新增行」摘要 | 状态列被截到 60 字 → E 条"未转义 `\|` 撑破格数"从卷面无法判 | B | 已消化（**卷包面**处置，不改入库面：Round 2 起登记处内联全文。E 条本身在入库面由 `backlog-integrity.test.ts` 的「每条数据行的格数与该表表头一致」断言管辖，且该断言按 `\|` 转义感知拆格（`R10R1-C-m1`）——本批 10 行能被该用例放行，即为答案；不引 `var/` 里的临时脚本作证据，理由见 `R11R1-A-M1` 的成文约定） |
 | R11R1-C-M1 | `.github/workflows/bench.yml`（建议新增 windows job） | win32 专有行为在 linux CI 只靠 `plat` 注入模拟，缺 Windows Runner 的自动化覆盖 | C | **拒绝并成文**（① 该残余早已登记并保持命名：`R10R2-A-m2`（win32 端到端身份腿 + `tests/integration`/`tests/e2e` 无 CI 执行面）与 `R11R1-A-m2`（反斜杠别名的身份腿），卷面 §7 明示不要重复报；② 收益/代价：G1/G2/G3 阈值锚在 linux runner（补遗三保真锚点），win job 只能跑功能测试，收益是"重复本机每次收口都跑的 `bunx vitest run`"，代价是双份全量时长；③ 字符串腿已两平台兑现（`lexicalForPlat` 纯函数断言 + `plat` 注入矩阵）。故维持"本机 win32 实跑 + CI linux 全量"的分工，不新开 job。**措辞勘误（`R11R2-B-m2`）**：本行原写"② 与冻结面冲突的一面"——该说法可被 `git diff` 证否（只跑 `bunx vitest run` 的 job 根本不触碰 `regression-formula.ts` / `baseline.json` / `record-baseline.ts`），真理由是**阈值保真锚在 linux**，与冻结面无涉。② 的编号与理由已按此改写） |
 | R11R1-C-M2 | `bench/out-path-guard.cases.ts` 作为单一事实源 | 表错则 CI 与探针同时假绿；C 给的方向是"定期人工审核 / 变更审查机制" | C | 已消化（不采不可操作建议，落点与 A、B-m4 同源：**消费者侧结构元断言**一节 4 条，表达式与 `hostPath`/`canonicalPath` 不共享代码。三家在同一条上独立命中，是本轮最有价值的一条意见） |
@@ -500,6 +511,47 @@ APPROVED、0 Critical、0 Major**，consensus 1.0，合计 **8 条 Minor**（A 3
 - **冻结面零改动自证**：`git diff --exit-code 4bbea37..HEAD -- bench/regression-formula.ts bench/baseline.json
   bench/record-baseline.ts` 仍为 0；`md5sum bench/baseline.json` 仍为 `3ebfaa9f6a71ecf7cb7b0d91355e2525`；
   本批连 `bench/` 目录都未触碰（见上一条 ①）。
+
+### R11 R4 批次（R11 Round 3 三家意见 → 本收口提交，2026-09-23）
+
+R11 Round 3（修复复评轮，卷面 §10 内联 Round 2 原始输出、③-c 内联本登记处新节全文）：A / B / C **三家皆
+APPROVED、0 Critical、0 Major**，consensus 1.0，合计 **4 条 Minor**（B 2 / C 2）。Round 2 的 8 条处置经三家
+复核**无一被推翻**（`OVERTURNED` 零次）。本轮 4 条全部落在**措辞精度**与**义务成文**两类，没有一条指向判据、
+测试断言或 CI 执行面——三家在 A–G 七条检查点上给出的结论互不引用而一致。
+
+| ID | 位置 | 内容 | 来源 | 状态 |
+|----|------|------|------|------|
+| R11R3-B-m1 | `docs/adr/0002` 补遗四·影响节 能力边界那句 | B 判上一批的限定段只覆盖了"折到本名且**不重复**"那一种等量变体；若换成"折到本名但**与既有条目撞名**"的变体（`bench/./baseline.json` → `./bench/baseline.json`），「形态全局唯一」会红。故"不挡等量替换"**过宽**，把元断言已有的覆盖面说没了——与上一批被订正的"过窄"读法方向相反 | B | **已消化（照 B 的前提，双向收窄）**：核对为真——「分组守恒」的 `new Set(forms).size === forms.length` 按 `form` **字面串**去重，撞名类必红。ADR 能力边界那句改为"等量替换只挡撞名那一类"，M2 限定段补①/②两分类，并把"过读"两个方向都点名（说成"能判等量替换"是夸强、说成"全盲"是夸大其弱）。同族改动同步到 `bench/out-path-guard.test.ts` 头注第 3 条（**只改注释**）与 `R11R1-B-m4` 行的勘误指针 |
+| R11R3-B-m2 | 上一批「验证」bullet ① | B 判该 bullet 让读者**自行**从"只列出三项"推出 `bench/` 为空，复核成本可免；建议把 `-- bench/` 的空输出单列一行 | B | 已消化（本批「验证」bullet 直接给 `git diff --name-only 9cb8bef -- bench/out-path-guard.ts bench/out-path-guard.cases.ts` 的空输出这一行，并把该写法升成通则：见本文件头部「触发条件」的 linux 重跑义务——"未重跑"从此必须带空输出为证，不再靠读者推断） |
+| R11R3-C-m1 | 卷面 §6 末条「linux 探针本批未重跑」 | C 判该理由（探针读的两件逐字节未变 + 本批全在文档面）**成立**，但性质是"推理 + 上一轮实测"而非本轮实跑；担心"未重跑"随批次累积成没人再核的隐性漂移，建议下次 bench 字节再变时强制重跑并回写 | C | **已消化（写成成文义务，不写成本批实跑）**：头部「触发条件」新增 **linux 重跑义务**——`out-path-guard.ts` / `cases.ts` 字节再变即必须推送前重跑正/负双向并回写 ADR，且"未重跑"须附空输出为证。本轮**确实无法**实跑：WSL 调用被本机权限层拦下（该事实已如实写进卷面 §6，未冒充实跑） |
+| R11R3-C-m2 | `bench/out-path-guard.test.ts` 的 `it.runIf(win32)` 那族 | C 复述并**认可** `R11R2-C-m1` 的处置（采 ② 拒 ①），但要求"等价性承诺"从纯叙述升级为推送前机器可查：出路 a) 确保 `R10R2-A-m2` 在 2026-09-30 到期复审闭环；b) 在本机收口脚本里把 win32 单文件实跑列为必跑动作 | C | **部分消化（采 b 的成文形态，拒 b 的脚本形态，a 已在册）**：本仓**没有**收口脚本，`bun run test` 只是 vitest 别名，把它包一层脚本仍不会被任何门执行——写一个"只在本机跑"的脚本等于再造一条无人执行的面；全局 pre-push 越界（与 `R11R2-C-m1` 拒 ① 同因）。可采的是把义务**成文**：头部「触发条件」新增 **本机 win32 实跑义务**，可证伪形式 = 各批「验证」bullet 必须带 win32 实跑数字（本批即 37/1 与 271/3），缺行由下一轮走查按违规判。a) 半：`R10R2-A-m2` 已 OPEN、期限 2026-09-30，逾期纪律本就要求首项处理 |
+
+- **裁决口径**：本表 **4 行**全部为走查来源（B 2 / C 2），无事故来源。入库面 = ADR 两处措辞收窄（能力边界
+  那句 + M2 分类）、测试头注第 3 条同步（**注释，零判据改动**）、登记处头部两条成文义务 + `R11R1-B-m4`
+  勘误指针 + 本节。**四条中没有一条以"拒绝并成文"结案**（`R11R3-C-m2` 只把"脚本机器强制"那一半按既有理由
+  不采，其"成文义务"那一半照做）。
+  **台账口径衔接**：上一批「裁决口径」申报的是"三批 26 个 ID"，那是 `9cb8bef` 当时的口径；本批加 4 行后为
+  "四批 30 个 ID"（26 + 4）。两处不同数是批次差，不是同一事实的两个源（`R11-CI-1` 的根因②同一族）。
+- **本批代码面清单（含区间口径）**：① 文档面 = `docs/adr/0002` 补遗四·影响节（能力边界改窄 + 等量替换两分类）；
+  ② 判据面 = **零改动**，`bench/` 下只有 `out-path-guard.test.ts` 元断言族头注那 2 行被换成 4 行（`git diff
+  -U0 9cb8bef -- bench/` 的**非注释行为空**，实测 −2/+4 全为 `//` 行）；③ 登记处 = 头部「触发条件」两条义务 + 本节 + `R11R1-B-m4` 勘误指针；
+  ④ 锁清单/棘轮 = 同批上移。
+  **区间 vs 本批**：`MIN_BACKLOG_ROWS` 为 `4bbea37`=90 → `b42bc10`=108 → `e946a0f`=118 → `9cb8bef`=126 →
+  本批 130（`+4`）；`LOCKED_IDS` 同形为 92 → 110 → 120 → 128 → 132。
+- **验证**（按本批新增的"本机 win32 实跑义务"给出数字）：① 本机 win32（bun）`bunx vitest run bench/out-path-guard.test.ts`
+  → **37 passed / 1 skipped（38 条）**；全量 `bunx vitest run` → **271 passed / 3 skipped（34 文件）**；
+  `bunx tsc --noEmit` → rc=0；`bunx oxlint bench tests src` → 0 warnings / 0 errors；
+  ② 登记处守卫 `bunx vitest run tests/unit/backlog-integrity.test.ts` → 8 passed；实测行/ID 数由 scratch 侧
+  只读复刻解析器得到（`node var/delphi-r11/count-rows.cjs` → `ID tables=15 dataRows=130 uniqueIds=132`），
+  **未**临时改动守卫常量去"钓"真值；③ 改动面自证 = `git diff --name-only 9cb8bef` 四项。
+- **linux 探针本批未重跑，按新义务给出证据而非理由**：
+  `git diff --name-only 9cb8bef -- bench/out-path-guard.ts bench/out-path-guard.cases.ts` → **空输出**
+  （即探针读的两件逐字节未变；本批 `bench/` 内唯一改动是 `out-path-guard.test.ts` 的头注，探针不读测试文件）。
+  另注：本轮执行环境不允许调用 WSL，即便要重跑也拿不到实跑数——所以这条是"字节未变 → 结论不变"的推理，
+  卷面 §6 同口径，不冒充实跑。
+- **冻结面零改动自证**：`git diff --exit-code 4bbea37..HEAD -- bench/regression-formula.ts bench/baseline.json
+  bench/record-baseline.ts` → rc=0；`md5sum bench/baseline.json` = `3ebfaa9f6a71ecf7cb7b0d91355e2525`；
+  判据公式 `* 1.2` / `> 2` 与三台门阈值常量未触碰。
 
 ## 备注
 

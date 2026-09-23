@@ -46,6 +46,19 @@ jobs:
       # 假红更隐蔽，且不写文件计数（计数随批次漂移，不得当命题——见 R10R3-A-m1）。故改为：先把列表落到
       # 临时文件、**直接**判 find/sort 的退出码，并对三个锚点逐一显式存在性断言（给出指名哪个锚点的定向
       # 文案，而不是裸 find stderr）。四路径实测记录见 docs/adr/0002 补遗一·验证节。
+      # **`[ -d ]` 只证"目录在"，不证"目录里有货"**（R10R5-A-m1 + R10R5-B-m2，Minor）：上条的三条断言对
+      # "目录存在但已被清空/剪掉全部 `*.test.ts`"同样放行，缩减仍是静默的 —— 同一失效方向、只堵了一半。
+      # 补法取**零漂移**形态：每根再加一条"至少匹配 1 个文件"断言，而不是断言任何具体数目（断计数会随批次
+      # 漂移，正是 R10R3-A-m1 禁止的那类命题）。`-print -quit` 让 find 在首个命中处即退出（不为存在性检查
+      # 走完整棵树），管道出口取 `grep -q .` 的真/假，不打印内容。
+      # 本条同时是一道**有意的绊线**：若将来某个根目录下的测试被**合法迁走**（例如 `tests/utils` 的
+      # `*.test.ts` 并入 `tests/unit/utils/`），本步会红 —— 那是要求"在同一笔提交里把该根从锚点列表删掉"，
+      # 而不是把断言放宽。锚点列表与真实布局脱节却不报错，正是本步要防的那类失效。
+      # **`sort -z -o F F`（输入输出同文件）是同时性依赖**（R10R5-A-m2，Minor）：POSIX 对 `> F` 明确禁止
+      # 同文件，`-o F F` 靠的是 GNU coreutils "先打开输出"的实现细节 —— 行为在版本间可变，真踩中就是静默
+      # 截断列表（又一次"少跑而转绿"）。改为两个不同的 mktemp 文件，彻底消除该依赖。**如实披露**：本机
+      # coreutils 实测 `-o F F` 与异文件形态**逐字节相同**（21 文件 / 750 字节，未复现损坏），故本条是
+      # 预防性收口而非缺陷修复；判据是"不把正确性压在未承诺的实现细节上"。
       # 阻断性：本步非零退出即 bench job 红（早于三台 runner，失败信号最快、最便宜；本机实测墙钟 <2s，
       # 用例数随批次漂移故不写死）。
       - name: Unit + registry integrity guard
@@ -55,20 +68,25 @@ jobs:
               echo "guard step: scope root '$root' is missing — a renamed/split guard root must never narrow the run set" >&2
               exit 1
             fi
+            if ! find "$root" -name '*.test.ts' -print -quit | grep -q .; then
+              echo "guard step: scope root '$root' holds no *.test.ts — an emptied or pruned guard root must never narrow the run set" >&2
+              exit 1
+            fi
           done
-          list_file="$(mktemp)"
-          if ! find tests/unit tests/utils bench -name '*.test.ts' -print0 > "$list_file"; then
+          list_in="$(mktemp)"
+          list_out="$(mktemp)"
+          if ! find tests/unit tests/utils bench -name '*.test.ts' -print0 > "$list_in"; then
             echo "guard step: find over the three scope roots failed" >&2
-            rm -f "$list_file"
+            rm -f "$list_in" "$list_out"
             exit 1
           fi
-          if ! sort -z -o "$list_file" "$list_file"; then
+          if ! sort -z "$list_in" -o "$list_out"; then
             echo "guard step: sort -z on the file list failed" >&2
-            rm -f "$list_file"
+            rm -f "$list_in" "$list_out"
             exit 1
           fi
-          mapfile -d '' -t guard_files < "$list_file"
-          rm -f "$list_file"
+          mapfile -d '' -t guard_files < "$list_out"
+          rm -f "$list_in" "$list_out"
           if [ "${#guard_files[@]}" -eq 0 ]; then
             echo "guard step matched no test files; refusing to fall back to a full vitest run" >&2
             exit 1

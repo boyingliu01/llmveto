@@ -11,9 +11,20 @@ import {
   hostPath,
   identityOf,
   inspectOutPath,
+  lexicalForPlat,
   refusalMessage,
   statThrows,
 } from "./out-path-guard.ts";
+import {
+  ADS_FORMS,
+  GUARD_FORM_CASES,
+  PRECHECK_PASS_POSIX_FORMS,
+  PRECHECK_PASS_WIN32_FORMS,
+  PRECHECK_THROW_FORMS,
+  SYNTH_BASELINE,
+  SYNTH_STREAMS,
+  type GuardFormCase,
+} from "./out-path-guard.cases.ts";
 
 // @test REQ-VETO-013
 // @intent tracked 基线写入守卫的**形态矩阵**进入 vitest / CI 阻断步（R10R4-C-m4）。该判据自 R8 起连续五轮
@@ -42,30 +53,25 @@ import {
 //      平台无关，CI 必跑；`false`（`ino === 0` 的正常降级 → 不许告警）的端到端腿只有 win32 的 NUL 用例钉住。
 //      故变异 M-d（两类 null 混类）与 M-k（`identityAbsent` 恒假）在 linux CI 上**都**存活，平台无关的
 //      `identityOf` 半支必红。两条一起命名，不只报其中一条（R10R5-C-m1）。
+//   4. 反斜杠别名在 **posix 宿主**上的**身份腿**不可达（R11R1-A-m2）：linux 上 `statSync("bench\\
+//      baseline.json")` 查的是一个含反斜杠的字面文件名 → 不存在 → 身份为 null，即便词法折叠已把名字折对。
+//      故同一用例在两台宿主上"绿的不是同一条腿"——win32 宿主 `sameName ∧ sameInode` 双真，posix 宿主只有
+//      `sameName` 真（本文件里 `sameNameWin32` 那一断言即此）。后果良性：tracked 拒绝由名字腿独立承担，
+//      身份腿只是第二道。这是 R11 名字折叠修复的**边界**，不是本批引入的回归，也不写成条件断言冒充双平台。
 
 const W = "win32";
 const L = "linux";
 
-/** 受保护基线的历史流穿透形态（R10R2-C-M1 的收口对象），取自 docs/adr/0002 补遗一·验证节。 */
-const ADS_FORMS = [
-  `${TRACKED_BASELINE}:probestream`,
-  `${TRACKED_BASELINE}:probestreamC`,
-  `${TRACKED_BASELINE}:NEW:two`,
-  `${TRACKED_BASELINE}:$DATA`,
-  `bench\\baseline.json::$DATA`,
-  `${TRACKED_BASELINE}:brandnewstream`,
-] as const;
+// 形态清单与**期望判定**住在 `bench/out-path-guard.cases.ts`（R11R1-A-M2）：本文件（CI 执行面）与本机
+// WSL 的预推送探针读同一张表，"探针绿"与"CI 绿"自此不再是两套断言。`ADS_FORMS` / `SYNTH_STREAMS` 被
+// hostPath 那组用例单独取用（它们断言的是折叠结果，不是 refusal）。
+const win32Cases = GUARD_FORM_CASES.filter((c) => c.expectWin32 === "stream");
+const trackedNameCases = GUARD_FORM_CASES.filter((c) => c.expectWin32 === "tracked");
+const legalCases = GUARD_FORM_CASES.filter((c) => c.expectWin32 === null);
+const posixCases = GUARD_FORM_CASES.filter((c) => c.expectPosix !== undefined);
 
-/** 同一套流后缀挂在一个**两侧都不存在**的合成宿主上：断言纯字符串判据，不受宿主文件系统折叠干扰。 */
-const SYNTH = "bench/no-such-family.json";
-const SYNTH_STREAMS = [
-  `${SYNTH}:probestream`,
-  `${SYNTH}:probestreamC`,
-  `${SYNTH}:NEW:two`,
-  `${SYNTH}:$DATA`,
-  `bench\\no-such-family.json::$DATA`,
-  `${SYNTH}:brandnewstream`,
-] as const;
+const inspected = (c: GuardFormCase, plat: string) =>
+  inspectOutPath(c.form, c.tracked === undefined ? { plat } : { plat, tracked: c.tracked });
 
 describe("hostPath：win32 宿主折叠（把 `:` 后缀剥回宿主文件）", () => {
   it("末段流后缀一律剥掉，含多级流与经典默认流", () => {
@@ -93,7 +99,7 @@ describe("hostPath：win32 宿主折叠（把 `:` 后缀剥回宿主文件）", 
   });
 
   it("posix 上 `:` 是普通文件名字符 → 恒等（realpath 本就能区分该文件与 tracked）", () => {
-    for (const form of [...ADS_FORMS, "//localhost/d$/x/baseline.json:zzz"]) {
+    for (const form of [...ADS_FORMS, ...SYNTH_STREAMS, "//localhost/d$/x/baseline.json:zzz"]) {
       expect(hostPath(form, L)).toBe(form);
     }
   });
@@ -127,13 +133,25 @@ describe("canonicalPath：名字折叠（realpath 优先，退化词法；大小
     // 两侧都不存在的合成宿主：realpath 在三平台一致抛错 → 必走词法回退，故本条判的是 `lexicalForPlat`
     // 本身，而不是宿主文件系统的脾气。R10 推送前这里是**一条 linux 假红**：posix 的 `resolve` 把 `\`
     // 当普通文件名字符，`bench\\no-such-family.json` 折不到 `bench/no-such-family.json`。
-    expect(canonicalPath("bench\\no-such-family.json", W)).toBe(canonicalPath(SYNTH, W));
-    expect(canonicalPath("bench\\no-such-family.JSON", W)).toBe(canonicalPath(SYNTH, W));
+    expect(canonicalPath("bench\\no-such-family.json", W)).toBe(canonicalPath(SYNTH_BASELINE, W));
+    expect(canonicalPath("bench\\no-such-family.JSON", W)).toBe(canonicalPath(SYNTH_BASELINE, W));
     // 同一形态在 posix 建模下**不得**被折成分隔符（win32 判据不得越平台误伤）。这条只在宿主非 win32 时
     // 有意义：win32 宿主的 `resolve` 自己就把 `\` 当分隔符，与 plat 无关，故不在此断言。
     if (process.platform !== "win32") {
-      expect(canonicalPath("bench\\no-such-family.json", L)).not.toBe(canonicalPath(SYNTH, L));
+      expect(canonicalPath("bench\\no-such-family.json", L)).not.toBe(canonicalPath(SYNTH_BASELINE, L));
     }
+  });
+
+  it("lexicalForPlat 的改写规则本身（平台无关、不碰文件系统，两平台 CI 都跑 —— R11R1-A-m1）", () => {
+    // 上面那条"等价性"用例是 it.runIf(win32)，即在 linux CI 上被 skip；在它被 skip 的地方，
+    // 本条纯字符串断言仍在跑：win32 建模下 `\` → `/`（全部、含 UNC 前缀），其余平台恒等。
+    expect(lexicalForPlat("bench\\baseline.json", W)).toBe("bench/baseline.json");
+    expect(lexicalForPlat("\\\\srv\\share\\a\\b.json", W)).toBe("//srv/share/a/b.json");
+    expect(lexicalForPlat("bench/baseline.json", W)).toBe("bench/baseline.json");
+    expect(lexicalForPlat("bench\\baseline.json", L)).toBe("bench\\baseline.json");
+    expect(lexicalForPlat("bench\\baseline.json", "darwin")).toBe("bench\\baseline.json");
+    // 恒等分支不吞字符：posix 建模下 `\` 是合法文件名字符，改写它才是 bug。
+    expect(lexicalForPlat("a\\b", L)).toBe("a\\b");
   });
 
   it.runIf(process.platform === "win32")(
@@ -155,22 +173,20 @@ describe("canonicalPath：名字折叠（realpath 优先，退化词法；大小
 
 describe("inspectOutPath：tracked 家族拒绝矩阵（补遗一的 17 形态，改为自动化）", () => {
   it("win32 下六种流形态 → refusal='stream'（宿主折叠先于名字与身份判据生效）", () => {
-    for (const form of ADS_FORMS) {
-      const f = inspectOutPath(form, { plat: W });
-      expect([form, f.refusal]).toEqual([form, "stream"]);
-      expect(f.sameName).toBe(true);
-    }
-    // 同一套后缀换成不存在的宿主，结论不变（证明拒绝来自**字符串折叠**而非宿主的真实存在）。
-    for (const form of SYNTH_STREAMS) {
-      expect([form, inspectOutPath(form, { plat: W, tracked: SYNTH }).refusal]).toEqual([form, "stream"]);
+    for (const c of win32Cases) {
+      const f = inspected(c, W);
+      expect([c.form, f.refusal]).toEqual([c.form, "stream"]);
+      // 同一套后缀换成不存在的宿主，结论不变（证明拒绝来自**字符串折叠**而非宿主的真实存在）；
+      // 真实宿主那一族另钉 sameName：宿主折叠必须把它折回 tracked 的同一个名字。
+      if (c.sameNameWin32) expect([c.form, f.sameName]).toEqual([c.form, true]);
     }
   });
 
   it("win32 下名字变体（相对前缀 / 中间 `.` / 大小写 / 本名）→ refusal='tracked'", () => {
-    for (const form of ["./bench/baseline.json", "bench/./baseline.json", "bench/BASELINE.JSON", TRACKED_BASELINE]) {
-      const f = inspectOutPath(form, { plat: W });
-      expect([form, f.refusal]).toEqual([form, "tracked"]);
-      expect(f.outHost).toBe(form);
+    for (const c of trackedNameCases) {
+      const f = inspected(c, W);
+      expect([c.form, f.refusal]).toEqual([c.form, "tracked"]);
+      expect([c.form, f.outHost]).toEqual([c.form, c.form]);
     }
   });
 
@@ -178,8 +194,8 @@ describe("inspectOutPath：tracked 家族拒绝矩阵（补遗一的 17 形态�
     // 合成族（两侧都不存在，realpath 在三平台一致抛错 → 走词法 resolve）：本组要断言的是 **plat 这条
     // 字符串判据**，不能让宿主文件系统的折叠混进来。真实 tracked 基线上 `…::$DATA` 在 win32 会被
     // realpath 自己折回宿主（见下一条），那是 plat 之外的独立防线，不是本组语义。
-    for (const form of SYNTH_STREAMS) {
-      expect([form, inspectOutPath(form, { plat: L, tracked: SYNTH }).refusal]).toEqual([form, null]);
+    for (const c of posixCases) {
+      expect([c.form, inspected(c, L).refusal]).toEqual([c.form, c.expectPosix]);
     }
   });
 
@@ -192,14 +208,8 @@ describe("inspectOutPath：tracked 家族拒绝矩阵（补遗一的 17 形态�
   );
 
   it("合法 out 路径全部放行（上两条拒绝形态的对照组，含 `x:y` 型畸形短名与盘符相对）", () => {
-    for (const form of [
-      "bench/baseline.local.json",
-      "bench/dir/../baseline.local.json",
-      "C:\\tmp\\baseline.other.json",
-      "C:baseline.local.json",
-      "x:y",
-    ]) {
-      expect([form, inspectOutPath(form, { plat: W }).refusal]).toEqual([form, null]);
+    for (const c of legalCases) {
+      expect([c.form, inspected(c, W).refusal]).toEqual([c.form, null]);
     }
   });
 
@@ -348,16 +358,16 @@ describe("assertWritableOutPath：采样前的写可达性预检", () => {
   });
 
   it("NTFS 流名字面约束（R10R4-A-m2）：空流名 / 流名含冒号 → 预检即拒（实测该型即使宿主存在也 ENOENT）", () => {
-    for (const form of ["mydata:", "mydata::", "mydata:a:b", `${TRACKED_BASELINE}:`]) {
+    for (const form of PRECHECK_THROW_FORMS) {
       expect(() => assertWritableOutPath(fate(form, W))).toThrow(/alternate data stream name/);
     }
   });
 
   it("合法流名（`tag` / `$DATA`）不被误拒；posix 上整条判据不生效", () => {
-    for (const form of ["mydata:tag", "mydata:$DATA"]) {
+    for (const form of PRECHECK_PASS_WIN32_FORMS) {
       expect(() => assertWritableOutPath(fate(form, W))).not.toThrow();
     }
-    for (const form of ["mydata:", "mydata:a:b"]) {
+    for (const form of PRECHECK_PASS_POSIX_FORMS) {
       expect(() => assertWritableOutPath(fate(form, L))).not.toThrow();
     }
   });

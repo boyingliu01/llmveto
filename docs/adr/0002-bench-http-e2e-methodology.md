@@ -262,6 +262,14 @@ R10 批（五轮才过一次共识门，终局 HEAD `4bbea37`）推送后，benc
 - 修法：新增私有 `lexicalForPlat(p, plat)`，在 **win32 建模**下把 `\` 规范化为 `/`，**只**接入 `canonicalPath` 的**词法回退分支**与 `assertWritableOutPath` 的 `dirname` 取父处。
 - **为什么不接 realpath 分支**：win32 上 `\\?\\d:\\…`（设备命名空间）与 UNC 形态由 `realpathSync.native` 自己折回宿主长名，那是 `plat` 之外的**独立防线**；把它们也改写成 `/` 可能让 realpath 失配，等于把一条真实存在的保护换成"认不出别名 → 放行"。改写方向因此限定为"只在本来就已经失败的分支上补齐语义"，**只增拒绝**。
 - 该等价性（真实 win32 宿主上"把 `\` 换成 `/`"不改变任何判定）不当作显然，钉成 `it.runIf(win32)` 用例。
+- **该等价性的可验范围与守护边界（`R11R2-C-m1` 成文，不再只活在措辞里）**：`it.runIf(win32)` 在 linux CI
+  上被 skip，故**这条"不改变任何判定"的承诺只有 win32 宿主能验，CI 不守护它**。能被 CI 守护的是被拆出来的
+  另一半——"改写规则本身"（win32 建模下 `\`→`/`、其余平台恒等）那条平台无关的纯字符串断言（导出动机见本补遗
+  影响节首条 ②，`R11R1-A-m1`）。两半的分工写死在此，避免读者把"CI 绿"读成"等价性已被守护"。本残余并入既有观测项
+  `R10R2-A-m2`（OPEN，期限 2026-09-30）名下复审，不另立无人认领的孤儿项。**不采的出路**：在 pre-push 里
+  强制跑一次 win32 宿主用例——xp-gate 的 pre-push 是**全局**钩子（`~/.config/xp-gate/hooks`），不在本仓
+  diff 管辖内、且会波及其他仓库；而"本机 win32 实跑"本就是每次收口的既有动作（登记处各批的"本机 win32"行
+  即其痕迹），只是它天然不可被一个仓库内脚本机器强制。
 
 **根因 ②：同一个平台事实有两个源，二者可以不一致。** `assertWritableOutPath(fate, plat = platform())` 的第二个形参与 `fate.outHost` 的折叠平台构成**隐式契约**；用例只给 `inspectOutPath` 传了 `plat`，预检便按宿主平台取默认值 → 流名判据整条跳过。这是 R5 走查意见 `R10R5-A-m3` 预言的失效形态，被 CI 以真实红灯兑现（多轮走查的价值实证：意见在推送前判为 Minor，推送后立刻是唯一的红源）。
 
@@ -291,6 +299,10 @@ R10 批（五轮才过一次共识门，终局 HEAD `4bbea37`）推送后，benc
   `bench/BASELINE.OTHER`（表长、各族长、唯一性全不变）→ 红在「`tracked` 族词法名必恰为本名」，消费者侧的
   tracked 矩阵同时红；M3 把 `PRECHECK_PASS_POSIX_FORMS` 首条改成 win32 合法形态（**消费者侧全绿**）→ 只红在
   「预检族自洽」，即元断言确实覆盖到消费者到不了的那一面。
+  **M2 这条不要读成"元断言能判等量替换"**（`R11R2-B-m1`）：它红是因为换进去的形态**恰好破坏了 `tracked` 族的
+  定义性词法名**。若换成另一条**同样折到本名**的等量变体（例如 `bench/./BASELINE.JSON` —— 词法名仍是
+  `bench/baseline.json`，只是与表内既有的 `bench/./baseline.json` 不重复），元断言与消费者矩阵**同时**绿。
+  所以 M2 证明的是"误标会被抓到"，**不是**"等量替换被抓到"；上面那句能力边界才是准的。
 - **建模边界补一条（`R11R1-B-m1`，拒绝"补齐"并成文）**：`lexicalForPlat` 只接**词法**面（回退分支与
   `dirname` 取父），**不接** `existsSync`/`statSync`/`accessSync`。理由不是漏接：预检问的是"待会儿
   `writeFileSync` 那个字面名开得开吗"，改写后再探探的是另一个文件。词法可按建模平台解释、宿主文件系统
@@ -325,6 +337,17 @@ R10 批（五轮才过一次共识门，终局 HEAD `4bbea37`）推送后，benc
   `var/probe-linux-r11.ts`（预推送 linux 面）都只读它。因此"探针绿"现在**蕴含**"那族字符串判据在 posix
   宿主上也绿"，两者无从各自漂移。仍未闭的残余（本通道不声称）：vitest 自身的 `runIf`/`skipIf` 分支选择、
   `chmod 0` 的 EPERM 可观测性、符号链接能力探测——这些仍只由 CI 的 linux runner 兑现（`R10R2-A-m2`）。
+- **可复跑口径**（`R11R2-C-m2`：上一支的 104/0 与负向的 61/43 都出自 gitignored scratch，故把"什么才算复跑"钉死）：
+  - **正向那一半入库、一键可复，且不需要 WSL**：`bunx vitest run bench/out-path-guard.test.ts` —— 形态清单与
+    期望判定住在 `bench/out-path-guard.cases.ts`，两张表与测试文件**全部 tracked**，任何 clone、任何平台同一条命令。
+    CI 的 linux job 本来就是它的执行环境，所以"linux 上这批字符串判据为绿"这件事**有入库面守护**，不依赖本节数字。
+  - **负向那一半不入库，且是刻意的**：修复前模块经 `git show 4bbea37:bench/out-path-guard.ts` 现取，本补遗
+    影响节那三条变异（M1/M2/M3，当时是临时改 `cases.ts` → 跑消费侧 → 逐字节还原）同理。入库会 ① 被 jscpd
+    当代码克隆告警（同一判据函数在库里出现两份），② 把"评审当时的临时证据"升格成
+    受管入口，与 `R11R1-A-M1` 的判据（`var/` 是 scratch，不是 entry point）相抵。复跑它的成本已被上条压到很低：
+    期望表在库，探针只是 import 那张表换个 runner。
+  - 所以本节 linux 数字的性质是**一次性观测**，不是可回归断言；跨平台回归保护恒以入库面（`bench/out-path-guard.test.ts`
+    + `cases.ts` 跑在 CI linux runner）为准。
 - 守卫步沙箱：`node var/probe-workflow-guard-r11.cjs` → 从 `bench.yml` **原文抽取** `run:` 体（只替换末行 `bunx vitest run`，避免探针与真文件漂移），六路径实跑全过：① 真实仓三根齐 → rc=0 / `WOULD-RUN count=21`；② 同一体在 `bash -n`、`bash -e`、`bash -eo pipefail` 三口径下语法与退出码双过（runner 的 `shell: bash` 实为 `--noprofile --norc -eo pipefail`，本地默认只有 `-e`，`| grep -q .` 这类管道的退出码差异只在 pipefail 口径下才暴露）；③ 沙箱三根齐 → rc=0（证明下面两条红来自断言而非环境噪声）；④ 整根缺失 → rc=1 且 stderr 指名 `'tests/utils' is missing`；⑤ 锚点在但用例被迁走 → rc=1 且指名 `'bench' holds no *.test.ts`；⑥ `sort` 的异文件形态与 in-place 形态在本机 21 行逐字节相同（承上条：预防性对照，非缺陷复现）。**④⑤ 同时是本批新加 `trap … EXIT` 的退出码自证**——两条红必须以 rc=1 抵达 runner，若 trap 吞掉失败状态则这两条立刻变绿。
 - **`var/` 引用的性质 = 本机 scratch，不是可复跑入口**（R11R1-A-M1 与 A-m5 的处置）：本 ADR 与登记处里
   凡写作 `var/…` 的路径都是 **gitignored 的评审探针**，除 `!var/*.ts` 外不入库，随时可能不在本机之外被任何

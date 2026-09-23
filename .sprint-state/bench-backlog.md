@@ -11,7 +11,8 @@
   `R6-C2`/`R7-B2` 已随 R10 批次收口，R10 匿名轮 18 个 ID 已随 R10 R1 收口提交处置，R10 交换轮 13 个 ID
   （1 Major + 12 Minor）随 R10 R2 收口提交处置，R10 修复复评轮 13 个 ID（1 Major + 11 Minor + 1 跟踪项）
   随 R10 R3 收口提交处置，R10 第二处置复评轮 9 个 ID（1 Major + 8 Minor）随本批 R10 R4 收口提交处置，
-  均 2026-09-22/23。
+  均 2026-09-22/23。**R11 三批 26 个 ID**（匿名轮 8：走查 7 + 仓库重建事故 `R11-INC-1` 1；交换轮 Round 1
+  10 个：4 Major + 6 Minor；复评轮 Round 2 8 个：全 Minor）随 R11 R1/R2/R3 三个收口提交处置，均 2026-09-23。
   留痕项 `R9-A-3`/`R9R2-A-N1` 挂在下次 CI record 自愈
 - **跟踪项到期与升级**（R10R4-C-m1 起成文）: 状态列写作 `OPEN（跟踪项）` 的行**必须在同一行内**给出
   可自动触发的升级条件（形如"若第 N 批仍未落地 → 升 Major"）。缺该条件的跟踪项不得登记，只能写成
@@ -431,7 +432,7 @@ B **REQUEST_CHANGES / 0 Critical / 2 Major / 5 Minor**，C **APPROVED 但 `major
 | R11R1-B-m3 | `docs/adr/0002` 补遗四·影响节 ② | "`lexicalForPlat` 由私有改为**导出**"在压扁的区间 diff 里不可读（该函数整条是新增行） | B | 已消化（改为"本批新增并导出（首笔私有、同批第二笔改导出）"，并明写"以此处为准而非以区间 diff 为准"。这是 `R11R1-B-M2` 同一族的**区间 vs 单笔**口径问题，两处一并收口） |
 | R11R1-B-m4 | `bench/out-path-guard.cases.ts` 的 `GUARD_FORM_CASES` 由四族 `.map()` 展开 | 某族成员被误删则表**静默变短**，无断言会红 | B | 已消化（并入下条 `R11R1-C-M2` 的元断言族：`MIN_FORMS` 各族**下界** + 变异 M1 实跑红在「分组守恒」。下界惯例承 `MIN_BACKLOG_ROWS`（`R10R3-A-m3` 已裁决"零余量、合法裁剪须同批下调"），能力边界一并成文：挡净减与误标，**不**挡等量替换） |
 | R11R1-B-m5 | 卷包 ③「登记处新增行」摘要 | 状态列被截到 60 字 → E 条"未转义 `\|` 撑破格数"从卷面无法判 | B | 已消化（**卷包面**处置，不改入库面：Round 2 起登记处内联全文。E 条本身在入库面由 `backlog-integrity.test.ts` 的「每条数据行的格数与该表表头一致」断言管辖，且该断言按 `\|` 转义感知拆格（`R10R1-C-m1`）——本批 10 行能被该用例放行，即为答案；不引 `var/` 里的临时脚本作证据，理由见 `R11R1-A-M1` 的成文约定） |
-| R11R1-C-M1 | `.github/workflows/bench.yml`（建议新增 windows job） | win32 专有行为在 linux CI 只靠 `plat` 注入模拟，缺 Windows Runner 的自动化覆盖 | C | **拒绝并成文**（① 该残余早已登记并保持命名：`R10R2-A-m2`（win32 端到端身份腿 + `tests/integration`/`tests/e2e` 无 CI 执行面）与 `R11R1-A-m2`（反斜杠别名的身份腿），卷面 §7 明示不要重复报；② 加 windows job 与冻结面冲突的一面：G1/G2/G3 阈值锚在 linux runner（补遗三保真锚点），win job 只能跑功能测试，收益是"重复本机每次收口都跑的 `bunx vitest run`"，代价是双份全量时长；③ 字符串腿已两平台兑现（`lexicalForPlat` 纯函数断言 + `plat` 注入矩阵）。故维持"本机 win32 实跑 + CI linux 全量"的分工，不新开 job） |
+| R11R1-C-M1 | `.github/workflows/bench.yml`（建议新增 windows job） | win32 专有行为在 linux CI 只靠 `plat` 注入模拟，缺 Windows Runner 的自动化覆盖 | C | **拒绝并成文**（① 该残余早已登记并保持命名：`R10R2-A-m2`（win32 端到端身份腿 + `tests/integration`/`tests/e2e` 无 CI 执行面）与 `R11R1-A-m2`（反斜杠别名的身份腿），卷面 §7 明示不要重复报；② 收益/代价：G1/G2/G3 阈值锚在 linux runner（补遗三保真锚点），win job 只能跑功能测试，收益是"重复本机每次收口都跑的 `bunx vitest run`"，代价是双份全量时长；③ 字符串腿已两平台兑现（`lexicalForPlat` 纯函数断言 + `plat` 注入矩阵）。故维持"本机 win32 实跑 + CI linux 全量"的分工，不新开 job。**措辞勘误（`R11R2-B-m2`）**：本行原写"② 与冻结面冲突的一面"——该说法可被 `git diff` 证否（只跑 `bunx vitest run` 的 job 根本不触碰 `regression-formula.ts` / `baseline.json` / `record-baseline.ts`），真理由是**阈值保真锚在 linux**，与冻结面无涉。② 的编号与理由已按此改写） |
 | R11R1-C-M2 | `bench/out-path-guard.cases.ts` 作为单一事实源 | 表错则 CI 与探针同时假绿；C 给的方向是"定期人工审核 / 变更审查机制" | C | 已消化（不采不可操作建议，落点与 A、B-m4 同源：**消费者侧结构元断言**一节 4 条，表达式与 `hostPath`/`canonicalPath` 不共享代码。三家在同一条上独立命中，是本轮最有价值的一条意见） |
 | R11R1-A-m6 | 同上（`cases.ts:1-104`） | A 建议"增加轻量级元测试校验表中字符串的语法结构合法性，以打破纯数据表的盲区" | A | 已消化（**按 A 的原话落地**：三家里只有 A 给出了可操作方向，另两家只指出风险。落点 = 测试文件「期望表自身的结构元断言（共因失效面：R11R1-C-M2 / A-m6 / B-m4）」一节；判别力由三条变异自证，见下） |
 
@@ -457,6 +458,48 @@ B **REQUEST_CHANGES / 0 Critical / 2 Major / 5 Minor**，C **APPROVED 但 `major
 - **冻结面零改动自证**：`git diff --exit-code 4bbea37..HEAD -- bench/regression-formula.ts bench/baseline.json
   bench/record-baseline.ts` 仍为 0；`bench/baseline.json` md5 仍为 `3ebfaa9f6a71ecf7cb7b0d91355e2525`；
   判据公式 `* 1.2` / `> 2` 与三台门阈值常量未触碰，`bench/out-path-guard.ts` 的 diff 只有注释与文档注。
+
+### R11 R3 批次（R11 Round 2 三家意见 → 本收口提交，2026-09-23）
+
+R11 Round 2（交换轮，卷面 §10 内联 Round 1 原始输出、③-c 内联本登记处新节全文）：A / B / C **三家皆
+APPROVED、0 Critical、0 Major**，consensus 1.0，合计 **8 条 Minor**（A 3 / B 3 / C 2）。这是 `R11-INC-1`
+后第一次跑到"三家同轮全绿且无 Major"，因此 Gate MW 证据本轮起可写；上表 10 条处置经三家复核**无一被
+推翻**（`OVERTURNED` 零次）。
+
+| ID | 位置 | 内容 | 来源 | 状态 |
+|----|------|------|------|------|
+| R11R2-A-m1 | 卷面 §0「专家模型槽位」+ 本表上一条批次的披露 bullet | A 主张 A 槽（`g-qwen3.8-flash`）与 C 槽（`local-qwen3.8-27b`）同属 Qwen 系，削弱 Delphi 独立性，建议聚合侧对同族双槽"降权标记/标注独立性折扣" | A | **拒绝并成文**（编排器没有"权重"这个机制可改：`delphi-experts.cjs` 的三项 checks 只核 `requested`/`executed` 互异 + 回显相符，Gate MW 只数"三家 APPROVED 且 `requested_model` 互异"，把"降权"塞进去等于新增一条不在契约里的门。可做的只有**把折扣显式标注**——而这件事上一批已经做了（本表「专家模型槽位变更」bullet + 卷面 §0），本轮再补一句判据：本轮 8 条 Minor 里 A/C 两家的落点**互不重叠**（A 全在注释/流程面、C 全在 CI/复跑面），故"同族趋同"在本轮没有可观测的证据面。目录里确无第四族可用 ID，见 `R11-INC-1` 后的探测记录） |
+| R11R2-A-m2 | 卷面 §6「CI 守卫步探针…重跑」 | A 判该声称无法从卷面代码自证，属"依赖未独立核验的自证材料" | A | 无需入库面动作（**核对后判定该声称不在 tracked 面上**：`bench.yml` 本批零改动，"重跑六路径"只写在 scratch 卷面 §6，ADR 与登记处都没有这条可被证伪的断言，故没有需要限定的入库措辞。A 自己亦判"风险极低"。留此行为记录，免得下一批又有人在 ADR 里补一句反而造出新的可证伪面） |
+| R11R2-A-m3 | `bench/out-path-guard.ts` 的 `lexicalForPlat` 文档注（17-42 行） | A 建议把关键边界理由同步一份短引用进 ADR 补遗四决策节，防重构时删注释保函数 | A | **拒绝**（纯风格项，且前提半错：ADR 补遗四决策节**本就有**互指——"建模边界补一条（`R11R1-B-m1`…）"那段写的正是同一条边界理由（在影响节内，行号随本批增删漂移故不写死）。删除注释的防护也不在"再抄一份"这一侧：`R11R1-B-m1` 的落点是测试头 uncovered 第 5 条，那条是 CI 必跑面的文档，重构者删注释时它仍在原地） |
+| R11R2-B-m1 | `docs/adr/0002` 补遗四·影响节 变异 M2 那句 | B 判"等量替换 → 红在 `tracked` 族定义性特征"易被读成"元断言能判等量替换"，与上一句"不挡等量替换"自相矛盾；B 给的例子（换成同样折到本名的 `bench/./BASELINE.JSON`）两侧同绿 | B | 已消化（**照 B 的例子在 ADR 补一段限定**：M2 红是因为换进去的形态恰好破坏了定义性词法名，它证明"误标会被抓到"，**不**证明"等量替换被抓到"。B 的前提核对为真：`lexicalName("bench/./BASELINE.JSON")` = `bench/baseline.json` → 定义性特征不破 → 元断言与消费者矩阵确实同绿。这是本轮唯一一条**改入库文字**的实质修复） |
+| R11R2-B-m2 | 本表 `R11R1-C-M1` 行的拒绝理由 ② | B 判"加 windows job 与冻结面冲突"这一支可被 `git diff` 证伪：只跑 `bunx vitest run` 的 job 根本不触碰三个冻结件 | B | 已消化（**采纳且承认写错**：真理由是"阈值保真锚在 linux runner"（补遗三），与冻结面无涉。已改写该行 ② 为收益/代价陈述，并在同一行加**措辞勘误**标注，保留"当初写错过"的痕迹而不是静默改掉——约束 4 的对偶面：错过的断言要能被后人查出来错在哪） |
+| R11R2-B-m3 | 本表「本批代码面清单」bullet 的 `+10` 与棘轮 90→118 | B 判 ③-c 的 `+10` 只描述本批增量、未说明棘轮为何 `+28`，与 ③-b 的区间口径未接上 | B | 已消化（补区间口径一句。**但按实测订正 B 给的拆分**：B 建议写"含 R10 R5 批 `+10` 与本批 `+18`"——两批归属反了。`git show` 三个 HEAD 的实值是 `4bbea37`→90 / `b42bc10`→108 / 本批→118，即**上一批 +18、本批 +10**，锁清单同形（92→110→120）。照抄 B 的措辞会把一个新的错数字写进入库面） |
+| R11R2-C-m1 | `bench/out-path-guard.test.ts` 的 `it.runIf(win32)` 等价性用例 | C 判该承诺在 linux CI 上被 skip = 零守护，给出两条出路：①在 pre-push/收口脚本强制跑一次 win32 宿主用例；②否则在 ADR 明写"仅 win32 宿主可验、CI 不守护"并把残余并入 `R10R2-A-m2` 的到期复审 | C | **部分消化（采 ②，拒 ①）**：①不做——xp-gate 的 pre-push 是**全局钩子**（`~/.config/xp-gate/hooks`），不在仓内、不受本批 diff 管辖，在别的仓库也会生效，为一条 bench 判据去改全局门是越界；且 win32 本机实跑本就是每次收口的既有动作（本表多批的"本机 win32"行即其痕迹），不是一个可入库的机器门。②做——已在 ADR 补遗四的 `runIf(win32)` 那条后面写清"CI 不守护"，并把本残余挂到 `R10R2-A-m2`（OPEN，期限 2026-09-30）名下复审，不再无人认领 |
+| R11R2-C-m2 | ADR 验证节的 linux 正/负双向证据 | C 判 104/0、61/43、六路径、变异三条皆出自 gitignored scratch，评审者无法独立复现；建议把负向对照固化为一段可复制粘贴的命令块 | C | **部分消化（采"可复现的那一半"，另一半说明为何不入库）**：正向那一半**本来就是**一键复跑且 tracked——`bunx vitest run bench/out-path-guard.test.ts`（`cases.ts` + 测试文件全在库，任何 clone 任何平台可跑），已在 ADR 验证节写死这条口径；负向那一半（`git show` 现取修复前模块）与三条变异**不入库**：把修复前的判据模块落一份 tracked 副本会被 jscpd 当代码克隆告警，而变异脚本的性质与 `R11R1-A-M1` 已裁决的"`var/` = 本机 scratch，不是可复跑入口"同型。C 的"降低对单一未核验自证的依赖"因此由**正向腿的可复跑性**承担，不再声称负向可一键复跑 |
+
+- **裁决口径**：本表 **8 行**全部为走查来源（A 3 / B 3 / C 2），无事故来源。入库面**只动文字、不动判据**
+  （`R11R2-B-m1` 的 ADR 限定段、`R11R2-B-m2` + `R11R2-C-m1` + `R11R2-C-m2` 的 ADR/登记处措辞订正；
+  逐面清单见下一条），**判据/测试/CI 三面零改动**。
+  **非专家来源的顺带改动（主动申报）**：本文件头部台账句此前只记到 R10 R4，未记 R11 三批——R11 R1/R2 两批
+  登记时都漏了同一处，属"逐批不更新即静默失真"的既病。现补 26 个 ID 的三批口径，数字取自本节与 R11 R1/R2
+  两节各自的批次计数行，非估算。
+- **本批代码面清单（含区间口径）**：① 文档面 = `docs/adr/0002`（M2 限定段 + `runIf(win32)` 的"CI 不守护"
+  + 验证节可复跑口径）；② 登记处 = 本节 + `R11R1-C-M1` 行的措辞勘误 + 头部台账句补 R11 三批（见上一条申报）；
+  ③ 锁清单/棘轮 = 同批上移。
+  **区间 vs 本批**（`R11R1-B-M2`/`R11R2-B-m3` 同一族的收口）：`MIN_BACKLOG_ROWS` 的区间路径是
+  `4bbea37`=90 → `b42bc10`=108（上一批 `+18`）→ 本批 118（`+10`）→ 本处置批次 126（`+8`）；
+  `LOCKED_IDS` 同形为 92 → 110 → 120 → 128。写单批增量时必须带这条区间链，否则读者按区间读必自相矛盾。
+- **验证**：本批**无代码改动**，故复跑口径是"证明没有改到判据"：① `git diff --name-only e946a0f` 只列出
+  `docs/adr/0002`、本文件、`tests/unit/backlog-integrity.test.ts` 三项（即 `bench/`、CI 工作流、判据三面零改动；
+  命令钉死基准 commit 而非 `HEAD~1`，提交后照样可复跑）；② 全量 `bunx vitest run` 与 `bunx tsc --noEmit`
+  必须与上一批同数（271 passed / 3 skipped；tsc rc=0；`bunx oxlint bench tests src` 0 warnings / 0 errors）；
+  ③ 登记处守卫 `bunx vitest run tests/unit/backlog-integrity.test.ts` 全绿（格数与锁清单两条管辖本批 8 行）。
+  **linux 探针本批未重跑，理由不是省事**：`bench/out-path-guard.ts` 与 `bench/out-path-guard.cases.ts` 自
+  `e946a0f` 起逐字节未变（见上一条 ① 的文件清单），ADR 的 104/0 与 61/43 判据面正是跑在这份字节上，重跑同名
+  输入不可能改结论；本批改动全在文档面，探针根本不读文档。
+- **冻结面零改动自证**：`git diff --exit-code 4bbea37..HEAD -- bench/regression-formula.ts bench/baseline.json
+  bench/record-baseline.ts` 仍为 0；`md5sum bench/baseline.json` 仍为 `3ebfaa9f6a71ecf7cb7b0d91355e2525`；
+  本批连 `bench/` 目录都未触碰（见上一条 ①）。
 
 ## 备注
 

@@ -18,6 +18,8 @@ import {
 import {
   ADS_FORMS,
   GUARD_FORM_CASES,
+  LEGAL_FORMS,
+  NAME_VARIANT_FORMS,
   PRECHECK_PASS_POSIX_FORMS,
   PRECHECK_PASS_WIN32_FORMS,
   PRECHECK_THROW_FORMS,
@@ -58,6 +60,13 @@ import {
 //      故同一用例在两台宿主上"绿的不是同一条腿"——win32 宿主 `sameName ∧ sameInode` 双真，posix 宿主只有
 //      `sameName` 真（本文件里 `sameNameWin32` 那一断言即此）。后果良性：tracked 拒绝由名字腿独立承担，
 //      身份腿只是第二道。这是 R11 名字折叠修复的**边界**，不是本批引入的回归，也不写成条件断言冒充双平台。
+//   5. 承上第 4 条，同一边界也管**预检的宿主 FS 腿**（`R11R1-B-m1` 的处置）：`lexicalForPlat` 只接词法面
+//      （`canonicalPath` 的回退分支与 `dirname` 取父），`existsSync` / `statSync` / `accessSync` 一律按
+//      **字面** `outHost` 问宿主。这是**故意**的：预检的职责是"待会儿 `writeFileSync` 开得开吗"，而
+//      `writeFileSync` 用的是字面名——在 posix 宿主上把 `bench\x` 改写成 `bench/x` 去探测，探的是**另一个
+//      文件**的可写性，比"探不到"更错。故 posix 宿主 + win32 建模下这几腿只是对建模名的探测，
+//      不等于 win32 实机；生产侧 `plat === platform()`，两种读法逐字同形（该等价性由 lexicalForPlat
+//      的纯字符串用例与下面那条 `runIf(win32)` 用例钉住）。
 
 const W = "win32";
 const L = "linux";
@@ -72,6 +81,84 @@ const posixCases = GUARD_FORM_CASES.filter((c) => c.expectPosix !== undefined);
 
 const inspected = (c: GuardFormCase, plat: string) =>
   inspectOutPath(c.form, c.tracked === undefined ? { plat } : { plat, tracked: c.tracked });
+
+describe("期望表自身的结构元断言（共因失效面：R11R1-C-M2 / A-m6 / B-m4）", () => {
+  // 单点化把"探针一份断言、CI 一份断言"换成一张表，代价是**表本身写错则两侧同绿**。下面几条
+  // **不调用** hostPath / canonicalPath，只用另一套字符串表达式把"每一族该长什么样"写死，
+  // 故表里一条形态被误删、误标或写错宿主时，这里先红，不必等消费者。
+  // 能力边界（不吹）：防"某族被静默裁剪 / 标签写错"，**不**防"等量替换两条形态"——后者在字符串层不可判，
+  //   下界只挡净减（与登记处 `MIN_BACKLOG_ROWS` 的已知限界同类，`R10R3-A-m3` 成文）。
+  const tailOf = (form: string) => form.split(/[/\\]/).pop() ?? "";
+  const lexicalName = (form: string) =>
+    form
+      .replace(/\\/g, "/")
+      .split("/")
+      .filter((seg) => seg !== "" && seg !== ".")
+      .join("/")
+      .toLowerCase();
+  /** 与 `hostPath` 的 `lastIndexOf` + `slice` 无共享代码的"流后缀"取法（元断言要的是独立性）。 */
+  const streamOf = (form: string): string | null => {
+    const tail = tailOf(form);
+    const i = tail.indexOf(":");
+    return i === -1 ? null : tail.slice(i + 1);
+  };
+
+  // 刻意**不**钉各族的绝对条数（那会让每次合法的"加一条形态"都变成三处同步）；钉的是**下界**，
+  // 与登记处的 `MIN_BACKLOG_ROWS` 同一惯例：合法裁剪必须同批下调本表并进 diff、走查可见；新增族成员
+  // 不必动这里。实测判别力：删掉 ADS_FORMS 的一条 → 本条红（变异 M1）。
+  const MIN_FORMS: Record<string, number> = { ADS_FORMS: 6, SYNTH_STREAMS: 6, NAME_VARIANT_FORMS: 4, LEGAL_FORMS: 5 };
+
+  it("分组守恒：表长 = 四族之和、各族不少于登记下界、形态全局唯一", () => {
+    expect(GUARD_FORM_CASES.length).toBe(
+      ADS_FORMS.length + SYNTH_STREAMS.length + NAME_VARIANT_FORMS.length + LEGAL_FORMS.length,
+    );
+    const sizes: Record<string, number> = {
+      ADS_FORMS: ADS_FORMS.length,
+      SYNTH_STREAMS: SYNTH_STREAMS.length,
+      NAME_VARIANT_FORMS: NAME_VARIANT_FORMS.length,
+      LEGAL_FORMS: LEGAL_FORMS.length,
+    };
+    for (const [name, min] of Object.entries(MIN_FORMS)) {
+      expect([name, sizes[name] >= min]).toEqual([name, true]);
+    }
+    const forms = GUARD_FORM_CASES.map((c) => c.form);
+    expect(new Set(forms).size).toBe(forms.length);
+  });
+
+  it("标 `stream` 的每条都是「末段含冒号」的真流引用；标 `tracked` 的每条词法名恰是本名且末段无冒号", () => {
+    for (const c of GUARD_FORM_CASES.filter((x) => x.expectWin32 === "stream")) {
+      expect([c.form, tailOf(c.form).includes(":")]).toEqual([c.form, true]);
+    }
+    for (const c of GUARD_FORM_CASES.filter((x) => x.expectWin32 === "tracked")) {
+      expect([c.form, lexicalName(c.form)]).toEqual([c.form, TRACKED_BASELINE]);
+      expect([c.form, tailOf(c.form).includes(":")]).toEqual([c.form, false]);
+    }
+  });
+
+  it("放行族的每条末段都**不是** `baseline.json`（防把 tracked 变体误标成放行）", () => {
+    for (const c of GUARD_FORM_CASES.filter((x) => x.expectWin32 === null)) {
+      expect([c.form, tailOf(c.form).toLowerCase() === "baseline.json"]).toEqual([c.form, false]);
+      expect([c.form, lexicalName(c.form) === TRACKED_BASELINE]).toEqual([c.form, false]);
+    }
+  });
+
+  it("预检族自洽：win32 必 throw 者的流后缀恰为「空串或含冒号」，posix 对照组与 win32 拒族同形", () => {
+    for (const form of PRECHECK_THROW_FORMS) {
+      const s = streamOf(form);
+      expect([form, s === "" || (s !== null && s.includes(":"))]).toEqual([form, true]);
+    }
+    for (const form of PRECHECK_PASS_WIN32_FORMS) {
+      const s = streamOf(form);
+      expect([form, s !== null && s !== "" && !s.includes(":")]).toEqual([form, true]);
+    }
+    // 同一批畸形形态在 posix 建模下必须**整条不生效**（下方预检用例证其放行）：这钉的是"该判据
+    // 属 win32 专有而非通用字面约束"，若有人把两组写成不相干的形态，这里先红。
+    const thrown: readonly string[] = PRECHECK_THROW_FORMS;
+    for (const form of PRECHECK_PASS_POSIX_FORMS) {
+      expect([form, thrown.includes(form)]).toEqual([form, true]);
+    }
+  });
+});
 
 describe("hostPath：win32 宿主折叠（把 `:` 后缀剥回宿主文件）", () => {
   it("末段流后缀一律剥掉，含多级流与经典默认流", () => {
@@ -96,6 +183,11 @@ describe("hostPath：win32 宿主折叠（把 `:` 后缀剥回宿主文件）", 
     // 裸 `f:` 由 `/^[A-Za-z]:/` 分支识别为**盘符根**，不是"文件 f 的空流名"——两种解读结论不同，钉死。
     expect(hostPath("f:", W)).toBe("f:");
     expect(hostPath("f:", L)).toBe("f:");
+    // 单字母盘符宿主 + 多级流：`start = 2` 之后**第一个**冒号在索引 3，故折到 `f:a`（宿主）+ 流名 `b`，
+    // 是合法可写形态（`out-path-guard.ts` 的 R10R5-B-m1 注释与 ADR 补遗四都如此声称；本轮走查有专家
+    // 按"`sep + 1` = 2 ⇒ 切到 `f:`"读过，实跑证否）。**钉成断言**而非留在注释里。
+    expect(hostPath("f:a:b", W)).toBe("f:a");
+    expect(hostPath("D:h.txt:w9", W)).toBe("D:h.txt");
   });
 
   it("posix 上 `:` 是普通文件名字符 → 恒等（realpath 本就能区分该文件与 tracked）", () => {
@@ -176,6 +268,9 @@ describe("inspectOutPath：tracked 家族拒绝矩阵（补遗一的 17 形态�
     for (const c of win32Cases) {
       const f = inspected(c, W);
       expect([c.form, f.refusal]).toEqual([c.form, "stream"]);
+      // 机制断言（与下面的结构元断言同一族：标签不许与机制脱钩）：`"stream"` 这个理由**只能**来自
+      // "宿主折叠确实发生了"这条腿；只钉标签与结果的话，将来有人把理由硬编码成 stream 也不会红。
+      expect([c.form, f.outHost === c.form]).toEqual([c.form, false]);
       // 同一套后缀换成不存在的宿主，结论不变（证明拒绝来自**字符串折叠**而非宿主的真实存在）；
       // 真实宿主那一族另钉 sameName：宿主折叠必须把它折回 tracked 的同一个名字。
       if (c.sameNameWin32) expect([c.form, f.sameName]).toEqual([c.form, true]);

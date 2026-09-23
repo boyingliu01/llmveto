@@ -29,6 +29,10 @@ export const TRACKED_BASELINE = "bench/baseline.json";
  * 接受 `/` 与 `\`，两种写法指向同一路径（该等价性由测试用例「win32 宿主上「把 `\\` 换成 `/`」不改变
  * 任何判定（lexicalForPlat 的等价性承诺，非显然）」钉死，而非当作显然）。
  *
+ * 也**不接**宿主 FS 探测（`existsSync` / `statSync` / `accessSync`，R11R1-B-m1 的处置）：预检问的是
+ * "待会儿 `writeFileSync(字面名)` 开得开吗"，把字面名改写后再探，探的是**另一个**文件的可写性。
+ * 词法面可以按建模平台解释，宿主文件系统面不可以——边界成文于 `out-path-guard.test.ts` 头 uncovered 第 5 条。
+ *
  * 为什么**导出**：上面那句"钉死"用的用例是 `it.runIf(win32)`，即在 linux CI 上被 skip —— 一条写进
  * tracked 文档的承诺在 CI 里零守护（R11R1-A-m1）。导出本函数后，"改写规则本身"（win32 建模下 `\`→`/`、
  * 其余平台恒等）是一条**不碰文件系统、两平台都跑**的纯字符串断言；`it.runIf(win32)` 那条继续钉它声称的
@@ -231,7 +235,8 @@ export function assertWritableOutPath(fate: OutPathFate): void {
   // 也一律 ENOENT（`file:tag`、`file:$DATA` 才合法）。
   // 注（R10R5-B-m1 订正）：**单字母**前缀是盘符而非文件名，不能混进上面那组——`f:` 被 `hostPath` 判为
   // 盘符根（`outPath` 原样返回，本条折叠不发生、整支跳过），`f:a:b` 折到宿主 `f:a` + 流名 `b`，
-  // 是**合法可写**形态（实测：cwd 置于 `var/` 下 `openSync("D:h.txt:w9","wx")` → 创建成功）。
+  // 是**合法可写**形态（实测：cwd 置于 `var/` 下 `openSync("D:h.txt:w9","wx")` → 创建成功；
+  // 该折叠结果现已钉成断言 `hostPath("f:a:b", "win32") === "f:a"`，不再只活在注释里）。
   // 此前预检只看宿主，尾冒号那几类穿过预检、跑满 10×3 采样才在 writeFileSync 处失败，正是本函数要消灭的形态。
   // posix 上 `:` 是普通文件名字符（且 hostPath 恒等 → 后缀为空），故整条判据只在 win32 生效。
   if (plat === "win32" && outHost !== outPath) {

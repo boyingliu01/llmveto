@@ -158,6 +158,16 @@ const LOCKED_IDS = [
   "R11R1-A-m4",
   "R11R1-A-m5",
   "R11-INC-1",
+  "R11R1-A-m6",
+  "R11R1-B-M1",
+  "R11R1-B-M2",
+  "R11R1-B-m1",
+  "R11R1-B-m2",
+  "R11R1-B-m3",
+  "R11R1-B-m4",
+  "R11R1-B-m5",
+  "R11R1-C-M1",
+  "R11R1-C-M2",
 ] as const;
 
 /** 规范 ID 记号；`R2-A-M2 / R2-C-M1` 型合写行按 `/` 拆开，`（并入 R8-B-M1）` 型说明格不入选。 */
@@ -320,11 +330,11 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
   it("每条数据行的格数与该表表头一致，且 ID/状态两格非空（拦截写截断与半行覆盖）", () => {
     const rows = allRows(readFileSync(path, "utf8"));
     // 行数棘轮：只增不减。裁剪行须同步下调本常量——与下调锁清单同样是刻意且进 diff 的动作。
-    // 下界**恒取实测行数**（历史 55=55、68=68、当前 108=108）：这不是假红，而是设计（"合法裁剪必须同批
+    // 下界**恒取实测行数**（历史 55=55、68=68、当前 118=118）：这不是假红，而是设计（"合法裁剪必须同批
     // 改常量"的机器化）；见文件头「能力边界」末条与登记处「状态列约定」（R10R3-A-m3/C-m1 成文）。
-    // 108 = R11 R1 批次后的实测数据行数（12 张 ID 表，新增的 8 行 = `R11R1-A-*` 7 行走查来源 +
-    // `R11-INC-1`（走查期仓库重建事故来源））。
-    const MIN_BACKLOG_ROWS = 108;
+    // 118 = R11 R2 批次后的实测数据行数（13 张 ID 表，本批新增 10 行 = `R11R1-B-*` 7 + `R11R1-C-*` 2 +
+    // `R11R1-A-m6` 1，全部为走查来源）。
+    const MIN_BACKLOG_ROWS = 118;
     expect(rows.length, `${BACKLOG_REL} 表行数低于棘轮下界 ${String(MIN_BACKLOG_ROWS)}（当前 ${String(rows.length)}）`).toBeGreaterThanOrEqual(
       MIN_BACKLOG_ROWS,
     );

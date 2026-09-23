@@ -400,6 +400,9 @@ HEAD 的用例、`bench.yml` 原文或 ADR 文本复核。
 - **本批代码面清单**（延续 `R10R3-A-N1` 的四面拆分）：① 判据面 = `bench/out-path-guard.ts`；② CI 执行面
   = `.github/workflows/bench.yml`；③ 文档面 = `docs/adr/0002` 补遗四；④ 测试面 + 本登记处（期望表
   `bench/out-path-guard.cases.ts` + `bench/out-path-guard.test.ts` 改写 + 锁清单 +8、棘轮同批上调）。
+  **口径**：`+8` 是**本批**增量；`4bbea37..HEAD` 这段**区间**跨两批（R10 R5 批 +10 与本批 +8），
+  故区间 diff 读到的总数是锁清单 92→110、棘轮 90→108（`R11R1-B-M2` 把它读成"同一节自相矛盾"即源于
+  此处未成文，本条补齐；每张表的行数与增量一律按**本批**口径）。
   **顺序颠倒须披露**：本批 ④ 先于 ③ 落地（`b2cbde4` → `4959f50` → `4426b9b` → `cbe355c` → `de727ab`），
   与惯例的 ①→②→③→④ 相反，原因是 `R11-INC-1` 后需要**尽快把重建面提交进 git 对象库**，
   即"防止再次丢失"优先于"叙事顺序"。
@@ -411,6 +414,49 @@ HEAD 的用例、`bench.yml` 原文或 ADR 文本复核。
 - **冻结面零改动自证**：`git diff --exit-code 4bbea37..HEAD -- bench/regression-formula.ts bench/baseline.json
   bench/record-baseline.ts` 为 0；判据公式 `* 1.2` / `> 2` 与三台门阈值常量未触碰；`bench/baseline.json`
   md5 仍为 `3ebfaa9f6a71ecf7cb7b0d91355e2525`。
+
+### R11 R2 批次（R11 Round 1 三家意见 → 本收口提交，2026-09-23）
+
+R11 Round 1（重跑成功的那一次，无工具外部执行器）：A **APPROVED / 0 Critical / 0 Major / 1 Minor**，
+B **REQUEST_CHANGES / 0 Critical / 2 Major / 5 Minor**，C **APPROVED 但 `major_concerns` 列了 2 条**
+（与卷面 §4 的"APPROVED 不许有 Major"冲突 → 按零容忍照处置，不因其 verdict 字面为 APPROVED 而跳过）。
+10 个 ID = B 家 7 + C 家 2 + A 家 1。本轮是 `R11-INC-1` 之后第一次三家全部成功执行的 Round 1。
+
+| ID | 位置 | 内容 | 来源 | 状态 |
+|----|------|------|------|------|
+| R11R1-B-M1 | `bench/out-path-guard.ts` 的 `hostPath` `start` 计算 vs `R10R5-B-m1` 注释 | B 主张 `f:a:b` 折到 `f:` 而非注释声称的 `f:a`，于是预检会把一个"合法可写"形态误拒（约束 2 的对偶面） | B | **拒绝并成文 + 钉断言**（实跑 `hostPath("f:a:b","win32")` = `"f:a"`：串内无分隔符 → `sep = -1` → `start = 2`，而 `indexOf(":", 2)` 落在**索引 3**，切出 `f:a`；B 把 `start` 当成了切片终点。注释与 ADR 的声称本就成立。处置：该折叠不再只活在注释——测试「盘符相对与 UNC 共享根里的冒号…」新增 `f:a:b`→`f:a`、`D:h.txt:w9`→`D:h.txt` 两条纯字符串断言。**未**在预检层面加断言：`dirname` 是宿主绑定 API，`f:a` 的父目录探测在无该盘符的机器上必红，即 uncovered 第 5 条所写的边界，硬造断言等于假覆盖） |
+| R11R1-B-M2 | `.sprint-state/bench-backlog.md` 相邻两节的"本批代码面清单"bullet + `tests/unit/backlog-integrity.test.ts` | 区间 diff 实测锁清单 +18（92→110）、棘轮 90→108，而两节 bullet 分别写"+10"与"+8" → 读成一个区间即自相矛盾（约束 4） | B | 已消化（**成文口径**：在 R11 R1 批次的清单 bullet 内补一句"`+8` 是本批增量、区间跨两批（+10 与 +8），区间总数 92→110 / 90→108"。B 的算术前提正确，误在把相邻两批读成同一节；把这一点写死是登记处的责任） |
+| R11R1-B-m1 | `assertWritableOutPath` 的 `existsSync` / `statSync` / `accessSync` 三腿 | `lexicalForPlat` 接了词法面却没接宿主 FS 腿 → "建模泄漏/建模不完整" | B | **拒绝并成文**（不改代码：预检的职责是回答"待会儿 `writeFileSync(字面名)` 开得开吗"，把字面名改写后再探探的是**另一个**文件的可写性，比"探不到"更错。词法可按建模平台解释、宿主文件系统不可 —— 与补遗四 `plat` 可达边界同一条。落点 = `lexicalForPlat` 文档注新增一段 + 测试头 uncovered 清单新增第 5 条，二者互指） |
+| R11R1-B-m2 | `docs/adr/0002` 补遗四·验证节末条 | 写"本批现役两支"，同节实际提到三支探针（linux 正向 / linux 负向 / 守卫步六路径） | B | 已消化（改为列举式"三支"并点名第三支及其用途，顺带把句子拆成不依赖计数也能读的形状） |
+| R11R1-B-m3 | `docs/adr/0002` 补遗四·影响节 ② | "`lexicalForPlat` 由私有改为**导出**"在压扁的区间 diff 里不可读（该函数整条是新增行） | B | 已消化（改为"本批新增并导出（首笔私有、同批第二笔改导出）"，并明写"以此处为准而非以区间 diff 为准"。这是 `R11R1-B-M2` 同一族的**区间 vs 单笔**口径问题，两处一并收口） |
+| R11R1-B-m4 | `bench/out-path-guard.cases.ts` 的 `GUARD_FORM_CASES` 由四族 `.map()` 展开 | 某族成员被误删则表**静默变短**，无断言会红 | B | 已消化（并入下条 `R11R1-C-M2` 的元断言族：`MIN_FORMS` 各族**下界** + 变异 M1 实跑红在「分组守恒」。下界惯例承 `MIN_BACKLOG_ROWS`（`R10R3-A-m3` 已裁决"零余量、合法裁剪须同批下调"），能力边界一并成文：挡净减与误标，**不**挡等量替换） |
+| R11R1-B-m5 | 卷包 ③「登记处新增行」摘要 | 状态列被截到 60 字 → E 条"未转义 `\|` 撑破格数"从卷面无法判 | B | 已消化（**卷包面**处置，不改入库面：Round 2 起登记处内联全文。E 条本身在入库面由 `backlog-integrity.test.ts` 的「每条数据行的格数与该表表头一致」断言管辖，且该断言按 `\|` 转义感知拆格（`R10R1-C-m1`）——本批 10 行能被该用例放行，即为答案；不引 `var/` 里的临时脚本作证据，理由见 `R11R1-A-M1` 的成文约定） |
+| R11R1-C-M1 | `.github/workflows/bench.yml`（建议新增 windows job） | win32 专有行为在 linux CI 只靠 `plat` 注入模拟，缺 Windows Runner 的自动化覆盖 | C | **拒绝并成文**（① 该残余早已登记并保持命名：`R10R2-A-m2`（win32 端到端身份腿 + `tests/integration`/`tests/e2e` 无 CI 执行面）与 `R11R1-A-m2`（反斜杠别名的身份腿），卷面 §7 明示不要重复报；② 加 windows job 与冻结面冲突的一面：G1/G2/G3 阈值锚在 linux runner（补遗三保真锚点），win job 只能跑功能测试，收益是"重复本机每次收口都跑的 `bunx vitest run`"，代价是双份全量时长；③ 字符串腿已两平台兑现（`lexicalForPlat` 纯函数断言 + `plat` 注入矩阵）。故维持"本机 win32 实跑 + CI linux 全量"的分工，不新开 job） |
+| R11R1-C-M2 | `bench/out-path-guard.cases.ts` 作为单一事实源 | 表错则 CI 与探针同时假绿；C 给的方向是"定期人工审核 / 变更审查机制" | C | 已消化（不采不可操作建议，落点与 A、B-m4 同源：**消费者侧结构元断言**一节 4 条，表达式与 `hostPath`/`canonicalPath` 不共享代码。三家在同一条上独立命中，是本轮最有价值的一条意见） |
+| R11R1-A-m6 | 同上（`cases.ts:1-104`） | A 建议"增加轻量级元测试校验表中字符串的语法结构合法性，以打破纯数据表的盲区" | A | 已消化（**按 A 的原话落地**：三家里只有 A 给出了可操作方向，另两家只指出风险。落点 = 测试文件「期望表自身的结构元断言（共因失效面：R11R1-C-M2 / A-m6 / B-m4）」一节；判别力由三条变异自证，见下） |
+
+- **裁决口径**：本表 **10 行**全部为走查来源（B 7 / C 2 / A 1），无事故来源。Round 1 的三份输出这次
+  **是**有效材料（无工具执行器 + HEAD 未变 + `echo_matches_expected` 三家皆真），但 Gate MW 要求三家
+  APPROVED，故证据文件在 Round 2 之后写；本轮 10 条处置照常落进 HEAD，评审按卷面从 Round 2 起步。
+- **专家模型槽位变更（如实披露）**：architecture 槽由 `g-glm-5.3-flash` 改为 `g-qwen3.8-flash`。原因是
+  两次可复现失败：该模型经代理实测是 `prompt_tokens + max_tokens ≤ ~32768` 的硬窗口（本卷包实测
+  `prompt_tokens=22316`），且它是 reasoning 模型——`max_tokens=6000/8000` 时 `reasoning_content` 吃满预算、
+  `message.content` 为空（`finish_reason=length`），`12000/16000` 在 240s 内不返回。代价：A 与 C 同属 Qwen
+  系（不同部署：hosted flash vs local 27B，`requested_model` 与响应回显均 distinct，执行器三项 checks 全真）。
+  该变更连同理由写进卷面 §0 交专家判，本轮无人判为缺陷。**配置改在 `var/` 副本上，未动用户全局
+  `.delphi-config.json`**。
+- **本批代码面清单**：① 判据面 = `bench/out-path-guard.ts`（**只改注释**，零判据改动）；② CI 执行面 =
+  本批零改动；③ 文档面 = `docs/adr/0002` 补遗四三处措辞/新增两条影响；④ 测试面 + 本登记处（元断言
+  一节 4 条 + 机制断言 1 条 + 盘符折叠断言 2 条 + `fate` 侧 uncovered 第 5 条 + 锁清单 +10、棘轮同批上调）。
+- **验证**：① 本机 `bunx vitest run bench/out-path-guard.test.ts` → 37 passed / 1 skipped（38 为总数，
+  +4 即元断言族）；② 期望表变异自证三条（临时改 `cases.ts` → 跑消费侧 → 逐字节还原，md5 核对）：
+  M1 删 `ADS_FORMS` 一条 → 红在「分组守恒」；M2 等量替换名字变体 → 红在「`tracked` 族定义性特征」
+  （消费者矩阵同时红）；M3 把 posix 对照组首条改成 win32 合法形态 → **只**红在「预检族自洽」；
+  ③ `bunx tsc --noEmit` + `bunx oxlint` + 全量门；④ 表格格数由 `backlog-integrity.test.ts` 断言管辖。
+  linux 正/负双向探针在推送前以新 HEAD 重跑，数字回写 ADR 补遗四（本轮不改）。
+- **冻结面零改动自证**：`git diff --exit-code 4bbea37..HEAD -- bench/regression-formula.ts bench/baseline.json
+  bench/record-baseline.ts` 仍为 0；`bench/baseline.json` md5 仍为 `3ebfaa9f6a71ecf7cb7b0d91355e2525`；
+  判据公式 `* 1.2` / `> 2` 与三台门阈值常量未触碰，`bench/out-path-guard.ts` 的 diff 只有注释与文档注。
 
 ## 备注
 

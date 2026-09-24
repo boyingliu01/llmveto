@@ -34,6 +34,12 @@ import { describe, expect, it } from "vitest";
  *     成文）：分隔线单元含内部空格（`| -- -- |` 型）的 `|` 块不认作表格；`\\|`（双反斜杠紧跟竖线）被折叠进
  *     同一格，而 GFM 认作"转义反斜杠 + 列分隔符"而拆两格。两者当前登记处均无实例（`grep '^```'` = 0、
  *     分隔线一律 `|---|`），ID 丢失仍由锁清单兜底。
+ *   - **断言的 fixture 不得写死受测常量的字面值**（`R11R11-SR-3`）：本文件头三条义务断言的 fixture 原先把
+ *     起点标题写成 `"### R11 R10 批次（起点）"`，而那个前缀正是被检对象 `OBLIGATION_FROM` 本身。后果不是
+ *     假绿而是**假红归属**：改该常量时三条一起红，其中两条红在"fixture 前提失效"，读者会误以为三条都在
+ *     做真判据、进而把某一条当冗余删掉。现三处一律写成 `` `${OBLIGATION_FROM}（起点）` `` 派生，配套的红句
+ *     前缀用 `"### ZZ 批次（…）"`（不以受测常量起首，故不会被误命中）。新增断言若引用某个被测常量的值构造
+ *     样本，同此处理；判别力实测见登记处 `R11 R11` 节「验证」②。
  *   - 围栏识别另有两处曾在 R10R2 引入、R10R3 已按 GFM 收口的偏差（A-m2 / B-m1 / B-m2）：闭合行带 info string
  *     （` ```ts `）不再被当闭合（此前其后示例表会变成幻影表 → 多认表，正是有害方向）；缩进 >3 空格的 ` ``` `
  *     行不再开启/闭合围栏（此前 4 空格缩进的缩进代码会被当围栏，把它后面的真实登记处表吞掉 → 假红）。
@@ -60,13 +66,22 @@ import { describe, expect, it } from "vitest";
  *   - `IDLESS_ROW_CELLS` 是首格异形行的**唯一**豁免口，扩写它的标准（`R11R9-C-m1` 成文）：仅当登记处新增一行
  *     **刻意不带** `R…-…` ID 的说明行时才可加条目，且必须同批在登记处头部「三种计数的定义体」的差值算式里
  *     数到它——该断言要求白名单长度恒等于实测无 ID 行数，单独塞一条豁免而不造出真无 ID 行会直接红。
- *   - 自 `R11R9-A-M1` / `B-M1` / `C-M2` 起，本文件还管**批内交付物**两件：起点小节及其之后每批正文须含
- *     linux 三数记号、须申报与实测相等的 `限定词行数=N`。两条都只**数串**，不判语义：前者判"记号在不在"，
+ *   - 自 `R11R9-A-M1` / `B-M1` / `C-M2` 起，本文件还管**批内交付物**三件：起点小节及其之后每批正文须含
+ *     linux 三数记号、须申报与实测相等的 `限定词行数=N`，以及管辖起点常量自身须恰命中一个批次标题
+ *     （第三条自 `R11R10-A-m1` / `B-M2` / `C-m2` 起，堵的是前两件的**管辖集合**可被静默改动这一缝）。
+ *     前两条都只**数串**，不判语义：前者判"记号在不在"，
  *     一批写 `滤前 0 滤后 0 @@ 0` 照样绿，数对不对由走查复跑那条 git 命令判；后者判"申报与实测是否一致"，
  *     不判"这一行该不该带限定词"。即它们把旧措辞义务里**可数**的那一半抬进了 CI 阻断面，剩下那一半仍是散文。
+ *     **绿灯的语义要说满**（`R11R10-A-m2`）：本文件全绿只蕴含"这些记号与数字出现在该出现的位置"，
+ *     **不**蕴含 linux 探针数据真实有效、更不蕴含那三个数是复跑得来的——把它读成后者就是本条要堵的误读。
+ *     **不采"纯文档批报零值占位"（`R11R10-C-m4` 的关切成立、其形态拒绝）**：三数的定义体系是
+ *     **锚点区间**而非"本批改动"，故一个零触碰判据面的文档批的真值仍可能是 `滤前 9 滤后 0 @@ 3`，写
+ *     `0 0 0` 是**编造**而非占位（`R11R4-SR-1` 处罚过的同一形态）。C 指出的"为满足记号写废话"这一激励，
+ *     承接方是头部那句"数的真伪由走查复跑判"与本条成文，不是放宽记号义务。
  *     两条**同守 `startFound`**（起点小节标题被改 ⇒ 两条同时红，而不是第二条静默管零批——该不对称由
  *     `R11R10-SR-2` 的一次实跑探针暴露并补齐）。第一条按**整批正文**数记号：同一记号在该批出现多次时，
  *     删其中一处不红、须全删才红，故"报在同一条 bullet 里"仍只由头部那句散文条款管（严于本断言，刻意的）。
+ *     `QUALIFIER` 的**半角逗号漏数**盲区另见该常量自身的注释（`R11R10-B-m2` / `C-m3`）。
  */
 
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -289,6 +304,25 @@ const LOCKED_IDS = [
   "R11R10-SR-1",
   "R11R10-SR-2",
   "R11R10-SR-3",
+  "R11R10-A-m1",
+  "R11R10-A-m2",
+  "R11R10-B-M1",
+  "R11R10-B-M2",
+  "R11R10-B-M3",
+  "R11R10-B-m1",
+  "R11R10-B-m2",
+  "R11R10-B-m3",
+  "R11R10-B-m4",
+  "R11R10-B-m5",
+  "R11R10-B-m6",
+  "R11R10-C-M1",
+  "R11R10-C-m1",
+  "R11R10-C-m2",
+  "R11R10-C-m3",
+  "R11R10-C-m4",
+  "R11R11-SR-1",
+  "R11R11-SR-2",
+  "R11R11-SR-3",
 ] as const;
 
 /** 规范 ID 记号；`R2-A-M2 / R2-C-M1` 型合写行按 `/` 拆开，`（并入 R8-B-M1）` 型说明格不入选。 */
@@ -471,7 +505,24 @@ function nonIdFirstCells(md: string): string[] {
 /** 批次小节标题：`### …… 批次（……）`——登记处每一批的正文以此为界（`## 备注` 级不算）。 */
 const BATCH_HEADING = /^### .+批次（/;
 
-/** 一条义务从哪一批起受下面两条机器断言管辖。 */
+/**
+ * 一条义务从哪一批起受下面**两条义务断言**管辖；该常量自身另由第三条断言核（它不再只被引用、也被判）。
+ * **本常量是本批之后唯一的新旋钮，三个方向的判红归属要写破**（`R11R10-A-m1` / `B-M2` / `C-m2`）：
+ *   - 改成**宽前缀**（如 `"### "`）⇒ 会命中所有批次标题，"起点之前不受管辖"这一支（第一条断言的
+ *     `before` fixture 明确验过的形态）永不再被检验。**实测订正**（本批探针，红句见登记处 `R11 R11` 节
+ *     「验证」②）：这一支**三条断言同时红**，故 `R11R10-B-M2` 那句"常量放宽这件事本身没有任何一条断言会
+ *     变红"在当前登记处状态下**不成立**（旧批缺记号 ⇒ 第一条红、未申报 ⇒ 第二条红）。本条的增量不在
+ *     "唯一会红"，而在**红得能指名成因**：前两条给出的是 19 条"某批缺记号 / 未申报"的红，读者要自己
+ *     反推"是管辖集合被放大了"；本条直接报"命中 21 个标题，契约要求恰为 1"（两个数皆为本批实跑值）。
+ *   - **前移**到更早的批 ⇒ 扩大管辖面，那是**加严**方向；旧批缺记号会直接被第一条断言判红，故自罚、无需另立断言。
+ *   - **后移**到更晚但确实存在的批 ⇒ 缩小管辖面（历史批退出机读）。**本批实测**（探针 = 把常量改成
+ *     `"### R11 R11 批次"`）：**只有本条红**（`1 failed / 12 passed`，红句点名被甩掉的批）。这一支在
+ *     fixture 派生前**不是**这样——原先前两条断言的 fixture 里写死了起点标题字面，改常量会让它们以
+ *     "前提失效"的形态一起红，读者分不清哪条在做真判据（`R11R11-SR-3`）。派生后归属才成立。
+ *     第二条断言申报的 `限定词行数=` 只在起点之后必报，于是"把已申报过的批甩到起点之前"没有别的判据。
+ *     自本批起登记处已有起点之后的批，这一支在**真实文件**里也可判（上面那次探针就是真判，不只靠 fixture）。
+ *   - 改成**不存在的**标题 ⇒ `startFound` 红（两条都守，见 `R11R10-SR-2`）。
+ */
 const OBLIGATION_FROM = "### R11 R10 批次";
 
 /**
@@ -484,7 +535,13 @@ const OBLIGATION_FROM = "### R11 R10 批次";
  */
 const LINUX_NUMBER_TOKENS = ["滤前", "滤后", "@@"] as const;
 
-/** 状态列限定词（登记处「状态列约定」`R11R4-C-m1` 起）：纯措辞义务必须显式声明它不是机器门。 */
+/**
+ * 状态列限定词（登记处「状态列约定」`R11R4-C-m1` 起）：纯措辞义务必须显式声明它不是机器门。
+ * **本常量的可判边界**（`R11R10-B-m2` / `C-m3` 成文）：`qualifiedRows` 按 `includes` 逐字匹配，
+ * 逗号是**全角** `，`。某行若把限定词写成半角 `成文义务, 非机器门`，本函数会**漏数**它，而申报值通常
+ * 由同一人按同一口径数 ⇒ 申报与实测**同降**、断言照样绿。这一支不由机器承接（要判红就得再立一个
+ * "该带限定词的行"事实源，撞 `R11-CI-1` 根因 ② 的同一族），由走查判；本行注释即该盲区的成文落点。
+ */
 const QUALIFIER = "成文义务，非机器门";
 
 interface BatchSection {
@@ -598,8 +655,10 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
     // `R11R8-C-*` 2 + `R11R8-SR-*` 1；5 Major + 10 Minor + 自查 1）。
     // 214 = R11 R10 批次后的实测数据行数（21 张 ID 表，本批新增 27 行 = `R11R9-A-*` 8 + `R11R9-B-*` 12 +
     // `R11R9-C-*` 4 + `R11R10-SR-*` 3；13 Major + 11 Minor + 自查 3）。
-    // 注：行数 ≠ ID 数（214 行 / 216 ID），算式定义在登记处头部「三种计数的定义体」，此处只引不算第二源。
-    const MIN_BACKLOG_ROWS = 214;
+    // 233 = R11 R11 批次后的实测数据行数（22 张 ID 表，本批新增 19 行 = `R11R10-A-*` 2 + `R11R10-B-*` 9 +
+    // `R11R10-C-*` 5 + `R11R11-SR-*` 3；4 Major + 12 Minor + 自查 3）。
+    // 注：行数 ≠ ID 数（233 行 / 235 ID），算式定义在登记处头部「三种计数的定义体」，此处只引不算第二源。
+    const MIN_BACKLOG_ROWS = 233;
     expect(
       rows.length,
       `${BACKLOG_REL} 表行数 ≠ 棘轮常量 ${String(MIN_BACKLOG_ROWS)}（当前 ${String(rows.length)}）：` +
@@ -684,23 +743,32 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
     expect(managed.length, "起点之后零批次小节 = 本条空转").toBeGreaterThanOrEqual(1);
     const missing = managed.flatMap((s) => {
       const miss = missingLinuxTokens(s);
-      return miss.length === 0 ? [] : [`${s.heading.slice(0, 30)} 缺记号：${miss.join("、")}`];
+      return miss.length === 0 ? [] : [`${s.heading} 缺记号：${miss.join("、")}`];
     });
     expect(
       missing,
       `${BACKLOG_REL} 里起点之后的某批未交付 linux 三数（\`滤前\`/\`滤后\`/\`@@\`）——` +
-        `本条把"有没有报"从**识别言语动作**改成**数串在不在**，故沉默、同义改写、报在他条 bullet 都拦得住`,
+        `本条把"有没有报"从**识别言语动作**改成**数串在不在**，故沉默、同义改写、报在他条 bullet 都拦得住。\n` +
+        `**读红句时不要把"绿"当成"数是真的"**：本条只蕴含记号出现过，不蕴含那三个数是复跑结果；` +
+        ` linux 探针是否真不需重跑、数字对不对，一律由走查复跑头部那条 git 命令判（` +
+        `见文件头「能力边界」的"批内交付物"条与 \`R11R10-A-m2\`）`,
     ).toEqual([]);
 
     // 防空转：起点后第二批缺 `@@` 必须红，补齐必须绿；且证明"起点之前不受管辖"这一支是真的。
-    const before = ["### R11 R9 批次（旧批，不受管辖）", "正文只有 滤前 与 滤后。", ""].join("\n");
-    const gap = `${before}### R11 R10 批次（起点）\n滤前 9 滤后 0。\n\n### R11 R11 批次（下一批）\n滤前 9 滤后 0 @@ 3。\n`;
+    // **fixture 的起点标题由本常量派生**（`R11R11-SR-3`）：原先这里写死 `"### R11 R10 批次（起点）"`，
+    // 于是改动 `OBLIGATION_FROM` 会让 fixture 自身崩掉（`startFound` 为假），报出的红看着像"本条检测到
+    // 管辖变形"、其实只是前提失效——三条断言同时红时读者分不清哪条在做真判据。派生后：改常量时只有
+    // 第十三条红（它判真实登记处），本条与第二条仍绿。前缀字面仍由本条的 `before` 承担判别力。
+    const startHeading = `${OBLIGATION_FROM}（起点）`;
+    const nextHeading = "### ZZ 批次（起点之后的下一批）";
+    const before = ["### ZZ 批次（起点之前的旧批，不受管辖）", "正文只有 滤前 与 滤后。", ""].join("\n");
+    const gap = `${before}${startHeading}\n滤前 9 滤后 0。\n\n${nextHeading}\n滤前 9 滤后 0 @@ 3。\n`;
     const fixed = gap.replace("滤前 9 滤后 0。\n", "滤前 9 滤后 0 @@ 3。\n");
     const gapManaged = managedSections(gap);
     expect(gapManaged.startFound, "fixture 前提失效：没命中起点").toBe(true);
     expect(gapManaged.managed.map((s) => s.heading), "起点之前那批不该入管辖").toEqual([
-      "### R11 R10 批次（起点）",
-      "### R11 R11 批次（下一批）",
+      startHeading,
+      nextHeading,
     ]);
     expect(gapManaged.managed.flatMap(missingLinuxTokens), "缺 `@@` 的那批必须被点名").toEqual(["@@"]);
     expect(managedSections(fixed).managed.flatMap(missingLinuxTokens), "补齐后必须为绿").toEqual([]);
@@ -716,8 +784,8 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
     const problems = managed.flatMap((s) => {
       const declared = declaredQualifierRows(s.body);
       const measured = qualifiedRows(s.body);
-      if (declared === null) return [`${s.heading.slice(0, 30)} 未申报 限定词行数=N`];
-      return declared === measured ? [] : [`${s.heading.slice(0, 30)} 申报 ${String(declared)} ≠ 实测 ${String(measured)}`];
+      if (declared === null) return [`${s.heading} 未申报 限定词行数=N`];
+      return declared === measured ? [] : [`${s.heading} 申报 ${String(declared)} ≠ 实测 ${String(measured)}`];
     });
     expect(
       problems,
@@ -728,7 +796,7 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
     // 防空转：三类形态（相等 / 不等 / 未申报）各验一次，且状态列位置由表头推导（此处故意把状态放第 3 列）。
     const head = "| ID | 状态 | 位置 |\n|---|---|---|\n";
     const two = `| R9-Q-1 | 已消化（${QUALIFIER}） | bench/a.ts |\n| R9-Q-2 | 已消化（机器改动） | bench/b.ts |\n`;
-    const sec = (decl: string): string => `### R11 R10 批次（起点）\n${head}${two}${decl}\n`;
+    const sec = (decl: string): string => `${OBLIGATION_FROM}（起点）\n${head}${two}${decl}\n`;
     expect(qualifiedRows(`${head}${two}`), "fixture 前提失效：状态列第 2 列应数出 1 行").toBe(1);
     expect(declaredQualifierRows(sec("限定词行数=1")), "同上：申报值应可读").toBe(1);
     expect(managedSections(sec("限定词行数=1")).managed.flatMap((s) =>
@@ -741,6 +809,64 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
       "red",
     ]);
     // **残余**：本条判"申报与实测是否一致"，**不判"该行该不该带限定词"**——后者是语义判断，仍归走查。
+  });
+
+  it("管辖起点常量须恰命中一个批次标题，且起点之前不得有已申报批（R11R10-A-m1 / B-M2 / C-m2）", () => {
+    const md = readFileSync(path, "utf8");
+    const all = batchSections(md);
+    const hits = all.filter((s) => s.heading.startsWith(OBLIGATION_FROM));
+    expect(
+      hits.length,
+      `OBLIGATION_FROM =「${OBLIGATION_FROM}」命中 ${String(hits.length)} 个批次标题，契约要求**恰为 1**：` +
+        `命中 0 ⇒ 前两条断言靠 startFound 红；命中 >1 ⇒ 前缀被放宽（如 "### "），管辖面静默覆盖全部批，` +
+        `"起点之前不受管辖"那一支（第一条断言的 before fixture 明确验过的形态）永不再被检验`,
+    ).toBe(1);
+    // 后移方向：起点之前不得存在**已按该口径申报过**的批次——那种批原本在管辖内，把起点抬到它之后就退出了
+    // 机读，而前两条断言**都为绿**（管辖集合仍非空、仍申报），故只有本条判得出。
+    const at = all.findIndex((s) => s.heading.startsWith(OBLIGATION_FROM));
+    const skipped = all.slice(0, Math.max(at, 0)).filter((s) => declaredQualifierRows(s.body) !== null);
+    expect(
+      skipped.map((s) => s.heading),
+      "起点被后移、甩掉了已申报 `限定词行数=` 的批次：这些批退出机读而前两条断言皆绿，故由本条拦",
+    ).toEqual([]);
+
+    // 防空转（本条的判别力对象确实存在，不是恒真）：宽前缀 `"### "` 在本登记处命中的批次数必须 >1，
+    // 否则上面那条 `toBe(1)` 判不出任何东西（例如登记处只剩一批时，任何前缀都命中 1）。
+    const widened = all.filter((s) => s.heading.startsWith("### "));
+    expect(widened.length, "自检前提失效：批次标题不足 2 个，宽前缀探针没有判别力").toBeGreaterThan(1);
+    // **后移方向的判别力 fixture**（真实文件当前判不出：起点已是最后一批，抬到"更晚"即命中 0）。
+    // 这张表的构造要求是：起点批**自身两条义务都齐**（含三记号、申报值与实测相等），故前两条断言皆绿；
+    // 而它之前那批**已申报过** `限定词行数=` ⇒ 只有本条的 `skipped` 支红。二者缺一即退化成冗余。
+    // 起点标题同样由 `OBLIGATION_FROM` 派生（`R11R11-SR-3`，理由见第一条断言 fixture 处那段）。
+    const skippedHeading = "### ZZ 批次（被后移的起点甩在管辖之外）";
+    const moved = [
+      skippedHeading,
+      "限定词行数=1。",
+      "",
+      `${OBLIGATION_FROM}（起点）`,
+      "滤前 9 滤后 0 @@ 3。限定词行数=0。",
+      "",
+    ].join("\n");
+    const movedSections = batchSections(moved);
+    const movedAt = movedSections.findIndex((s) => s.heading.startsWith(OBLIGATION_FROM));
+    expect(movedAt, "fixture 前提失效：起点没命中，那由 startFound 判，不是本条的管辖对象").toBe(1);
+    expect(
+      movedSections.slice(movedAt).flatMap(missingLinuxTokens),
+      "fixture 前提失效：起点批缺记号 ⇒ 第一条断言也会红，本 fixture 就证不出'只有本条红'",
+    ).toEqual([]);
+    expect(
+      movedSections.slice(movedAt).filter((s) => declaredQualifierRows(s.body) !== qualifiedRows(s.body)),
+      "fixture 前提失效：起点批申报与实测不等 ⇒ 第二条断言也会红",
+    ).toEqual([]);
+    expect(
+      movedSections.slice(0, movedAt).filter((s) => declaredQualifierRows(s.body) !== null).map((s) => s.heading),
+      "本条的增量对象：被甩出管辖的那批必须能被 `skipped` 支点名",
+    ).toEqual([skippedHeading]);
+    // **三支的分工**（宽前缀与后移两支均按本批实跑订正，勿再凭推理写归属）：改**不存在的**标题 = 前两条靠
+    // `startFound` 红、本条按命中 0 红；**前移** = 第一条按旧批缺记号红（自罚）；**宽前缀 `"### "`** =
+    // 实跑 `3 failed / 10 passed`，三条同时红，本条是唯一直接报"命中 21 个标题、契约要求恰为 1"这一成因的；
+    // **后移到存在的批（`"### R11 R11 批次"`）** = 实跑 `1 failed / 12 passed`，**只有本条红**——这一支
+    // 在 fixture 写死起点字面时曾被误记成"三条同红"，派生（`R11R11-SR-3`）后归属才与实测一致。
   });
 
   it("守卫自检（防空转）：ID 列覆盖锁清单，且人为删行形态确会被拦", () => {

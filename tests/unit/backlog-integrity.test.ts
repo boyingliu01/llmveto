@@ -59,6 +59,13 @@ import { describe, expect, it } from "vitest";
  *     同族义务：本注释引用登记处结论时**只给指针不复述论证**，复述会造出第二事实源并在跨批改写时腐坏
  *     （`R11R12-C-m3` 要的"注释与代码同步"即此；本批据此把 `QUALIFIER` 条目末尾那段"上一批只成文的理由
  *     不成立"的复述删掉，改指登记处那一处）。
+ *   - **元断言须就地注明判据对象归属**（`R11R13-C-m2` 起成文）：本文件里有若干条断言的对象**不是登记处内容**
+ *     而是本文件的实现约定（`QUALIFIER.flags`、fixture 前提、申报串计数式），这类**元断言**逐批累积会让
+ *     "13 条用例"读起来像在守登记处、实则有一部分只守自己。义务很轻、代价很低：**每条元断言在其紧邻注释里
+ *     写明"判据对象 = X，不是登记处内容"**，使走查能按名数出元断言占比而不必重读实现。本批新加的一处
+ *     （第二条断言内"等号带空格的形态红句须点名'格式不合'"那两行）即按此口径注明归属，且**不升格为独立
+ *     `it()`**——用例数与批次申报脱钩的代价大于收益。残余：本义务无机器门（判"有没有注明"仍是语义判断，
+ *     且注释不是可解析结构），成文义务，非机器门。
  *   - 围栏识别另有两处曾在 R10R2 引入、R10R3 已按 GFM 收口的偏差（A-m2 / B-m1 / B-m2）：闭合行带 info string
  *     （` ```ts `）不再被当闭合（此前其后示例表会变成幻影表 → 多认表，正是有害方向）；缩进 >3 空格的 ` ``` `
  *     行不再开启/闭合围栏（此前 4 空格缩进的缩进代码会被当围栏，把它后面的真实登记处表吞掉 → 假红）。
@@ -386,6 +393,28 @@ const LOCKED_IDS = [
   "R11R12-C-m3",
   "R11R13-SR-1",
   "R11R13-SR-2",
+  "R11R13-A-m1",
+  "R11R13-A-m2",
+  "R11R13-A-m3",
+  "R11R13-A-m4",
+  "R11R13-B-M1",
+  "R11R13-B-M2",
+  "R11R13-B-m1",
+  "R11R13-B-m2",
+  "R11R13-B-m3",
+  "R11R13-B-m4",
+  "R11R13-B-m5",
+  "R11R13-B-m6",
+  "R11R13-B-m7",
+  "R11R13-B-m8",
+  "R11R13-B-m9",
+  "R11R13-C-M1",
+  "R11R13-C-M2",
+  "R11R13-C-m1",
+  "R11R13-C-m2",
+  "R11R13-C-m3",
+  "R11R14-SR-1",
+  "R11R14-SR-2",
 ] as const;
 
 /** 规范 ID 记号；`R2-A-M2 / R2-C-M1` 型合写行按 `/` 拆开，`（并入 R8-B-M1）` 型说明格不入选。 */
@@ -671,6 +700,14 @@ function declaredQualifierRows(body: string): number | null {
  * 若改成 `const RE = /…/g` 再用 `RE.test()` 循环，跨批调用会因 `lastIndex` 残留而漏数，方向是**静默变绿**。
  * 上一条 `declaredQualifierRows` 取的是**第一个**匹配，故 count > 1 时申报值读自哪一处不可从文件判——
  * 那一支的口径（其余位置须换写法）自本批起由机器守，不再靠自觉。
+ * **标志位两侧的敏感度相反**（`R11R13-A-m2` 起成文，此前只在注释里点了一句）：本函数**需要** `g`（去掉即
+ * `match` 只返回第一个匹配 ⇒ 恒为 1 ⇒ 唯一性判据整体静默失效，红不再出现），而 `QUALIFIER` **禁止** `g`/`y`
+ * （同一条正则对象被 `qualifiedRows` 跨行反复 `test()`，带 `g` 时每次调用从上次的 `lastIndex` 续起 ⇒
+ * 具体失效形态是**漏数**：跨行计数比真值小 ⇒ 直接红在"申报 ≠ 实测"；而若该批的申报值是照抄这次实测得来的，
+ * 两数会一起变小、双双对上 ⇒ 红灯不响，漏数被静默吸收。后者这一支只能靠人，门管不到）。
+ * 也就是说两侧各有一个"改反即失效"的方向，本文件只在后者上装了机器断言（守卫自检的 `QUALIFIER.flags` 一项），
+ * 前者仍只靠本段注释——这一不对称是**已知残余**，不是遗漏；采成文而非断言的理由：守 `g` 的有无等于守一个
+ * 语言特性，写法改回去时**该函数自身的语义就变了**，任何 flags 断言都只能钉住字面量而钉不住 `match` 的调用形。
  */
 function qualifierDeclarationCount(body: string): number {
   return (body.match(/限定词行数=\d+/g) ?? []).length;
@@ -685,7 +722,14 @@ function qualifierObligationProblems(section: BatchSection): string[] {
   const declared = declaredQualifierRows(section.body);
   const measured = qualifiedRows(section.body);
   const occurrences = qualifierDeclarationCount(section.body);
-  if (declared === null) return [`${section.heading} 未申报 限定词行数=N`];
+  // 红句须同时指向两种成因（`R11R13-B-m2`）：本函数与 `declaredQualifierRows` 用的是精确式
+  // `限定词行数=<数字>`，等号两侧带空白或跨行拆开的写法在这里读不到 ⇒ 旧红句只说"未申报"，会把
+  // "写了但格式不合"的读者指向"漏写申报"这一错误处置对象。
+  if (declared === null) {
+    return [
+      `${section.heading} 未申报 限定词行数=N，或申报串格式不合（须为逐字 \`限定词行数=<数字>\`，等号两侧无空白、不跨行）`,
+    ];
+  }
   // **本批收紧的一支**（`R11R12-B-m2`）：申报串在同批正文里出现多次时，上面那条取**第一个**匹配才碰巧
   // 读对，读者无法从绿灯判断哪个数是契约申报值。多处即红，与出现顺序无关。
   if (occurrences !== 1) {
@@ -759,7 +803,9 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
     // 注：行数 ≠ ID 数（249 行 / 251 ID），算式定义在登记处头部「三种计数的定义体」，此处只引不算第二源。
     // 275 = R11 R13 批次后的实测数据行数（24 张 ID 表，本批新增 26 行 = `R11R12-A-*` 4 + `R11R12-B-*` 15 +
     // `R11R12-C-*` 5 + `R11R13-SR-*` 2；5 Major + 19 Minor + 自查 2）。
-    const MIN_BACKLOG_ROWS = 275;
+    // 297 = R11 R14 批次后的实测数据行数（25 张 ID 表，本批新增 22 行 = `R11R13-A-*` 4 + `R11R13-B-*` 11 +
+    // `R11R13-C-*` 5 + `R11R14-SR-*` 2；4 Major + 16 Minor + 自查 2）。
+    const MIN_BACKLOG_ROWS = 297;
     expect(
       rows.length,
       `${BACKLOG_REL} 表行数 ≠ 棘轮常量 ${String(MIN_BACKLOG_ROWS)}（当前 ${String(rows.length)}）：` +
@@ -923,6 +969,15 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
     expect(managedSections(sec(twice)).managed.flatMap(qualifierObligationProblems)).toEqual([
       `${OBLIGATION_FROM}（起点） 的申报串出现 2 次（契约要求恰 1 次），其余位置须换写法以免歧义`,
     ]);
+    // **等号带空格的写法（`R11R13-B-m2`）**：`declaredQualifierRows` 与本函数的计数式都是精确式，
+    // `限定词行数 = 1` 两侧都读不到 ⇒ 走 `declared === null` 支。行为上必须仍红（下面 `reds` 一支），
+    // 而红句**不得只说"未申报"**——那会把"写了但格式不合"的读者指向"补一个申报"这一错误处置对象。
+    // 末行是本文件的一条**元断言**（判据对象 = 红句文本，不是登记处内容）：按 `R11R13-C-m2` 要求的
+    // "再加元断言须注明归属"在此注明，且不升格为独立 `it()`（并入上一条同批，避免用例数与本批申报脱钩）。
+    expect(reds("限定词行数 = 1"), "等号带空格必须红（格式不合也算未申报）").toEqual(["red"]);
+    expect(managedSections(sec("限定词行数 = 1")).managed.flatMap(qualifierObligationProblems)[0]).toMatch(
+      /格式不合/,
+    );
     // **残余**：本条判"申报与实测是否一致"，**不判"该行该不该带限定词"**——后者是语义判断，仍归走查。
   });
 

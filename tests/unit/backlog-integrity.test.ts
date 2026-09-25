@@ -40,8 +40,9 @@ import { describe, expect, it } from "vitest";
  *     做真判据、进而把某一条当冗余删掉。现三处一律写成 `` `${OBLIGATION_FROM}（起点）` `` 派生，配套的红句
  *     前缀用 `"### ZZ 批次（…）"`（不以受测常量起首，故不会被误命中）。新增断言若引用某个被测常量的值构造
  *     样本，同此处理；判别力实测见登记处 `R11 R11` 节「验证」②。
- *   - **新断言与"收紧式改动"必须声明独占判红方向，且该方向须有实跑负例**（`R11R11-B-m6` 起成文）：本文件已
- *     有 13 条断言，新增一条的红面与既有条高度重叠时它的边际判别力接近零（`R11R11-SR-1` 那次宽前缀探针的
+ *   - **新断言与"收紧式改动"必须声明独占判红方向，且该方向须有实跑负例**（`R11R11-B-m6` 起成文）：本文件的断言条数
+ *     由 vitest 的 `Tests N passed` 唯一给出（不在本注释里写死，理由同 `R10R3-A-m1`），新增一条的红面与既有条高度重叠时它的边际判别力接近零
+ *     （`R11R11-SR-1` 那次宽前缀探针的
  *     实测分布 `3 failed / 10 passed` 就是这种重叠的直接证据：三条同红而只有一个成因，见登记处
  *     `R11R10-B-M2` 行的订正与 `R11 R12` 节「验证」②(b) 的复跑）。故准入口径是：**写不出"哪一支只有我会红"就不该加这条**，
  *     而"只有我会红"必须由实跑给出，不能由推理给出（`R11R11-SR-1` 即推理给出后被否证的实例）。同一口径适用于
@@ -59,13 +60,27 @@ import { describe, expect, it } from "vitest";
  *     同族义务：本注释引用登记处结论时**只给指针不复述论证**，复述会造出第二事实源并在跨批改写时腐坏
  *     （`R11R12-C-m3` 要的"注释与代码同步"即此；本批据此把 `QUALIFIER` 条目末尾那段"上一批只成文的理由
  *     不成立"的复述删掉，改指登记处那一处）。
+ *     **占比本身不是判据，这条通则由 `R11 R15` 批成文**（Round 14 的 `B-m6` / `C-m5` 两家同题：一批里带
+ *     "成文义务，非机器门"限定词的行数比例持续偏高，读者会以为有个未被兑现的装门义务）：上面那通则的判据对象
+ *     只有**实例的有无**，从不包含"成文行占比"，故任何批次都不构成"比例越线须补断言"的义务，走查也不按此判红。
+ *     须同时写破一支反向误读：本文件里"申报「限定词行数=N」且与实测相等"那条断言确实**数**带限定词的行数，
+ *     但它数的是**某批申报值与该批实测值是否相等**，不是比例——"成文义务行不计入任何机器断言"是假陈述，
+ *     真实关系是"计入那条断言的方式只有等值核对"（按标题而不按第几条指称，位次随新增断言漂移）。
+ *     成文义务，非机器门（判"一句话是不是比例论证"仍是语义判断）。
  *   - **元断言须就地注明判据对象归属**（`R11R13-C-m2` 起成文）：本文件里有若干条断言的对象**不是登记处内容**
  *     而是本文件的实现约定（`QUALIFIER.flags`、fixture 前提、申报串计数式），这类**元断言**逐批累积会让
- *     "13 条用例"读起来像在守登记处、实则有一部分只守自己。义务很轻、代价很低：**每条元断言在其紧邻注释里
+ *     用例清单读起来像在守登记处、实则有一部分只守自己。义务很轻、代价很低：**每条元断言在其紧邻注释里
  *     写明"判据对象 = X，不是登记处内容"**，使走查能按名数出元断言占比而不必重读实现。本批新加的一处
  *     （第二条断言内"等号带空格的形态红句须点名'格式不合'"那两行）即按此口径注明归属，且**不升格为独立
  *     `it()`**——用例数与批次申报脱钩的代价大于收益。残余：本义务无机器门（判"有没有注明"仍是语义判断，
  *     且注释不是可解析结构），成文义务，非机器门。
+ *   - **批内自指词须钉死为批次号**（`R11R14-A-m1` / `B-m10` / `C-m4` 三家同题，自 `R11 R15` 批起为本文件的成文义务）：
+ *     本文件的注释里"本批 / 上一批 / 下一轮"这类**相对时间自指**随批次累积必然腐坏——同一句里的"本批"在第 N 批
+ *     写就、被第 N+3 批的读者读到即指向错误的对象，且这类腐坏**对所有门不可见**（注释不参与任何断言）。
+ *     义务：**新增或改写注释时，指称某一批须写 `R11 RNN 批` 这一绝对形式**，不得新写"本批"；触碰含旧自指的
+ *     注释时须顺手钉死。存量规模与抽样结果记在登记处（`R11R14-A-m1` 的落点行），不在本注释里写死数——
+ *     理由同 `R10R3-A-m1`（写死计数本身是反模式）。本义务**无机器门**：判"这句自指当时对不对"是语义判断，
+ *     注释也不是可解析结构；成文义务，非机器门。
  *   - 围栏识别另有两处曾在 R10R2 引入、R10R3 已按 GFM 收口的偏差（A-m2 / B-m1 / B-m2）：闭合行带 info string
  *     （` ```ts `）不再被当闭合（此前其后示例表会变成幻影表 → 多认表，正是有害方向）；缩进 >3 空格的 ` ``` `
  *     行不再开启/闭合围栏（此前 4 空格缩进的缩进代码会被当围栏，把它后面的真实登记处表吞掉 → 假红）。
@@ -115,6 +130,11 @@ import { describe, expect, it } from "vitest";
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const BACKLOG_REL = ".sprint-state/bench-backlog.md";
 
+/**
+ * 锁清单的语义 = **该 ID 已被登记在册**，**不蕴含**它的落点已入库（`R11R14-C-m2` 要求的这一句此前缺位，
+ * 于是"进了 `LOCKED_IDS`"会被读成"改动已进 tracked 面"）。落点在 gitignored 卷面的行须在该行状态列
+ * 逐字写 `落点在卷外` + `终局判据`，由下面那条断言核格内措辞、由下一轮走查核卷面。
+ */
 const LOCKED_IDS = [
   "R6-B2",
   "R6-B1",
@@ -415,6 +435,39 @@ const LOCKED_IDS = [
   "R11R13-C-m3",
   "R11R14-SR-1",
   "R11R14-SR-2",
+  "R11R14-A-M1",
+  "R11R14-A-M2",
+  "R11R14-A-m1",
+  "R11R14-A-m2",
+  "R11R14-B-M1",
+  "R11R14-B-M2",
+  "R11R14-B-M3",
+  "R11R14-B-M4",
+  "R11R14-B-m1",
+  "R11R14-B-m2",
+  "R11R14-B-m3",
+  "R11R14-B-m4",
+  "R11R14-B-m5",
+  "R11R14-B-m6",
+  "R11R14-B-m7",
+  "R11R14-B-m8",
+  "R11R14-B-m9",
+  "R11R14-B-m10",
+  "R11R14-B-m11",
+  "R11R14-B-m12",
+  "R11R14-B-m13",
+  "R11R14-B-m14",
+  "R11R14-B-m15",
+  "R11R14-C-M1",
+  "R11R14-C-M2",
+  "R11R14-C-m1",
+  "R11R14-C-m2",
+  "R11R14-C-m3",
+  "R11R14-C-m4",
+  "R11R14-C-m5",
+  "R11R15-SR-1",
+  "R11R15-SR-2",
+  "R11R15-SR-3",
 ] as const;
 
 /** 规范 ID 记号；`R2-A-M2 / R2-C-M1` 型合写行按 `/` 拆开，`（并入 R8-B-M1）` 型说明格不入选。 */
@@ -740,6 +793,56 @@ function qualifierObligationProblems(section: BatchSection): string[] {
   return declared === measured ? [] : [`${section.heading} 申报 ${String(declared)} ≠ 实测 ${String(measured)}`];
 }
 
+/**
+ * 卷外落点行与先例引用两支义务的机器化（`R11R14-A-M2` 判 Major、`C-M2` 判 Major，`B-m8` / `C-m2` / `B-m1`
+ * 记其可读性与自指面；定义处 = 登记处头部「自查登行判据」的"卷外落点行须给终局判据"支，与
+ * 「一次授权的引用义务」的 ① 登记面）。
+ *
+ * 两支共用同一个失效形态：一批引用了**本仓之外、随轮销毁或根本在 gitignored 一侧**的材料，却没留下
+ * 可复跑的指针。此前两支都只成文，判红主体都是"收到下一份卷的那一轮"，而下一份卷由同一个出题方出
+ * （`C-M2` 逐字：实际约束力趋近于零）——故本批把**能在 tracked 面判的那一半**抬进门里。
+ *
+ * **本条不管什么（残余，逐字写清以免读者把门读成整条义务）**：
+ *   - 判"标了 `落点在卷外` 却没给 `终局判据`"，**不判**"该不该标卷外"——把已入库的行谎标为卷外反而
+ *     更容易通过本条，那一半仍归走查；也判不到卷面本身是否真写了那段串（卷面不在 tracked 面）。
+ *   - 判"批节正文出现 `--no-verify` 却没指 rounds.json 的裁决字段"，**判不到** commit message 与
+ *     PR 描述里的援引（`core.hooksPath` 指向仓外 xp-gate，本仓无机器位）——该面已在头部逐字承认
+ *     "可判性 = 0"，本条不假装覆盖。
+ */
+const OFFBOOK_MARKER = "落点在卷外";
+const OFFBOOK_TERMINAL = "终局判据";
+const PRECEDENT_TOKEN = "--no-verify";
+
+/** 状态列标了「落点在卷外」却没同格给「终局判据」的行（空数组 = 合规）。 */
+function offbookLandingProblems(body: string): string[] {
+  const out: string[] = [];
+  for (const table of backlogTables(body)) {
+    const idx = table.header.findIndex((h) => h.trim() === "状态");
+    if (idx < 0) continue;
+    for (const row of table.rows) {
+      const cell = row[idx] ?? "";
+      if (cell.includes(OFFBOOK_MARKER) && !cell.includes(OFFBOOK_TERMINAL)) {
+        out.push(
+          `${(row[0] ?? "").trim()} 状态列标了「${OFFBOOK_MARKER}」却没给「${OFFBOOK_TERMINAL}」：` +
+            `卷外落点的行在 tracked 面只剩一个 ID，读者无从判它是否已落地，须同行写明下一份卷里可逐字 grep 的那一段`,
+        );
+      }
+    }
+  }
+  return out;
+}
+
+/** 援引了 `--no-verify` 先例却没指向 rounds.json 裁决字段（`rNN_user_decision`）的批节问题。 */
+function precedentCitationProblems(section: BatchSection): string[] {
+  if (!section.body.includes(PRECEDENT_TOKEN)) return [];
+  if (/r\d+_user_decision/.test(section.body)) return [];
+  return [
+    `${section.heading} 正文出现「${PRECEDENT_TOKEN}」（即援引那一次 Gate MW 豁免）但未出现 ` +
+      "`rNN_user_decision` 字段名指针：豁免是一次性授权，援引必须先指到" +
+      "`var/delphi-r11/rounds.json` 里那条真实的裁决记录字段，否则后续批次可把先例读成常态授权",
+  ];
+}
+
 /** 删去某个 ID 的表行（按解析后的首格匹配，不按字面 `| ID |` 前缀——空格/转义变体同样要能删中）。 */
 function dropRowWithId(md: string, id: string): string {
   const keep = md
@@ -805,7 +908,7 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
     // `R11R12-C-*` 5 + `R11R13-SR-*` 2；5 Major + 19 Minor + 自查 2）。
     // 297 = R11 R14 批次后的实测数据行数（25 张 ID 表，本批新增 22 行 = `R11R13-A-*` 4 + `R11R13-B-*` 11 +
     // `R11R13-C-*` 5 + `R11R14-SR-*` 2；4 Major + 16 Minor + 自查 2）。
-    const MIN_BACKLOG_ROWS = 297;
+    const MIN_BACKLOG_ROWS = 330;
     expect(
       rows.length,
       `${BACKLOG_REL} 表行数 ≠ 棘轮常量 ${String(MIN_BACKLOG_ROWS)}（当前 ${String(rows.length)}）：` +
@@ -961,7 +1064,8 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
     expect(reds("限定词行数=1")).toEqual([]);
     expect(reds("限定词行数=7")).toEqual(["red"]);
     expect(reds("")).toEqual(["red"]);
-    // **本批收紧的一支的判别力**：申报串出现两次即歧义，即使两次的值都等于实测（改前该形态全绿）。
+    // **`R11 R13` 批收紧的一支的判别力**（原写"本批"且句内无绝对锚，抽样核该处时判为真腐坏，按文件头
+// 「能力边界」的批内自指条钉死）：申报串出现两次即歧义，即使两次的值都等于实测（改前该形态全绿）。
     const twice = "限定词行数=1 另一处又写一次 限定词行数=1";
     expect(qualifierDeclarationCount(sec(twice)), "fixture 前提：两次申报").toBe(2);
     expect(qualifierDeclarationCount(sec("限定词行数=1")), "fixture 前提：单串时计数不得把标题行也算进去").toBe(1);
@@ -1051,6 +1155,54 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
     // 实跑 `3 failed / 10 passed`，三条同时红，本条是唯一直接报"命中 21 个标题、契约要求恰为 1"这一成因的；
     // **后移到存在的批（`"### R11 R11 批次"`）** = 实跑 `1 failed / 12 passed`，**只有本条红**——这一支
     // 在 fixture 写死起点字面时曾被误记成"三条同红"，派生（`R11R11-SR-3`）后归属才与实测一致。
+  });
+
+  it("卷外落点行须带终局判据、援引先例的批节须指向裁决字段（R11R14-A-M2 / C-M2 的机器化）", () => {
+    const md = readFileSync(path, "utf8");
+    const { startFound, managed } = managedSections(md);
+    expect(startFound, `登记处找不到起点小节「${OBLIGATION_FROM}…」；改标题须同批改本常量`).toBe(true);
+    expect(managed.length, "本条管辖集合为空 = 起点被改到最后一批之后，本条会静默管零批").toBeGreaterThan(0);
+    expect(
+      managed.flatMap((s) => [...offbookLandingProblems(s.body), ...precedentCitationProblems(s)]),
+      `${BACKLOG_REL} 的某批出现"标了卷外却没给终局判据"或"援引 \`--no-verify\` 却没指到 rounds.json 的裁决字段"` +
+        `——两支同族：引用了不可复核的材料却不留可复跑的指针`,
+    ).toEqual([]);
+    // **判别力前提（真实文件侧）**：两支若在当前登记处管零个对象，上面的 `toEqual([])` 就是恒真。
+    // 不装这个前提的形态本系列已处罚过（`R11R12-A-m1`：某门"今天零实例"须写明，否则绿无含义）。
+    expect(
+      managed.filter((s) => s.body.includes(OFFBOOK_MARKER)).length,
+      `本条的门必须管到至少一个含「${OFFBOOK_MARKER}」的批节，否则第一支恒绿`,
+    ).toBeGreaterThan(0);
+    expect(
+      managed.filter((s) => s.body.includes(PRECEDENT_TOKEN)).length,
+      `同上：至少有一个受管批节含「${PRECEDENT_TOKEN}」，否则第二支恒绿`,
+    ).toBeGreaterThan(0);
+
+    // 防空转 fixture：两支各验"红 / 绿 / 不误红"三态，且一律走真实判据函数（`R11R12-B-m5` 的口径——
+    // fixture 里不复刻判据，收紧实现时 fixture 会跟着收紧）。
+    const head = "| ID | 状态 | 位置 |\n|---|---|---|\n";
+    const off = (rows: string): string[] => offbookLandingProblems(`${head}${rows}`);
+    expect(off(`| R9-OFF-1 | 已消化（落点在卷外） | bench/a.ts |\n`), "标卷外却没给终局判据 ⇒ 必须点名那一行").toEqual([
+      expect.stringMatching(/R9-OFF-1/),
+    ]);
+    expect(
+      off(`| R9-OFF-2 | 已消化（落点在卷外；终局判据 = 下一份卷 §6 须逐字含"两型分写"） | bench/b.ts |\n`),
+      "同一格给了终局判据即绿",
+    ).toEqual([]);
+    expect(
+      off("| R9-OFF-3 | 已消化（本批改 bench/c.ts 一行） | bench/c.ts |\n"),
+      "没标卷外的普通行不得误红（本条不管「该不该标卷外」那一半）",
+    ).toEqual([]);
+    const cite = (body: string): string[] =>
+      precedentCitationProblems({ heading: "### ZZ 批次（fixture）", body });
+    expect(cite("本批用了 `--no-verify`。"), "援引先例却没指裁决字段 ⇒ 红").toEqual([
+      expect.stringMatching(/rNN_user_decision/),
+    ]);
+    expect(
+      cite("本批用了 `--no-verify`，裁决逐字记在 rounds.json 的 r12_user_decision 字段。"),
+      "指到真实字段名即绿",
+    ).toEqual([]);
+    expect(cite("本批与推送无关。"), "不含该记号的批节不得误红").toEqual([]);
   });
 
   it("守卫自检（防空转）：ID 列覆盖锁清单，且人为删行形态确会被拦", () => {

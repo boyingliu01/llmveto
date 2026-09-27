@@ -81,3 +81,19 @@
 - **Rationale**: "安全检查失败不放行"是本项目区别于质量门禁 SKIP 语义的唯一硬差异，超时是失败的一种，不能例外。G2 阈值是**承诺值而非实测值**，故显式挂 G-BENCH 前置门逼 BUILD 期先实测——这一诚实标注本身是 R1 要求消除"不可证明承诺"的一部分
 - **Timestamp**: 2026-09-14T15:20:00+08:00
 
+
+## Decision DR-011 — v2 走完整 Sprint Flow（复杂级）
+- **Phase**: 1/6 PREP / AUTO-ESTIMATE
+- **Question**: AUTO-ESTIMATE 实测 18 处触点、跨 7 个 src 目录、新增 export >5、预估 >10 文件 / >500 LOC（超复杂阈值 2 倍），是否接受"复杂 → 完整 6 阶段"流程
+- **Options**: (a) 接受复杂/完整流程；(b) 降级标准流程；(c) 先只跑 DESIGN 看完设计再定
+- **Choice**: **(a)** 接受复杂 / 完整 Sprint Flow
+- **Rationale**: 客观指标全部落在复杂区间，且 v2 触碰 evidence schema 冻结契约（见 DR-012），降级会低估回归面
+- **Timestamp**: 2026-09-27T17:40:00+08:00
+
+## Decision DR-012 — v2 拆两刀：v2a 检测核心 / v2b 运营面
+- **Phase**: 1/6 PREP / 范围切分
+- **Question**: roadmap §v2 有 7 条相互独立的交付线（4 checker、金丝雀、指纹巡检、计费对账+report、evil-relay 双矩阵 CI、3 个新接入、CI 化），超过单 sprint 常规预算，如何切
+- **Options**: (a) 全量 v2 单 sprint；(b) 拆两刀 v2a 检测核心 + v2b 运营面；(c) 拆三刀只做 4 checker + 金丝雀
+- **Choice**: **(b)** 拆两刀。本 sprint = **v2a**：evidence schema 扩版决策 + 4 个新 checker（thinking-signature-presence / tool-call-shape / usage-reconcile / fingerprint-probe）+ 金丝雀引擎与 `canary rotate` CLI + evil-relay 模拟器与双矩阵 CI 化。**v2b** 顺延：周期性指纹巡检 + provider 信任分、计费对账与 `report` CLI、Claude Code / Codex / promptfoo 接入扩展
+- **Rationale**: v2a 的判据是"能被 evidence 与 CI 证明"——4 个 checker 与金丝雀都落在同一条过闸/取证链上，且共享同一处 schema 契约变更，拆开会造成 schema 改两次。v2b 三条线是纯运营面（巡检调度 / 出报告 / 多客户端覆写），与检测语义正交，可独立验收。v1 已有教训：走查在大批次文档上不收敛（见 [[r10-batch-pending]]），砍范围优于砍深度
+- **Timestamp**: 2026-09-27T17:42:00+08:00

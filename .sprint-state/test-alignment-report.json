@@ -1,12 +1,13 @@
 {
   "alignment_status": "PASS",
-  "phase": "1",
-  "score": 96.0,
+  "phase": "2",
+  "score": 95.5,
   "sprint_id": "sprint-20260914-49",
-  "head_commit": "5947e8bf5419a284af1a0b851086db8fc6ed7f34",
-  "specification_sha256": "a51d25048460ac84a9882291b96451e4a5139a9a2e814b02024ffdd67641a3bc",
-  "spec_hash": "a51d25048460ac84a9882291b96451e4a5139a9a2e814b02024ffdd67641a3bc",
-  "generated_at": "2026-09-15T22:30:00Z",
+  "head_commit": "2ddff28a95a7800c5fac0f823ca3c7d6029cc8c3",
+  "specification_sha256": "7c50d41ec17288d89bbaff3002da9de9b2891334ffabfbc9c2daaa7432f620ba",
+  "spec_hash": "7c50d41ec17288d89bbaff3002da9de9b2891334ffabfbc9c2daaa7432f620ba",
+  "generated_at": "2026-09-27T09:30:00Z",
+  "note_vs_previous_run": "本报告取代 2026-09-15 版（HEAD 5947e8b / spec a51d2504）。期间 specification.yaml 因 AC-VETO-013-04 回退分位数由 p95 改 p50（ADR-0002 补遗三）而变更 hash；测试面由 25 文件/146 用例增至 34 文件/280 用例。",
   "summary": {
     "total_requirements": 14,
     "requirements_requiring_tests": 13,
@@ -16,9 +17,10 @@
     "acceptance_criteria_requiring_tests": 56,
     "acceptance_criteria_covered": 56,
     "acceptance_criteria_coverage_pct": 100.0,
-    "test_files": 25,
-    "test_cases": 146,
-    "test_cases_passing": 146
+    "test_files": 34,
+    "test_cases": 280,
+    "test_cases_passing": 277,
+    "test_cases_skipped_conditional": 3
   },
   "dimension_scores": [
     {
@@ -26,79 +28,90 @@
       "score_pct": 100.0,
       "weight_pct": 30,
       "weighted": 30.0,
-      "note": "13/13 REQs with @test annotation (REQ-VETO-001 exempt per test_coverage_requirements all-false)"
+      "note": "tests/ 面 12/13 REQ 有 @test；REQ-VETO-013 的 @test/@covers 全量落在 bench/（AC-013-01..05 逐条在标注），合并后 13/13；REQ-VETO-001 按 test_coverage_requirements 全 false 豁免"
     },
     {
       "dimension": "Acceptance Criteria Coverage",
       "score_pct": 100.0,
       "weight_pct": 25,
       "weighted": 25.0,
-      "note": "56/56 ACs with @covers annotation (AC-VETO-001-XX exempt)"
+      "note": "51/56 AC 在 tests/ 有 @covers，AC-VETO-013-01..05 在 bench/ 标注补齐；AC-VETO-001-01..03 豁免（文档+工具门禁）"
     },
     {
       "dimension": "Test Intent Correctness",
-      "score_pct": 95.0,
+      "score_pct": 92.5,
       "weight_pct": 20,
-      "weighted": 19.0,
-      "note": "Every test file has @intent header; some describe behavior at file scope rather than per-`it` (acceptable)"
+      "weighted": 18.5,
+      "note": "2 个后增文件无 @intent 文件头（tests/unit/backlog-integrity.test.ts、tests/unit/toolchain-smoke.test.ts）；两者不在任何 REQ 映射内，属守卫/工具面，不构成规格缺口"
     },
     {
       "dimension": "Edge Case Coverage",
       "score_pct": 90.0,
       "weight_pct": 15,
       "weighted": 13.5,
-      "note": "SSE chunk split (E2 80 8B across two chunks) / malformed JSON / empty chain / tampered seq / non-loopback host / auth-header benign set / >512KB fallback — all covered"
+      "note": "跨 chunk UTF-8 切分 / malformed SSE / 空链 / 篡改 seq / 非回环 host / 认证头 benign 集 / >512KB 回退 — 全部在册"
     },
     {
       "dimension": "Test Data Validity",
       "score_pct": 85.0,
       "weight_pct": 10,
       "weighted": 8.5,
-      "note": "Threat fixtures (T1b/T2c/T3a) + 50 benign corpus + adversarial fixtures committed via SL-12; bench baseline real-measured via SL-13"
+      "note": "威胁 fixture（T1b/T2c/T3a）+ benign ≥50 + 跨 chunk 对抗样本在册；bench/baseline.json 为实测"
     }
   ],
   "misaligned_tests": [],
   "exempt_requirements": [
     {
       "id": "REQ-VETO-001",
-      "reason": "specification.yaml.test_coverage_requirements = { unit: false, integration: false, e2e: false }; 前置决策门 G-LIC/G-FP/G-BENCH 是文档 + 工具类门禁，非可测代码",
-      "evidence": "docs/licenses.md + bench/baseline.json (SL-01)"
+      "reason": "specification.yaml.test_coverage_requirements = { unit: false, integration: false, e2e: false }; 前置决策门 G-LIC/G-FP/G-BENCH 为文档+工具门禁",
+      "evidence": "docs/licenses.md + bench/baseline.json"
     }
   ],
   "anti_pattern_detected": false,
   "anti_pattern_notes": [
-    "无 test.skip / xit / 空 expect 断言",
-    "无永远通过的断言（所有断言绑定具体行为，SL-14 e2e 直接暴露 core.ts getter bug）",
-    "mock 密度 < 30%（vitest 主要用真实 evidence file + spawn ephemeral server；仅 upstream 是 mock，per TDD skill mock 边界）"
+    "3 个 skip 全部为环境条件门（cli-smoke 的 CAN_BUN/DIST_READY 套、daemon-lifecycle 的 runtime driver 探测、bench out-path-guard 的 runIf(win32)），非掩盖失败；本次 dist 构建后重跑 tests/e2e 相应套件已实跑全绿",
+    "无 test.skip/xit 硬跳过，无空 expect"
   ],
   "errors": [],
   "phase2_execution": {
     "status": "PASS",
-    "test_command": "COVERAGE_ALL=1 npx vitest run --coverage",
+    "test_command": "COVERAGE_ALL=1 bunx vitest run --coverage",
     "exit_code": 0,
-    "tests_passed": 146,
+    "tests_passed": 277,
+    "tests_skipped": 3,
     "tests_failed": 0,
-    "duration_seconds": 4.79,
     "coverage": {
-      "statements_pct": 92.21,
-      "branches_pct": 83.46,
-      "functions_pct": 95.94,
-      "lines_pct": 95.16,
+      "statements_pct": 86.87,
+      "branches_pct": 80.03,
+      "functions_pct": 91.89,
+      "lines_pct": 90.22,
       "threshold_pct": 80,
       "all_above_threshold": true
     },
-    "typecheck": { "command": "npx tsc --noEmit", "exit_code": 0 },
+    "typecheck": { "command": "bun run typecheck && bun run typecheck:dist", "exit_code": 0 },
     "freeze_status": {
       "pre_phase2_locked": true,
       "violations_during_phase2": 0,
       "post_phase2_unlocked": true,
-      "note": "Per Qoder platform adaptation (sprint-flow Pre-Edit Gate)：orchestrator 期间未修改任何 tests/*.test.ts 文件"
+      "note": "Phase 2 期间零 tests/** 文件修改（工作区 git status 核验）"
     }
   },
   "gate_367_verdict": {
     "status": "PASS",
-    "reason": "alignment_score 96.0% >= 80% threshold; 全部 REQ/AC 硬映射完整；Phase 2 执行无冻结违规；146/146 tests green；覆盖率 4 项 >=80%"
+    "reason": "alignment_score 95.5% >= 80%; REQ/AC 硬映射完整（tests+bench 合并面）; 277/280 通过 + 3 条件 skip; 覆盖率四项 >= 80%"
+  },
+  "v1_deployment_acceptance": {
+    "date": "2026-09-27",
+    "artifact": "dist/cli/index.js（bun run build 于 2ddff28）",
+    "items": {
+      "accept-1-managed-paths": "PASS — doctor 遍历 MANAGED_CONFIG_IDS 无漂移 + e2e 探测过闸断言（AC-014-01/02）实跑绿",
+      "accept-2-delphi-path": "PASS — e2e client=\"delphi\" 用例绿",
+      "accept-3-checker-effectiveness": "PASS — fixture 回归全绿（检出 100%、阻断类 FP=0 断言在册）",
+      "accept-4-fail-closed-e2e": "PASS — 本机黑盒：含凭据探测 → 502 llmveto:rejected + evidence action_taken=blocked_before_forward（上游 59999 不可达仍阻断 = 零出境）；流式 veto-mid-stream e2e 绿",
+      "accept-5-evidence-verifiable": "PASS — 本机黑盒：verify ok(rc0) → 篡改 action_taken 后 first_bad_seq=0 (record_hash_mismatch) rc1；daemon 重启纯追加",
+      "accept-6-perf-gates": "PASS — CI run 36308227620（2ddff28, linux）G1/G2/G3 + 回归对比步全绿，46s"
+    },
+    "cli_5frozen_no_stub": "PASS — 未知命令拒绝并枚举 start/stop/status/doctor/verify",
+    "daemon_lifecycle": "PASS — start/status/stop 真后台进程，隔离 LLMVETO_STATE_DIR=var/acceptance-state，未触碰用户真实配置"
   }
 }
-
-

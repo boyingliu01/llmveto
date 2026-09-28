@@ -1,10 +1,10 @@
-# llmveto v2a 需求陈述 — 检测核心（R1 Round 5 修订版 + 批准后二次自查）
+# llmveto v2a 需求陈述 — 检测核心（R1 Round 5 修订版 + 批准后二次自查 + 设计期自查）
 
 - Sprint: `sprint-20260927-46` / 分支 `sprint/2026-09-27-01`
 - 权威上游: `docs/issues/1-req-threat-model.md`（REQ）、`2-design-v1.md`（DESIGN）、`4-test-validation.md`（TEST）、`5-roadmap.md`（ROADMAP）
 - 领域术语: `CONTEXT.md`
 - 术语与行为矩阵以 REQ §裁决与动作语义 为唯一权威；本文不重复定义，只声明 v2a 增量。
-- 本版：R1 有效判定轮为 1、2、3、5（Round 3 与 Round 4 各含一次无效执行：architecture 槽两次 fetch failed）。Round 1 三家 GAPS_FOUND（6C/12M/11m，处置 §11）→ Round 2 0C/4M/9M、architecture 仍 GAPS_FOUND、共识 0.67 不过（处置 §12）→ Round 3 首次执行无效、重跑（记为 3b）得 3/3 APPROVED（0C/2M/7m，处置 §13）→ Round 4 执行无效（不计共识，其技术家 Critical 仍采纳）→ **Round 5 得 3/3 APPROVED（0C/2M/9m，共识 1.00，处置 §14.3）**，5 轮预算用尽。§14.4 披露：Round 5 批准后本文自查发现自己上一轮对 TEST 契约 #4 的读法是错的，已二次订正 §4.5 并把 §5 由一处背离扩为三处——该版本未经任何评审轮独立确认，其后果与复核义务逐字写在 §14.4。
+- 本版：R1 有效判定轮为 1、2、3、5（Round 3 与 Round 4 各含一次无效执行：architecture 槽两次 fetch failed）。Round 1 三家 GAPS_FOUND（6C/12M/11m，处置 §11）→ Round 2 0C/4M/9m、architecture 仍 GAPS_FOUND、共识 0.67 不过（处置 §12）→ Round 3 首次执行无效、重跑（记为 3b）得 3/3 APPROVED（0C/2M/7m，处置 §13）→ Round 4 执行无效（不计共识，其技术家 Critical 仍采纳）→ **Round 5 得 3/3 APPROVED（0C/2M/9m，共识 1.00，处置 §14.3）**，5 轮预算用尽。§14.4 披露：Round 5 批准后本文自查发现自己上一轮对 TEST 契约 #4 的读法是错的，已二次订正 §4.5 并把 §5 由一处背离扩为三处——该版本未经任何评审轮独立确认，其后果与复核义务逐字写在 §14.4。§14.5 披露：Phase 2 Step 3（设计文档）定位接缝时实测出**两处**新背离——第四处（流式窗口游标双重推进 + `extra` 被丢弃，新增 REQ-V2a-15 与 AC-V2a-25/26）与第五处（DESIGN 承诺的 G3 运行时预算门在 v1 从不生效，新增 AC-V2a-27）；这两条同样没有任何评审轮看过，复核义务与 §14.4 同形。
 
 ## 1. 定位
 
@@ -31,6 +31,7 @@ ROADMAP §v2 有 7 条相互独立的交付线，实测触点 18 处、跨 7 个
 | REQ-V2a-12 | **安全类 checker 预算可注入**：网关侧的 per-checker / per-chunk 执行预算成为可注入依赖，使 `checker_timeout → error → block` 分支在测试内确定性可达（不依赖机器负载） | [R3 T-MAJ1] AC-V2a-12 的 `checker_timeout` fixture 此前无可构造口径。**预算档位有两个来源，分别管两类 checker** [R5 A-MINOR2]：作用于**请求体或非流式响应体**的走 DESIGN §性能预算 **G3 的 body 分档**（20/50/120ms）；作用于**响应流**的走 **G1 族的每 chunk 门预算**（不设独立 G3 硬超时，口径见 §4.2 的 `canary-return-scan` 行）。v2a 只新增"可注入"这一实现面，**不新造任何阈值** |
 | REQ-V2a-13 | **安全类词汇的链上可见性**：（a）实装 TEST 契约 #4 的**可选** `reason` 顶层位（v1 契约有此位、实现整体缺席）；（b）`CheckerResult.reason` 联合扩为四值（新增 `window_overflow`）；（c）error 分支除顶层位外**另产一条** `findings[]` 内 `{checker, threat, verdict:"error", rule_id:<reason>}`（契约 `findings[].verdict` 枚举本就含 `error`）；（d）`registry_unavailable` / `inject_skipped` 只进顶层 `reason`，**不产 findings 条目**。`REQUIRED_FIELDS` 26 项必填表**不变** | [R3 自查起、R5 后二次订正] 本文原述断言了实现里不存在的位；§4.5 为唯一落点表，§5 第二/第三处为背离依据 |
 | REQ-V2a-14 | **背离登记入契约文本**：TEST 契约 #4 的 `latency` 行加注"v1 实现为标量，四元组未实装"、`usage`/`cache_reported` 缺席在 REQ 登记表 T4a 行加注；两处均为 grep 型断言对象 | [R5 后自查] §5 第二处：不修只登记，但必须登记到不可被遗忘的位置 |
+| REQ-V2a-15 | **流式窗口归属与游标语义修复**：网关按 `checkerId` 各自持有 `ScanWindow`（含 `extra`）并跨片持久；`cursor` 由网关以 `unit.text.length` **权威推进且只推进一次**，checker 回传的 `cursor` 被忽略、回传的 `extra` 被保留进该 checker 自己的窗口。checker 两态签名与 TEST 契约 #2 不变 | [设计期自查] §5 第四处：不修则 v2a 的 tool-call 累积窗口无处存活、链上 `offsets` 继续失真，G-WINDOW 与 AC-V2a-14 失去计量点 |
 
 ## 3. 范围内排除
 
@@ -191,6 +192,31 @@ DESIGN §扫描单元定义 声明响应侧单元含 `tool_calls[*].arguments`�
 
 **v2a 的处置**（REQ-V2a-13）：error 分支必须同时产出（i）顶层可选 `reason` 与（ii）一条 `findings[]` 内 `{checker, threat, verdict:"error", rule_id:<reason>}`——契约 #4 的 `findings[].verdict` 枚举本就含 `error`（`schema.ts:15`），所以这是**契约已预期、实现未产出**，不是扩表。断言在 AC-V2a-24。
 
+### 第四处：流式窗口的游标语义与 `extra` 归属被网关侧写坏 [设计期自查，见 §14.5]
+
+窗口语义的权威声明是 `tests/unit/checkers/invisible-unicode-scan.test.ts:50-69`（AC-VETO-004-02）：**checker 收到的 `window.cursor` = 本片之前的已消费码点数**，回传值 = 该值再加本片长度。checker 侧实现与此一致（`invisible-unicode-scan.ts:58-72`）。网关侧两处背离该语义（`src/gateway/core.ts:97-107`）：
+
+- 进入 checker 循环**之前**就把 `cursor` 加上 `unit.text.length`，checker 再按同一长度自增 → **每片双重推进**；
+- 重建 `nextWindow` 时只携带 `pendingBytes` 与 `cursor`，**丢弃 `extra`** → ADR-0003 指定用于承载未闭合 `tool_call.arguments` 片段的状态，在现有架构下**无法跨片存活**；且多 checker 串行共享同一窗口时，任一 checker 回传的 `extra` 会被下一个 checker 的空返回值覆盖（`invisible-unicode-scan.ts:64-67` 的返回值不含 `extra`）。
+
+实测（三片流式响应，隐形字符的真实全局码点偏移为 22 与 33）：链上 `findings[].offsets` 报 **49** 与 **71**。
+
+后果分两面：**取证面**是 v1 既有缺陷（`verdict`/`action` 不受影响，故 v1 五条验收与既有 fixture 全绿——`offsets` 只在 checker 单测里被断言，**从未经网关路径断言**，这就是它能存活的原因）；**v2a 阻塞面**是 `tool-call-shape` 将成为第二个有状态流式 checker，窗口归属不修则 256 KiB 单笔上界与 AC-V2a-14 的"总留存字节"**没有可信计量点**，G-WINDOW 也就无从关闭。
+
+**v2a 的处置**（REQ-V2a-15）：网关按 `checkerId` 各自持有 `ScanWindow`（含 `extra`）并跨片持久；`cursor` 由网关以 `unit.text.length` 权威推进且**只推进一次**。checker 的两态签名与 TEST 契约 #2 **不变**（窗口由调用方注入/回传这一契约本来就没说多个有状态 checker 共享一个窗口）。断言在 AC-V2a-25（经网关路径的 offsets 正确性）与 AC-V2a-26（窗口隔离 + `extra` 存活）。形态与理由见 ADR-0005。
+
+### 第五处：DESIGN 承诺的 G3 运行时预算门在 v1 从不生效 [设计期自查，见 §14.5]
+
+`docs/issues/2-design-v1.md:83` 写："超各自预算 → 判 `verdict=error` → `action=block`（超时=拒绝），evidence `reason=\"checker_timeout\"`"。运行时里没有这条门：
+
+- 网关侧唯一的 error 兜底是 `safeRun`（`core.ts:112-118`），它捕获的是**异常**，不看执行时间；
+- `bench/g3-checker-timeout.ts` 只做离线采样并打印 PASS/FAIL/ADR（其文件头自述"本文件仅负责采样 + 控制台输出"），不在请求路径上；
+- `checker_timeout` 作为 `CheckerResult.reason` 的联合成员存在于类型里（`shared/types.ts:62`），但**生产代码里没有任何产生者**——全仓检索只命中类型定义、bench 阈值表与 `bench/baseline.json` 的档位数字。
+
+⇒ v1 的"超时=拒绝"在运行时**不可达**：慢 checker 只会拖慢请求，永远不会阻断。它与第三处互为因果——既没有 timeout 型 error，per-checker 的 error 取证痕迹自然也就无从出现，所以第三处的空 `findings[]` 在 v1 从未被观察到。
+
+**v2a 的处置**（REQ-V2a-12 的实现面 + AC-V2a-27）：把预算门接进网关的请求/非流式响应/流式三条路径，默认档位取 DESIGN 的 G3 body 分档与 G1 族每 chunk 门，**不新造任何阈值**；判定发生在 checker **返回之后**（同步 JS 无法抢占一个纯函数的执行），因此这条门是**裁决面**的门——它保证"预算耗尽即拒绝"，不保证"预算耗尽即止损"（已被拖掉的时间属于 G1/G2 的观测面）。该语义是设计决策，写在 v2a 设计文档，AC-V2a-27 把守默认档位与三条作用路径。
+
 ## 6. 验收标准（可判定形式）
 
 | ID | 验收条目 | 判据 |
@@ -210,7 +236,7 @@ DESIGN §扫描单元定义 声明响应侧单元含 `tool_calls[*].arguments`�
 | AC-V2a-13 | **arguments 非法 JSON 的语义归属** [R1 修订 T-CRIT2] | `arguments` 解析失败判为 **`finding`**（不是 `verdict=error`）——理由：扫描器成功判定"上游返回了不合法调用"属业务命中，`error` 专指扫描器自身失败（REQ §术语定案）。AC 断言该分支 `evidence.findings[].rule_id="malformed-arguments"`、`findings[].verdict="finding"`（不是 `"error"`），且顶层 `reason` 位**缺席**——`"reason" in record === false` [R5 T-MINOR2]。这条"缺席"断言是双向的：写成 `reason` 存在但为 `undefined` 也会被 JSON 序列化后消失，故断言口径 = **序列化后的 JSONL 行内无 `reason` 键**，而非 JS 层的 `=== undefined`。理由见 §4.5（业务命中不得标为执行失败） |
 | AC-V2a-14 | **window 累积不破零缓冲承诺（附构造性 fixture 形状）** [R1 修订 A-CRIT1 / R3 T-MAJ1] | 两个量分开断言，且必须**在同一 fixture 内同时成立**：**① 未判定 chunk ≤1**——流式 tool-call 场景下每个 chunk 均在该 chunk 判定后送达，`delivered_chunks` 逐 chunk 递增，断言任意时刻网关不持有超过 1 个未判定 chunk（判定序 = 先判该 chunk、再决定送达，故"扣住整块等 JSON 闭合"违反本条）。**② 累积硬上界可达且被 block**——构造：`delta.tool_calls[0].function.arguments` 以 **128 B 固定片长、2049 个 chunk** 送达。**计量前置条件（显式，不靠 §4.2 散文）** [R5 T-MAJ1]：上界判据 = **"若收下本片则总留存字节"**，即第 `i` 片的判据量为 `Σ(len_1..len_i)`（**含被判定中的本片自身**）；上界值 `LIMIT = 262144`；触发条件为**严格大于**。据此期望值唯一确定：`i = 2048` 时 `Σ = 262144`，不 > LIMIT → 收下并送达；`i = 2049` 时 `Σ = 262272` > LIMIT → 拒收该片并 block。故前 2048 片各判 `clean` 并送达（`delivered_chunks = 2048`），第 2049 片 → `verdict=error` + `reason="window_overflow"` + `action=block` + `action_taken="terminated_after_delivery"`，断言该片字节**不**送达（`delivered_chunks` 仍为 2048）且 `event: error` 恰一次（AC-V2a-20）。若实现选择"不含本片"的口径，则触发点前移至第 2050 片，本条期望值须同批改——**不允许**保留 2049 的期望值却换口径。**为何二者不矛盾**：`window_overflow` 计的是"已送达但结构未闭合而须留存以判 shape"的片段量（§4.2"累积量的计量口径"行），零缓冲禁止的是"未判定即不送"——两者计量对象不同。fixture 仅存在于集成测试，不进 G-PERF 分档（体量非性能样本）；ADR-0003 记录该取舍 |
 | AC-V2a-15 | **REQ 登记表 T2c 加注内容显式化** [R1 修订 A-MIN3 / T-MAJ4] | REQ T2c 行"缺口理由"须逐字包含：`tool-call 参数路径 v1 实际未覆盖，v2a 起覆盖`；由 **`tests/unit/doc-consistency.test.ts`（新增，与既有 `backlog-integrity.test.ts` 同族）** 的 grep 型断言把守 |
-| AC-V2a-16 | **文档订正本身有 AC** [R1 修订 A-MIN3 / A-MIN4] | **六处**订正各有断言：① TEST 契约 #4 中"`degraded_observational` v1 fixture 不覆盖"改为"v2a 起覆盖"；② v1"枚举可达性=0"断言相应更新为 v1 记录集内仍为 0；③ TEST 契约 #4 的 `canary` 字段加注"保留位（v2a 起仍恒 null，命中写 `findings[]`）"；④ README §CLI 命令集 5→6 且"不提供"清单同步 T2b 与 T2c 表述；⑤ [R5 后自查] TEST 契约 #4 的 `latency` 行加注"v1 实现为标量 `total_ms` 语义，`{ttft_ms, request_gate_ms, scan_ms}` 四元组未实装（背离，排期未定）"，并同步 `reason` 行加注"v1 契约有此可选位、实现自 v2a 起实装，词汇表 = §4.5 六值"；⑥ [R5 后自查] REQ 登记表 T4a 行加注"链内不落上游自报 `usage` / `cache_reported` 原值（契约 #4 可选位未实装），v2a 判定仅取 `ScanUnit.meta.usage`"。六处由同一个 `tests/unit/doc-consistency.test.ts` 的 grep 型断言把守，防表述漂移 [R1 修订 A-MIN3 / A-MIN4 / T-MAJ4] |
+| AC-V2a-16 | **文档订正本身有 AC** [R1 修订 A-MIN3 / A-MIN4] | **七处**订正各有断言：① TEST 契约 #4 中"`degraded_observational` v1 fixture 不覆盖"改为"v2a 起覆盖"；② v1"枚举可达性=0"断言相应更新为 v1 记录集内仍为 0；③ TEST 契约 #4 的 `canary` 字段加注"保留位（v2a 起仍恒 null，命中写 `findings[]`）"；④ README §CLI 命令集 5→6 且"不提供"清单同步 T2b 与 T2c 表述；⑤ [R5 后自查] TEST 契约 #4 的 `latency` 行加注"v1 实现为标量 `total_ms` 语义，`{ttft_ms, request_gate_ms, scan_ms}` 四元组未实装（背离，排期未定）"，并同步 `reason` 行加注"v1 契约有此可选位、实现自 v2a 起实装，词汇表 = §4.5 六值"；⑥ [R5 后自查] REQ 登记表 T4a 行加注"链内不落上游自报 `usage` / `cache_reported` 原值（契约 #4 可选位未实装），v2a 判定仅取 `ScanUnit.meta.usage`"；⑦ [设计期自查：§14.5] REQ 登记表 T2c 行的能力边界加注"流式命中在 v1 的 `findings[].offsets` 不可用（网关侧游标双重推进，§5 第四处），v2a 修复后方可作定位取证"。七处由同一个 `tests/unit/doc-consistency.test.ts` 的 grep 型断言把守，防表述漂移 [R1 修订 A-MIN3 / A-MIN4 / T-MAJ4] |
 | AC-V2a-17 | **session 键可判定** [R1 修订 A-MAJ1] | fixture：带 `x-llveto-session` 的两个会话 → 键不同、canary 不同；同会话两次请求 → canary 相同；缺该头时按 §4.3 回退键（其规范化规则已在 §4.3 定义为"不做任何归一化"，摘要输入构造亦在 §4.3 定值），断言同一对话的多次请求回退键恒定。**拼接歧义样本** [R3 T-MIN3]：两条 text parts 分别为 `["ab","c"]` 与 `["a","bc"]` 的会话 → 断言键**不同**（长度前缀生效；无分隔实现会在此失败）。**非 text part 负样本** [R3 T-MIN3]：两条首条 message 仅图像 part 不同、text parts 相同的会话 → 共享 canary → 串流不命中，断言 `clean` 并注释指向 §7 P4 第 ⑥ 条（不得写成"已检测"）。**负样本**：两条首条 prompt 逐字节相同的会话 → 共享 canary → 串流**不命中**，该 fixture 断言 `clean` 并在注释里指向 §7 P4 行的已登记漏检（不得写成"已检测"） |
 | AC-V2a-18 | **注入分派六分支全覆盖** [R1 修订 A-MAJ4 / R2 A-MAJ1] | §4.4 六形态各 ≥1 fixture，**断言对象取 §4.4 右列"不变式落点"该行的写法**（不得用统一的"末条 message 前缀比对"套全部分支）：分支 1~5 断言该行判据 + `meta.canary_injected=true`；分支 6 断言 `canary_injected=false`、`status` 的 `inject_skipped` 计数 +1，**且链上顶层 `reason="inject_skipped"`、`findings[]` 内不含任何注入相关条目**（§4.5：只进描述位、不进裁决位）。**分支 6 的"不受影响"须可失败** [R2 T-MIN4 / R5 A-MINOR3]：断"同一 body 两态"是构造不出来的（不可解析的 body 无法同时是可注入的），故对照体 = **一对语义孪生 body**——`B_skip`（缺 `messages` 或截断成非法 JSON）与 `B_ok`（与之逐字段相同、仅 `messages` 合法且含 user message），断言 `B_ok` 趟 `canary_injected=true` 且顶层无 `reason`、`B_skip` 趟 `canary_injected=false` 且 `reason="inject_skipped"`，两趟的 `findings[]` 集合与最终 `action`/`action_taken` 逐字段相等——即跳过注入既不放松其它 checker，也不改变策略结论；请求仍正常过闸。两趟比较的**排除集**仍为 `ts` / `event_id` / `request_id` / `seq` / `latency`，且该清单落在 fixture 助手的常量表里、由各 AC 引用，不得散落在单个测试内 [R3 T-MIN4] |
 | AC-V2a-19 | **registry 不可用 / 轮换竞态** [R1 修订 A-MAJ2 / T-MAJ1] | ① registry 文件缺失或校验失败 → 链上顶层 `reason="registry_unavailable"` + `status`/`doctor` 同名计数非零，evidence 与 stdout **不得**出现"已注入"的申报，且 `findings[]` 内**不含**注入相关条目（§4.5：描述位可有、裁决位不可有——写成 finding 会被 `mapBySpec` 消费而改变 action）；② 轮换与在途请求交叠（fixture 显式构造）→ 在途请求按分配时刻快照判定，轮换后新会话必用新串；③ "registry 仅网关进程写"由**两种手段同时把守、各断一件事** [R2 T-MIN2]：静态侧 `tests/unit/architecture-boundaries.test.ts` 扩展一条 import 图断言——`src/cli/**` 不得 import `src/canary/**` 的写侧导出（`architecture.yaml` 相应细化），证明 CLI 无写能力；运行时侧集成测试断言 registry 文件读回完整（无非原子写残留、无半行），**并发压力参数定值** [R3 T-MIN2]：8 个在途请求持续 30s、期间每 2s 触发一次 rotate（共 ≥15 次），断言全程读回的 registry 均为合法 JSON 且 session 数 ≤ N=64；参数写进 fixture 常量表，改档位须同批改 AC。**时序注入点** [R5 T-MINOR3]：至少一次 rotate 必须落在「某请求已过 session 键计算、尚未写完 registry」的窗口内（fixture 在读写两点间插入手调 barrier 达成），否则本条只测了"交替发生"而没测"交叠" |
@@ -219,6 +245,9 @@ DESIGN §扫描单元定义 声明响应侧单元含 `tool_calls[*].arguments`�
 | AC-V2a-22 | **性能门沿用既有测量协议，不新增绝对值断言** [R1 修订 T-MAJ3 / F-MAJ1] | G-PERF 与 G-WINDOW 的实测全部引用 TEST §5 冻结协议（本机 loopback、mock-upstream 模板化、预热 50 次、n=200/档、报告 p50/p95/p99、§3 回退公式），载体是既有 `bench.yml`；v2a **不**在 AC 里写 ttft 绝对阈值断言，G1 阈值仍以 DESIGN §性能预算 三台门为唯一来源 |
 | AC-V2a-23 | **必填字段表不变、可选 `reason` 位实装、且"裁决位/描述位"边界被把守** [R3 自查 / R5 T-MAJ2 订正断言域 / R4 T-MAJ1 订正字面量] | ① `tests/unit/evidence/writer.test.ts` 现有的字段遍历是**包含式**断言（`expect(REQUIRED_FIELDS).toContain(f)`，:44）——加字段不会失败，正是静默扩表的入口；须补**全等**断言。全等的期望值 = **从 `EvidenceRecord` 的键集派生的常量**（`Object.keys` 型断言或 `satisfies` 型约束），**不得硬编码 "26" 字面量** [R4 T-MAJ1]，否则实现与测试要各改一处、必然漂移；本 AC 只断"可选位之外无新增必填位"。② `reason` 作为契约 #4 的**可选**位实装；断言 v1 旧记录集（无该键）在 `verify` 下**仍全部通过**（无 schema 迁移，§10.1 待议 6 的落点）。③ "不进裁决位"的断言域**限定为** `findings[].rule_id` 值集 + `findings[].checker` 值集，**不是全记录 grep** [R5 T-MAJ2]：全记录 grep 会被顶层 `reason` 自身命中而恒假。断言形式 = `registry_unavailable` / `inject_skipped` 出现在顶层 `reason` 且**不出现在** `findings[]` 任何条目内。④ 本条③同时是 §7 P4 第 ⑤ 条的**回归守卫** [R5 T-MINOR4]：若未来有人把注入失败改成 finding（从而改变 action），此断言判红 |
 | AC-V2a-24 | **`reason` 联合与链上 error 痕迹双层可判定** [R4 T-CRIT1（该轮执行无效，意见本身有效，见 §14）/ R5 A-MINOR4] | ① `CheckerResult.reason` 的取值域 = 四值全集 `{scanner_error, checker_timeout, input_malformed, window_overflow}`：类型层由 `tsc` 把守，运行期由枚举断言把守（fixture 实际产出的 reason 值必须落在四值内，且按 AC-V2a-12 的 per-checker 子域）。② v1 既有两值 `scanner_error` / `input_malformed` **必须仍可达**：各 ≥1 条 fixture 触发（前者 = checker 抛异常，后者 = SSE 事件级降级），断言顶层 `reason` 与 `findings[]` 内 `verdict="error"` 条目**同时出现**——即 §5 第三处背离确已修复。③ 链上 error 条目的 `threat` 取值按 §4.5 的约定表断言（`tool-call-shape`→`T2a`、`canary-return-scan`→`T1a`），不得为空、不得自造新威胁 id |
+| AC-V2a-25 | **链上 `offsets` 经网关路径可判定** [设计期自查：§5 第四处] | 载体是**经网关**的集成断言（mock-upstream 模板化多片响应），不是 checker 单测——后者已存在且一直是绿的，这正是缺陷存活到 v1 的原因。构造：隐形字符放在拼接后响应文本的已知全局码点偏移处，覆盖**首片内 / 末片内 / 跨片边界**（UTF-8 未决尾字节切开多字节序列）各 ≥1 例，另加非流式路径 1 例；断言 `findings[].offsets` **逐字等于**该全局偏移。本条必须可失败：修复前同一构造实测报 49 / 71（真实值 22 / 33，见 §5 第四处），断言判红即证明它测到了东西 |
+| AC-V2a-26 | **per-checker 窗口隔离 + `extra` 跨片存活** [设计期自查：§5 第四处 / ADR-0003 的前置条件] | ① `invisible-unicode-scan` 与 `tool-call-shape` 在同一连接上并发运行：`tool-call-shape` 写入自身窗口 `extra` 的累积片段，在**下一片仍可从其窗口读出**，而 `invisible-unicode-scan` 的 `cursor` 与 `offsets` 不因前者的累积量发生变化；② 反向断言任一 checker 的 `extra` 不会出现在另一 checker 的窗口输入里（无交叉污染）；③ §4.2"运行时累积量可观测"行的 `status` 计数口径在此钉死为 **`tool-call-shape` 那一路窗口的累积字节**，不含其它 checker 状态、不含 `pendingBytes`；④ `tests/unit/architecture-boundaries.test.ts` 的单向依赖断言**不得放宽**——窗口归属是 gateway 层职责，checkers 仍不得 import gateway/evidence/policy |
+| AC-V2a-27 | **G3 运行时预算门确实接线，且语义是"裁决面"不是"止损面"** [设计期自查：§5 第五处] | ① 三条作用路径各有断言：请求体扫描、非流式响应体扫描、响应流每 chunk 扫描——在**默认配置**（不注入任何测试预算）下，预算值分别等于 DESIGN 的 G3 body 三档与 G1 族每 chunk 门；断言形式为读取网关注入点的默认值常量表与 DESIGN 档位表**同一来源**（引用而非复抄，同 AC-V2a-12 的 `G3_TIER_8KB` / `G1_PER_CHUNK` 做法）。② 判定**在 checker 返回之后**：断言"超预算 → 该 checker 结果被改写为 `verdict=error` + `reason=checker_timeout` → `action=block` / 流式终止"，同时断言**不出现**任何"抢占/取消执行"的实现假设（v1 的纯函数签名不允许）。③ 注入预算只影响被点名的那个 checker，其余 checker 的预算保持不变（防止 fixture 为造一个 timeout 而把全局门限调松，从而削弱同一趟里其它安全类判定）。④ 预算耗尽不得改其它状态：窗口仍按片推进、evidence 记录仍落、`action_taken` 仍按既有行为矩阵取值（场景 1/2/3/4 不新增格）。⑤ 反向断言 v1 现状已消除：`checker_timeout` 在**生产代码路径**里有产生者（此前该值只存在于类型联合与 bench 阈值表，运行时永不产生，见 §5 第五处） |
 
 ## 7. 残余风险登记表的申报变更（v2a 结束后）
 
@@ -421,3 +450,21 @@ Round 3 结果（`var/delphi-v2a/r1-round3b-experts.json`）：**3/3 `APPROVED`*
 2. 三家 verdict 的判据面（无 Critical、剩余 Major 均已处置或登记）在订正后仍成立——但它们没有对订正版独立判过；
 3. 因此 Phase 4 VERIFY 的测试-规格对齐报告与 code-walkthrough **必须**把 §5 第二/第三处与 §4.5 双层落点列为专门复核项，把它们当作"未经 R1 独立确认的义务"对待；
 4. 若 Phase 3/4 发现 §4.5 的双层落点在实现层走不通（例如 `record_hash` 的 canonical JSON 对新增可选位不稳定），**不得**就地静默改需求，必须回到本文并出 ADR 记录。
+   **该疑问已在设计期核实为不构成阻塞**：`canonicalJson`（`src/evidence/chain.ts:17-30`）按 Unicode 码点升序排键，键**缺席**时只是不出现在规范形里，不会使既有记录的 `record_hash` 漂移；`sealRecord` 在哈希前组装完整记录（`writer.ts:85-113`），故新增可选位天然被计入。约束随之确定：顶层 `reason` 在不需要时必须**整键不写**（不得写 `reason: null`），否则 AC-V2a-13 的"序列化 JSONL 行不含该键"断言不成立。
+
+### 14.5 设计期（Phase 2 Step 3）自查：新增两处 v1 背离 —— 流式窗口归属（第四处）与 G3 运行时预算门（第五处）
+
+发现方式不是评审，是给设计文档定位接缝时的实读 + 实测：`buildRequestScanUnit` / `buildResponseScanUnit` 之外，`scanResponseStreamChunk`（`src/gateway/core.ts:89-109`）在把窗口交给 checker 之前先加了一次 `unit.text.length`，而 checker 自己又加一次；同一行重建 `nextWindow` 时不带 `extra`。用三片流式响应实测（隐形字符真实全局偏移 22 / 33）→ 链上 `offsets` 报 **49 / 71**。既有 `tests/unit/checkers/invisible-unicode-scan.test.ts:50-69` 把窗口语义钉得很死且一直绿，因为它是**直接调 checker**、绕过了网关；网关路径对 `offsets` 零断言。
+
+由此落地：§5 第四处（事实与后果）、**REQ-V2a-15**（按 `checkerId` 分窗 + 网关权威推进 cursor）、**AC-V2a-25**（经网关路径的 offsets 等值断言，含首片/末片/跨片边界三例 + 非流式一例）、**AC-V2a-26**（窗口隔离与 `extra` 跨片存活，并把 §4.2 的 `status` 累积量口径钉死为 `tool-call-shape` 那一路）、**ADR-0005**（形态选择与被否方案）。
+
+第五处的发现同样来自实读而非评审：为设计文档定位"预算注入口该放哪"时，发现网关里**不存在**预算判定——`safeRun`（`core.ts:112-118`）只捕获异常、`bench/g3-checker-timeout.ts` 只离线采样、`checker_timeout` 在生产代码路径**无产生者**。⇒ DESIGN `2-design-v1.md:83` 承诺的"超时=拒绝"在 v1 运行时不可达。它与 §5 第三处互为因果：既然没有 timeout 型 error，"error 不留 per-checker 痕迹"这一缺陷在 v1 也就从未被观察到。落地为 §5 第五处 + **AC-V2a-27**（三条作用路径接线 + 事后判定语义 + 默认档位引用 DESIGN）。
+
+**披露（与 §14.4 同形）**：这两条发生在 Round 5 给出 3/3 APPROVED **之后**，5 轮预算已用尽，因此**没有任何评审轮看过 REQ-V2a-15 / AC-V2a-25 / AC-V2a-26 / AC-V2a-27**。后果评估：
+
+1. 订正**只扩大**交付面（1 条 REQ + 3 条 AC：一处 v1 缺陷修复 + 一条从未生效的门第一次接线），未删减任何已批准 AC，未放宽任何门（G1/G2/G3 阈值、G-WINDOW 的 64/256 KiB 口径均未动，AC-V2a-27 明令"引用 DESIGN 档位而非复抄新值"）；
+2. 第四处是 ADR-0003 的**前置修复条件**而非并列项：窗口不修，则 256 KiB 单笔上界与 AC-V2a-14 的"总留存字节"没有可信计量点，G-WINDOW 无法关闭——所以本条不实现，已批准的需求本身会失去可判定性；
+3. 第五处有一个必须公开的反向风险：**把门接上会让 v1 里"本来慢但放行"的请求变成阻断**。G3 档位的设计前提（每档 ≥ 对应 G2 p95 的 3 倍余量）必须对新接线重新成立，否则就是拿"fail-closed"的名义制造可用性事故。因此 AC-V2a-27 的档位不是接完就过，须由 bench 实测（既有 `bench/g3-checker-timeout.ts` 的三档采样）确认新 checker 集合下仍成立，该实测属 G-PERF 门的关闭判据；
+4. 因此 Phase 4 VERIFY 必须把 §5 第四/第五处与第二/第三处、§4.5 双层落点并列，当作"未经 R1 独立确认的义务"专门复核；
+5. 影响面声明：第四处只改取证（`offsets` 失真），不改 `verdict`/`action`；第五处首次让 `error→block` 在超时时可达，但阈值本身未动。二者都**不构成 v1 验收回退**，也不触发 v1 已冻结阈值的修订。REQ 登记表 T2c 行须加"流式定位偏移在 v1 不可用"（AC-V2a-16⑦ 把守）。
+

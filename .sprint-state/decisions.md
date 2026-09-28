@@ -170,3 +170,14 @@
 - 备选与否决：(a) 只借 `findings[].rule_id` 承载——否决，因契约的 `findings` 项无 reason 语义且 error 分支现状 `evidence: []`，等于把"哪个 checker 因何阻断"写成一条业务命中，混淆 verdict 语义；(b) 新增顶层必填字段——否决，破 DR-013 的"不动 schema"且需要 `evidence_version` 升版；(c) 不修、只把 AC 措辞降级为"不断言 reason"——否决，那等于用改测试来迁就实现，正撞本项目"禁止静默放宽"的纪律。
 - 连带：`docs/plans/2026-09-27-v2a-requirements.md` §5 由"一处背离"扩为三处（第三处 = fail-closed 的 error→block 在链上不留 per-checker 痕迹，是 v1 验收"超时=拒绝"在取证面的真实缺口）；新增 REQ-V2a-12/13/14、AC-V2a-23/24；文档订正由四处升为六处（AC-V2a-16）。`usage` / `cache_reported` 与 `latency` 四元组 **v2a 不实装**，但必须在契约文本与 REQ 登记表留下可 grep 的背离记录。
 - 未决与复核义务：本决策发生在 Round 5 给出 3/3 APPROVED **之后**，5 轮预算已用尽，故 §5 三处背离版本文**未经评审轮独立确认**；Phase 4 的测试-规格对齐报告与 code-walkthrough 必须把 §4.5 双层落点、§5 第二/第三处列为专门复核项。详见该文档 §14.4。
+
+## Decision DR-021: 流式窗口按 checkerId 分持、游标由网关权威推进一次（第四处 v1 背离）
+
+- 日期：2026-09-28
+- 阶段：Phase 2 / Step 3 设计文档定位接缝时的自查
+- 决策：网关为每个有状态流式 checker 各持一份 `ScanWindow`（`pendingBytes`/`cursor` 为网关侧共享事实，`extra` 为 checker 私有且跨片保留）；`cursor` 由网关以 `unit.text.length` **推进且只推进一次**，checker 回传的 `cursor` 被忽略、回传的 `extra` 被保留。TEST 契约 #2 的两态签名与 checker 侧实现、既有 fixture **均不改**。已落链的失真 `offsets` 不回填不重算，只在 REQ 登记表 T2c 行标注能力边界。
+- 触发事实：`core.ts:97` 在进 checker 循环前先加一次 `unit.text.length`（checker 内部再加一次 → 每片双重推进），且重建 `nextWindow` 时丢弃 `extra`。三片流式实测：隐形字符真实全局偏移 22 / 33，链上 `offsets` 报 **49 / 71**。既有 `tests/unit/checkers/invisible-unicode-scan.test.ts:50-69` 把窗口语义钉死却一直绿，因为它直接调 checker、绕过网关；网关路径对 `offsets` 零断言。
+- 备选与否决：(a) 串行共享单窗口 + 要求每个 checker 记得透传 `extra`——否决，正确性寄托在礼貌上，且 offsets 依赖调用顺序；(b) 改契约 #2 让 checker 不回传 cursor——否决，破 v1 冻结的可测试性契约，本项目明写该契约"不可事后补"；(c) tool-call 累积窗口另立于网关侧——否决，与 ADR-0003 冲突且出现两套跨片状态口径；(d) 保留缺陷只改 AC 措辞——否决，test-follows-implementation，撞"禁止静默放宽"。
+- 连带：`docs/plans/2026-09-27-v2a-requirements.md` §5 由三处背离扩为**四处**；新增 REQ-V2a-15、AC-V2a-25、AC-V2a-26；文档订正点数由六处升为**七处**（AC-V2a-16⑦，T2c 行能力边界加注）。ADR-0005 承载形态与否决理由。
+- 必要性（不是可选清洁）：`tool-call-shape` 是第二个有状态流式 checker，窗口不跨片存活 ⇒ ADR-0003 的 256 KiB 单笔上界与 AC-V2a-14 的"总留存字节"无可信计量点 ⇒ G-WINDOW 关不掉。本条不实现，已批准需求失去可判定性。
+- 未决与复核义务：与 DR-020 同形——本决策发生在 Round 5 给出 3/3 APPROVED **之后**，5 轮预算已用尽，故 **REQ-V2a-15 / AC-V2a-25 / AC-V2a-26 未经任何评审轮独立确认**；Phase 4 必须与 §4.5 双层落点、§5 第二/第三处并列专门复核。影响面限于取证（`offsets`），不改 `verdict`/`action`，故不构成 v1 验收回退、不触发 G1/G2/G3 阈值修订。详见该文档 §14.5。

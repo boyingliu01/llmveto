@@ -97,3 +97,76 @@
 - **Choice**: **(b)** 拆两刀。本 sprint = **v2a**：evidence schema 扩版决策 + 4 个新 checker（thinking-signature-presence / tool-call-shape / usage-reconcile / fingerprint-probe）+ 金丝雀引擎与 `canary rotate` CLI + evil-relay 模拟器与双矩阵 CI 化。**v2b** 顺延：周期性指纹巡检 + provider 信任分、计费对账与 `report` CLI、Claude Code / Codex / promptfoo 接入扩展
 - **Rationale**: v2a 的判据是"能被 evidence 与 CI 证明"——4 个 checker 与金丝雀都落在同一条过闸/取证链上，且共享同一处 schema 契约变更，拆开会造成 schema 改两次。v2b 三条线是纯运营面（巡检调度 / 出报告 / 多客户端覆写），与检测语义正交，可独立验收。v1 已有教训：走查在大批次文档上不收敛（见 [[r10-batch-pending]]），砍范围优于砍深度
 - **Timestamp**: 2026-09-27T17:42:00+08:00
+
+## Decision DR-012a — 订正 DR-012 的 v2a checker 清单（fingerprint-probe 移出）
+- **Phase**: 2/6 DESIGN / R1 访谈 Q5
+- **Question**: DR-012 把 `fingerprint-probe` 写进 v2a 的 4 个新 checker。它该留在 v2a 还是并入 v2b 巡检
+- **Options**: (i) 留 v2a；(ii) 移出 v2a，与 v2b 周期性巡检合并
+- **Choice**: **(ii)** 移出。v2a 新增 checker 实为 **4 个**：`tool-call-shape` / `thinking-signature-presence` / `usage-reconcile` / `canary-return-scan`（§4.1 分类归属总表为准）
+- **Rationale**: `fingerprint-probe` 的判定内核是序贯检验，其消费者是 v2b 的周期巡检与 provider 信任分；单独在 v2a 落地等于交付一个无消费者的探测器。且"探针"要求网关主动向上游发已知 prompt，与 T1a 的"最小暴露"承诺顶牛。ROADMAP §v2 原列 5 类，减此项后与 §4.1 四行一致
+- **Timestamp**: 2026-09-28T08:00:00+08:00
+
+## Decision DR-013 — 金丝雀不扩 evidence schema，命中写成 findings 条目
+- **Phase**: 2/6 DESIGN / R1 访谈 Q1
+- **Question**: canary 命中要不要给 evidence 加字段？TEST 契约 #4 的 `evidence_version: 1` 字段表已冻结，`src/evidence/schema.ts` 里 `canary` 恒 `null`（AC-VETO-007-05）
+- **Options**: (a) 加 `canary` 字段并升 `evidence_version`；(b) 同 version 下形状分叉；(c) 不动 schema，命中落 `findings[]`（`checker:"canary-return-scan"`, `rule_id:"canary-<id>"`），`canary` 字段永久恒 `null` 成为**保留位**，轮换状态入 state 目录不进链
+- **Choice**: **(c)**
+- **Rationale**: (a) 会让同一 `evidence_version` 下新旧链字段形状不同，v3 的 Gate LS 要背双版本断言；(b) 直接破坏"版本号即形状契约"。(c) 的代价是"有 canary 字段但没有内容"的观感误导，故必须把它显式定义为**保留位**并写进 CONTEXT.md，防止后来者拿字段存在当能力证据
+- **Timestamp**: 2026-09-28T08:02:00+08:00
+
+## Decision DR-014 — canary 由网关注入，位置固定末条 message 尾部，按 session 轮换
+- **Phase**: 2/6 DESIGN / R1 访谈 Q2
+- **Question**: 谁注入、注入在哪、多久换
+- **Options**: (a) 网关注入 + 末条 message content 尾部 + session 级轮换；(b) 注入 `system`；(c) 客户端自管
+- **Choice**: **(a)**，不碰 `system`
+- **Rationale**: `system` 是对话的语义骨架且常被上游单独处理，注入它等于改变请求的类别；末条尾部是纯追加，可用"既有字节逐字节不变"证伪。(c) 把防护能力交给被防护对象，与网关定位矛盾。注入是**新增**字节，因此不属于 `redact`、不受"改写属 v3"的限制——这条区分写进 CONTEXT.md 防混用
+- **Timestamp**: 2026-09-28T08:04:00+08:00
+
+## Decision DR-015 — 金丝雀只做跨会话串流，单请求内复述判为不命中
+- **Phase**: 2/6 DESIGN / R1 访谈 Q3
+- **Question**: canary 命中形态是什么？同一请求里模型复述 canary 算不算
+- **Options**: (a) 只做跨会话串流，匹配域为有界的最近 N 个活跃 session；(b) 也算单请求复述
+- **Choice**: **(a)**，N=64 / TTL 24h（先到为准）
+- **Rationale**: 单请求内复述在 benign 场景下同样高频发生（模型回显用户输入），把它算命中会直接摧毁"告警可信"。匹配域必须有上界，否则网关在本机攒出一座可匹配的历史 prompt 库，把 T1a 的防护变成 T1a 的暴露面——这是新增 P4 登记行的由来
+- **Timestamp**: 2026-09-28T08:06:00+08:00
+
+## Decision DR-016 — T2b 移出 v2 验收并订正 ROADMAP，拒绝无 FP 门槛的文本规则
+- **Phase**: 2/6 DESIGN / R1 访谈 Q4
+- **Question**: ROADMAP:57 要求 v2 结束时 T2b 状态提升，但 §v2 交付清单里没有任何检测 T2b 的组件——验收条目引用了不存在的交付物
+- **Options**: (i) 订正 ROADMAP，T2b 期次 v2→v3；(ii) 塞一条响应侧文本规则 checker 凑验收
+- **Choice**: **(i)** 订正文档
+- **Rationale**: (ii) 正是 v1 R1 已否决过的做法：没有 FP 门槛的注入文本规则会把误报变成常态告警疲劳。v1 的纪律是"验收条目只能引用本期交付物"（期次纪律），宁可改文档也不造空转检查项
+- **Timestamp**: 2026-09-28T08:08:00+08:00
+
+## Decision DR-017 — 响应扫描单元补齐 tool-call 参数，并回头订正 REQ 登记表
+- **Phase**: 2/6 DESIGN / R1 访谈 Q6（v1 规格—实现背离）
+- **Question**: DESIGN §扫描单元定义宣称响应侧含 `tool_calls[*].arguments`，实测 `buildResponseScanUnit` 从不提取，`tool_calls` 在 `src/` 与 `tests/` 出现 0 次 ⇒ 阻断类 checker 宣称覆盖而实际未覆盖，v1 验收第 3 条"检出率 100%"是在不覆盖该扫描面的 fixture 集上达成的
+- **Options**: (a) 修公共扫描单元 + 订正 REQ 登记表 T2c 行；(b) 只在 v2a 新 checker 内部自行解析 tool_calls；(c) 视为已知限制不处理
+- **Choice**: **(a)**
+- **Rationale**: (b) 会让"扫描单元覆盖面"这件事在各 checker 里重复实现一遍，正是 v1 定 §扫描单元定义 想消除的分叉源。(c) 不可接受——已转发的漏检声明必须回到登记表，否则残余风险表在说谎。附带代价：v1 的验收表述需要公开订正（AC-V2a-15/16 把守）
+- **Timestamp**: 2026-09-28T08:10:00+08:00
+
+## Decision DR-018 — 流式 tool_call 参数累积按 ScanWindow 语义延伸，出 ADR-0003 + G-WINDOW 门
+- **Phase**: 2/6 DESIGN / R1 访谈 Q7
+- **Question**: `tool-call-shape` 要判 `arguments` 的 JSON 完整性，必须跨 chunk 累积；这与冻结的"零缓冲 = 不持有 >1 chunk"定义顶牛
+- **Options**: (a) 当作 `ScanWindow` 既有语义延伸（未闭合 `arguments` 与未决 UTF-8 尾字节同类，由 `ScanWindow.extra` 承载），定义文字不改只加注脚；(b) 放宽零缓冲定义；(c) 只在完成帧判定，放弃流式检出
+- **Choice**: **(a)**
+- **Rationale**: (b) 破坏 v1 对客户端的对外承诺（已转发字节不可撤回）；(c) 让攻击者用"把违规藏在流中段"就能绕过。(a) 之所以不是自欺：`ScanWindow` 本来的定义就是"当前判定单元不完整"的暂存态，UTF-8 未决尾字节已在 v1 如此处理。但 (a) 引入了新的资源上界与内存风险，故必须**显式入 §2 范围 + 新门 G-WINDOW + AC-V2a-14 + ADR-0003 公开记录**，不得静默放宽——这正是 R1 Round 1 的 A-CRIT1 抓出来的治理缺口
+- **Timestamp**: 2026-09-28T08:12:00+08:00
+
+## Decision DR-019 — checker 分级：2 安全类 + 2 观测类
+- **Phase**: 2/6 DESIGN / R1 访谈（分类归属）
+- **Question**: v2a 四个新 checker 各自映射为 `block` 还是 `warn`
+- **Options**: (a) 全安全类；(b) 全观测类；(c) 分级：`tool-call-shape` + `canary-return-scan` 安全类，`thinking-signature-presence` + `usage-reconcile` 观测类
+- **Choice**: **(c)**
+- **Rationale**: `thinking-signature-presence` 是**证伪信号**（能否决声称，不能确认身份），`usage-reconcile` 只有本地估算误差带——两者都不足以承担阻断的代价，误报即伤人。前两者判据是确定性的（未声明工具 / 非法结构 / 别的会话的串出现），可以 block。这也是 `degraded_observational` 枚举自 v1 占位后在 v2a 首次可达的来源（AC-V2a-11）
+- **Timestamp**: 2026-09-28T08:14:00+08:00
+
+## Decision DR-020: 实装 TEST 契约 #4 的可选 `reason` 位，并把 v1 背离由一处登记为三处
+
+- 日期：2026-09-28
+- 阶段：Phase 2 / R1 Round 5 批准后自查
+- 决策：v2a 实装 `EvidenceRecord` 的**可选** `reason` 顶层位（契约 #4 早有其行、必填列为 ❌，v1 实现整体缺席），`CheckerResult.reason` 联合扩为四值（新增 `window_overflow`），并修 `flattenFindings` 使 error 裁决同时产出 `findings[]` 内 `verdict="error"` 条目；`REQUIRED_FIELDS` 26 项必填表不变。`registry_unavailable` / `inject_skipped` 只进该描述位、**不进** `findings[]` 裁决位。
+- 备选与否决：(a) 只借 `findings[].rule_id` 承载——否决，因契约的 `findings` 项无 reason 语义且 error 分支现状 `evidence: []`，等于把"哪个 checker 因何阻断"写成一条业务命中，混淆 verdict 语义；(b) 新增顶层必填字段——否决，破 DR-013 的"不动 schema"且需要 `evidence_version` 升版；(c) 不修、只把 AC 措辞降级为"不断言 reason"——否决，那等于用改测试来迁就实现，正撞本项目"禁止静默放宽"的纪律。
+- 连带：`docs/plans/2026-09-27-v2a-requirements.md` §5 由"一处背离"扩为三处（第三处 = fail-closed 的 error→block 在链上不留 per-checker 痕迹，是 v1 验收"超时=拒绝"在取证面的真实缺口）；新增 REQ-V2a-12/13/14、AC-V2a-23/24；文档订正由四处升为六处（AC-V2a-16）。`usage` / `cache_reported` 与 `latency` 四元组 **v2a 不实装**，但必须在契约文本与 REQ 登记表留下可 grep 的背离记录。
+- 未决与复核义务：本决策发生在 Round 5 给出 3/3 APPROVED **之后**，5 轮预算已用尽，故 §5 三处背离版本文**未经评审轮独立确认**；Phase 4 的测试-规格对齐报告与 code-walkthrough 必须把 §4.5 双层落点、§5 第二/第三处列为专门复核项。详见该文档 §14.4。

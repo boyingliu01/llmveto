@@ -181,3 +181,13 @@
 - 连带：`docs/plans/2026-09-27-v2a-requirements.md` §5 由三处背离扩为**四处**；新增 REQ-V2a-15、AC-V2a-25、AC-V2a-26；文档订正点数由六处升为**七处**（AC-V2a-16⑦，T2c 行能力边界加注）。ADR-0005 承载形态与否决理由。
 - 必要性（不是可选清洁）：`tool-call-shape` 是第二个有状态流式 checker，窗口不跨片存活 ⇒ ADR-0003 的 256 KiB 单笔上界与 AC-V2a-14 的"总留存字节"无可信计量点 ⇒ G-WINDOW 关不掉。本条不实现，已批准需求失去可判定性。
 - 未决与复核义务：与 DR-020 同形——本决策发生在 Round 5 给出 3/3 APPROVED **之后**，5 轮预算已用尽，故 **REQ-V2a-15 / AC-V2a-25 / AC-V2a-26 未经任何评审轮独立确认**；Phase 4 必须与 §4.5 双层落点、§5 第二/第三处并列专门复核。影响面限于取证（`offsets`），不改 `verdict`/`action`，故不构成 v1 验收回退、不触发 G1/G2/G3 阈值修订。详见该文档 §14.5。
+
+## Decision DR-022: 设计文档 Step 4 批准 + 17 个拍板项锁定默认值（Step 6 batch 决策记录）
+
+- 日期：2026-09-29
+- 阶段：Phase 2 / Step 4 HARD-GATE（兼作 Step 6 的批量决策产物，见"路由说明"）
+- 决策：用户批准 `docs/plans/2026-09-27-v2a-design.md`——候选 **A（网关编排 + `src/canary/**` 新域）**、D-01~D-14 全部 14 项设计决策，以及 §8 的 **17 个拍板项全部按文档默认值锁定**：§10.1 十项（控制通道=loopback HTTP、§4.2 定值维持、回退键 sha256 前 16 字符、13 对手仅 nightly、发 `0.2.0`、verify 兼容采纳 R4 F-MINOR1 显式流程改判、文档订正单独 S-DOCS slice、nightly 30min/4-way、G-RELAY 分支 pending、session 头名复用 `x-llmveto-session-id`）+ 新增 #A~#G（`request_body_sha256` 记注入后体 / 离线轮换标记文件 / 无声明 tools 漏检登记 §7 P4⑦ / doctor 封闭枚举 4→6 / G-CANARY 录制来源待用户提供 / LOC 修正 1500/1900/120 / offsets 钉 UTF-16 code-unit）。
+- 触发事实：Step 5 路由读取 sprint-state 发现 `auto_estimate` 只有 `"complex"`、无显式 `change_type` 字段，按路由表"缺失 → 标准路径（Step 6 batch-grill-me）"。但 Step 4 的批准问题本身已按 batch-grill-me 的形态交付（编号列全 + 每项推荐答案 + 用户一轮确认），再次执行等于把同一批问题重问一遍。
+- 路由说明：本条即 Step 6 的批量决策产物——frontier 已空（设计 §8 无未决分支），用户确认"批准，全部按默认"；差异仅在确认发生在 Step 4 的门上而非独立的 Step 6 会话。R2（Step 7）不受影响，照跑。
+- 连带：需求文档同批订正三处（§4.3 唯一写者行 #B、§7 P4 第⑦条 #C、AC-V2a-25 计量单位 #G），均标注"设计批准 2026-09-29"并经用户直接批准，非代理放宽；#D（doctor 枚举 4→6）与 #A（sha 语义）不改正文，属 BUILD 期实现 + `doc-consistency` 断言域；设计文档状态行更新为 APPROVED（Step 7 未跑）。
+- 未决与复核义务：**批准不替代评审**。设计文档及其依据的 §14.4/§14.5 增补义务仍无独立评审读者；Step 7 R2 必须把"D-03 窄化 §4.3 许可 / D-04 sha 语义 / D-09 首次接门的可用性风险 / D-12 无声明漏检 / LOC +111% 偏差"列为优先核查面。#E（G-CANARY 的 10 条真实会话录制）仍待用户提供，G-CANARY 关闭前不得注入上线。

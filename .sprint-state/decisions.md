@@ -210,3 +210,12 @@
 - 备选与否决（A-M1 的另一方向）：改 AC-VETO-004-02 的冻结语义以迁就"循环前推进"——否决，v1 契约明写"不可事后补"，且 checker 权威测试是既有验收面；那是 test-follows-implementation。
 - 教训登记：D-07 在 R1 稿同时写对了意图（网关推进一次）与写错了次序（循环前），Round 1 三家（含跨跑复现的 deepseek）都没抓到，Round 2 才由 flashx 抓出——多轮评审对"次序型"缺陷的检出价值实证。
 - 未决与复核义务：Round 3 对账（A2 附录 = r2-round2-gaps.md）进行中；共识 ≥90% 前不进 Step 8。#E 仍待用户。
+
+## Decision DR-025: R2 Round 3 共识达成（3/3 APPROVED）—— R2 评审链闭合
+
+- 日期：2026-09-29
+- 阶段：Phase 2 / Step 7 R2 设计评审，Round 3（第 3 轮 / 预算 5）
+- 决策：Round 3 结果 = architecture / technical / feasibility **全部 APPROVED（各 conf 8）**，共识 3/3 = 100% ≥ 90%，**R2 评审链闭合**。Round 2 的 10 项被三家一致判定全部闭合（architecture 对两处重点复核的原文结论："经冻结语义与附录代码核验为真消解"）。本轮残留 0C/1M/6m 按七行对账表处置（设计文档 §10.2）：**唯一 Major（technical M-1）补钉 D-10**——多 checker error 并发时顶层单值与 findings 多条目的对应关系钉为"按同一固定序 + 平局规则重放选取，唯一确定胜者条目"，取证反推无须额外字段；6 Minor = 登记 2（A-m1 durable 计数遮蔽语义、F-m1 G-CANARY 两段式预案列为 Step 8 拍板项且默认不采纳）+ 补钉 3（T-m1 checker_timeout 词汇归属与时序无关、T-m2 标记文件告警计数口径、T-m3 [DEGRADED] 断言形式）+ 修复 1（A-m2 evil-relay 载体路径改回需求 §4.2 定值字面 `testkit/evil-relay.ts`——A-m2 是本轮唯一按需求原文订正项，R1 稿误写 tests/utils/ 属设计对需求的无授权偏离，必须改回）。
+- 备选与否决（F-m1 的另一方向）：直接采纳两段式降级（mock benign 先跑形式判据、录制到位后补人工复核）——否决为默认，因其变更 G-CANARY 门判据协议属规约变更，只能由用户拍板；登记而不采纳。
+- 收链产物：`.sprint-state/delphi-reviewed.json` 更新为 design mode 记录（reviewed_head_commit=ab08cc1、三轮账、残留处置）；`.sprint-state/review/v2a-r2-design-consensus.md` 新增（人读共识报告，含 attempt1/2 作废执行审计）；设计文档头部状态行更新为"R2 评审链已闭合，进入 Step 8 切片"。
+- 未决与复核义务：① #E（10 条真实会话录制）仍待用户提供，G-CANARY 未关闭前不注入上线、录制不交付则 BUILD 不启动（F-m1 预案不改变此默认）；② 设计文档自身尚有"批准后由评审引发的多处订正未再经评审"——与需求文档 §14.4/§14.5 同性质的诚实边界，Phase 4 VERIFY 复核义务清单在 §4.5 双层落点、§5 第二/三/四/五处、REQ-V2a-15、AC-V2a-25/26/27 之外，追加 **D-10 网关值优先序 + D-11 全量双层落链 + D-07 推进点次序**三处评审修订面的实现符合性；③ Phase 2 收口 = Step 8 切片（slices-manifest 含 #E 提醒节点与 S-BUDGET 关键路径）→ Step 9 specification.yaml → phase-transition 2 completed。

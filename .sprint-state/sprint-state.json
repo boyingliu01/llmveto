@@ -18,8 +18,10 @@
     {
       "phase": 2,
       "phase_name": "DESIGN",
-      "status": "in_progress",
-      "started_at": "2026-09-27T09:46:22.747Z"
+      "status": "completed",
+      "started_at": "2026-09-27T09:46:22.747Z",
+      "completed_at": "2026-09-29T03:40:29.038Z",
+      "duration_seconds": 150846
     }
   ],
   "isolation": {

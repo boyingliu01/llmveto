@@ -1,307 +1,315 @@
 {
   "_schema_version": 1,
-  "sprint_id": "sprint-20260914-49",
-  "specification_ref": "specification.yaml",
-  "generated_at": "2026-09-15",
+  "sprint_id": "sprint-20260927-46",
+  "source": "docs/plans/2026-09-27-v2a-design.md（Step 4 批准 + R2 3/3 APPROVED，评审基线 ab08cc1）",
+  "specification_ref": "specification.yaml (SPEC-V2A-001, v0.2.0, 15 REQ / 27 AC)",
+  "generated_at": "2026-09-29",
   "review_gate": {
-    "r1_requirements_reviewed": ".sprint-state/review/requirements-reviewed.json",
-    "r2_delphi_reviewed": ".sprint-state/review/delphi-reviewed.json",
+    "r1_requirements_reviewed": ".sprint-state/phase-outputs/requirements-reviewed.json",
+    "r2_design_reviewed": ".sprint-state/delphi-reviewed.json (design mode, 3/3 APPROVED, Round 3/5)",
     "consensus_percent": 100,
-    "threshold_percent": 91
+    "threshold_percent": 90
   },
-  "notes": "1 slice ↔ 1 REQ，按 architecture.yaml 分层依赖拓扑排序：shared → checkers → policy → evidence → adapters → gateway → cli → 测试夹具与 E2E。ralph-loop 按此序 dispatch subagent。",
+  "notes": "v2a 检测核心：15 REQ → 15 切片（REQ-V2a-11 拆 06/07 两个子切片、REQ-V2a-14 并入 S-DOCS）。tracer = SL-01（响应扫描单元 tool-call 路径，最快暴露 meta 下传与流式 delta 归并的 unknown unknowns）。切片内 LOC 为运行时改动估算（含该切片摊派的测试），单切片 ≤200 运行时 LOC。G-RELAY/G-WINDOW/G-PERF/G-CANARY 四门的关闭安排见 build_entry_gates。v1 版 manifest（sprint-20260914-49）见 git 历史。",
+  "build_entry_gates": {
+    "G-RELAY": {
+      "closes_before": "SL-13",
+      "how": "读 fpverify 许可证文本，逐文件结论落 docs/licenses.md，触发 SL-13.estimate.chosen 二选一（reusable / not_reusable）",
+      "status": "pending"
+    },
+    "G-WINDOW": {
+      "closes_before": "SL-09 集成收尾（bench 部分需 checker 全集）",
+      "how": "AC-V2a-14 的 2049×128B 构造 fixture（SL-02 交付）+ bench 流式 tool_call 场景 ttft_delta 与累积量 p99<64KiB（TEST §5 协议）",
+      "status": "pending"
+    },
+    "G-PERF": {
+      "closes_before": "Phase 3 收尾（SL-04 复测时间盒，需 4 新 checker 全集 = SL-09/10/11/08 完成后）",
+      "how": "4 新 checker 全集跑既有 bench 三台；D-09 接线后复测；超阈走回退阶梯（复测→ADR 修订档位→调档后仍误阻则规约变更回用户拍板，禁静默放宽）",
+      "status": "pending"
+    },
+    "G-CANARY": {
+      "closes_before": "BUILD 启动（Step 8 拍板项 #E，owner = 用户）",
+      "how": "10 条真实 agent 会话录制（进 var/ 不进 git）+ finish_reason 分布无迁移 + provider 拒绝率增量 0 + 人工复核 10 条输出",
+      "user_deliverable": "#E 录制文件",
+      "reminder_nodes": ["slices-manifest（本字段，最早提醒：与无依赖切片 SL-15/SL-01 并行的最早期）", "BUILD 启动前（第二道）"],
+      "fallback_pending_user": "R3 F-m1 两段式降级预案（mock benign 先跑形式判据、录制到位后补人工复核）——默认不采纳，采纳属规约变更须用户拍板",
+      "status": "pending_user"
+    }
+  },
   "slices": [
     {
       "id": "SL-01",
-      "req": "REQ-VETO-001",
-      "title": "前置决策门 G-LIC / G-FP / G-BENCH 关闭",
-      "layer": "docs + tooling",
-      "files": [
-        "docs/licenses.md",
-        "docs/adr/ (若 G-BENCH 触发阈值 ADR)",
-        "tests/fixtures/adversarial/*.yaml (fpverify 离线产物)",
-        "bench/baseline.json (骨架)"
-      ],
-      "depends_on": [],
-      "verify": [
-        "docs/licenses.md 存在且每条复用条目有许可结论",
-        "CI 依赖树 grep 无 Python 依赖",
-        "bench/baseline.json 存在（骨架可先空值 + TODO）"
-      ],
-      "priority": "MUST"
+      "title": "响应扫描单元补齐 tool-call 路径（tracer bullet）",
+      "type": "AFK",
+      "blocked_by": [],
+      "parent_story": "REQ-V2a-01",
+      "layer": "gateway",
+      "files": ["src/gateway/scan-unit.ts", "src/shared/types.ts", "tests/unit/gateway/scan-unit.test.ts", "tests/fixtures/threats/T2c-*.yaml（arguments 路径样本）"],
+      "what_it_delivers": "非流式 message.tool_calls 与流式 delta.tool_calls 的 arguments 文本并入响应扫描单元 unit.text，meta.declared_tools/declared_required 下传——invisible-unicode-scan 的参数覆盖面从声明变为事实，经网关 evidence 可验证",
+      "acceptance_criteria": ["AC-V2a-01：含 tool_calls 的响应 fixture 在单元与经网关两层均可观测到 arguments 文本进入扫描域", "流式 delta.tool_calls 跨 chunk 归并不丢字节", "既有 v1 扫描面（content 路径）零回归"],
+      "covers_ac": ["AC-V2a-01"],
+      "effort": "M",
+      "loc_budget": 130,
+      "file_budget": 6,
+      "status": "pending"
     },
     {
       "id": "SL-02",
-      "req": "REQ-VETO-003",
-      "title": "checker: egress-secret-scan",
-      "layer": "checkers",
-      "files": [
-        "src/shared/types.ts (ScanUnit / ScanWindow / CheckerResult 定义)",
-        "src/checkers/egress-secret-scan.ts",
-        "tests/unit/checkers/egress-secret-scan.test.ts"
-      ],
-      "depends_on": ["SL-01"],
-      "verify": [
-        "npx vitest run tests/unit/checkers/egress-secret-scan.test.ts",
-        "npx vitest run tests/unit/architecture-boundaries.test.ts (checker 不 import gateway/evidence/policy)"
-      ],
-      "covers_ac": ["AC-VETO-003-01","AC-VETO-003-02","AC-VETO-003-03","AC-VETO-003-04"],
-      "priority": "MUST"
+      "title": "流式窗口归属与 offsets 修复（D-07/D-08）+ 终止流幂等判定面",
+      "type": "AFK",
+      "blocked_by": ["SL-01"],
+      "parent_story": "REQ-V2a-15",
+      "layer": "gateway",
+      "files": ["src/gateway/window-store.ts（新）", "src/gateway/core.ts", "tests/unit/gateway/window-store.test.ts", "tests/integration/stream-windows.test.ts", "tests/fixtures/（astral 字符先于命中的样本）"],
+      "what_it_delivers": "per-checker 窗口 Map、网关在 checker 返回后唯一一次推进 cursor（旧值+len）、回传 cursor 忽略 / extra 保留；offsets 钉 UTF-16 code-unit 口径（含 astral fixture 防漂移）；经网关 offsets 等值断言",
+      "acceptance_criteria": ["AC-V2a-25：链上 offsets 经网关路径与 code-unit 口径等值（AC-VETO-004-02 冻结语义下 checker 收到本片之前的 cursor）", "AC-V2a-26：多 checker 窗口隔离 + extra 跨片存活", "AC-V2a-14 构造性 fixture（2049×128B 单笔硬上界）+ AC-V2a-20 终止流幂等"],
+      "covers_ac": ["AC-V2a-14", "AC-V2a-20", "AC-V2a-25", "AC-V2a-26"],
+      "effort": "L",
+      "loc_budget": 160,
+      "file_budget": 6,
+      "status": "pending"
     },
     {
       "id": "SL-03",
-      "req": "REQ-VETO-004",
-      "title": "checker: invisible-unicode-scan (跨 chunk 滚动窗口)",
-      "layer": "checkers",
-      "files": [
-        "src/checkers/invisible-unicode-scan.ts",
-        "src/shared/scan-window.ts",
-        "tests/unit/checkers/invisible-unicode-scan.test.ts",
-        "tests/fixtures/threats/T2c-*.yaml (含跨 chunk 切分样本)"
-      ],
-      "depends_on": ["SL-02"],
-      "verify": [
-        "npx vitest run tests/unit/checkers/invisible-unicode-scan.test.ts",
-        "至少 1 个把 U+200B 的 E2 80 8B 拆两片的 fixture 通过"
-      ],
-      "covers_ac": ["AC-VETO-004-01","AC-VETO-004-02","AC-VETO-004-03","AC-VETO-004-04"],
-      "priority": "MUST"
+      "title": "error 双层落链 + 顶层 reason 可选位 + degraded 机制（D-10/D-11）",
+      "type": "AFK",
+      "blocked_by": [],
+      "parent_story": "REQ-V2a-13",
+      "layer": "evidence + policy + gateway",
+      "files": ["src/evidence/schema.ts", "src/evidence/writer.ts", "src/policy/engine.ts", "src/policy/mapping.ts", "src/gateway/core.ts", "tests/unit/evidence/reason.test.ts", "tests/unit/policy/degraded.test.ts"],
+      "what_it_delivers": "AppendInput.reason 可选位（整键缺席语义）+ findings[] 内 verdict:error 条目（flattenFindings 扩展）+ validateEvidence reason 词汇域校验（六值 + 可缺席）+ decide() degraded 标志与 action_taken 优先序；顶层单值规则按 R2 订正版（网关描述值优先 + 重放选取对应关系）",
+      "acceptance_criteria": ["AC-V2a-12：安全类 error→block 可达且 fixture 断言双层痕迹", "AC-V2a-24：scanner_error/input_malformed 仍可达且顶层+findings 同时出现", "AC-V2a-23：REQUIRED_FIELDS 26 项不变、v1 记录集 verify 全过（reason 整键缺席不破链）", "AC-V2a-11：观测类 error → action_taken=degraded_observational 机制可达"],
+      "covers_ac": ["AC-V2a-11", "AC-V2a-12", "AC-V2a-23", "AC-V2a-24"],
+      "effort": "M",
+      "loc_budget": 120,
+      "file_budget": 7,
+      "status": "pending"
     },
     {
       "id": "SL-04",
-      "req": "REQ-VETO-005",
-      "title": "checker: model-label-consistency",
-      "layer": "checkers",
-      "files": [
-        "src/checkers/model-label-consistency.ts",
-        "tests/unit/checkers/model-label-consistency.test.ts",
-        "tests/fixtures/threats/T3a-*.yaml"
-      ],
-      "depends_on": ["SL-02"],
-      "verify": [
-        "npx vitest run tests/unit/checkers/model-label-consistency.test.ts"
-      ],
-      "covers_ac": ["AC-VETO-005-01","AC-VETO-005-02","AC-VETO-005-03"],
-      "priority": "MUST"
+      "title": "预算门接线（D-09，S-BUDGET —— critical path）",
+      "type": "AFK",
+      "blocked_by": ["SL-03"],
+      "parent_story": "REQ-V2a-12",
+      "layer": "gateway",
+      "files": ["src/gateway/budget.ts（新）", "src/gateway/core.ts", "tests/unit/gateway/budget.test.ts", "tests/integration/budget-gate.test.ts"],
+      "what_it_delivers": "GatewayConfig.checkerBudgetMs 注入口 + runWithBudget 事后判定 + G3_TIER 三档/G1_PER_CHUNK 常量源（fixture 引用非复抄）；超时改写为 checker_timeout 双层落链、不改写窗口；三条路径默认全接线",
+      "acceptance_criteria": ["AC-V2a-27：注入预算即确定性可达 checker_timeout→error→block（裁决面语义）", "改写不吞回传窗口（AC-V2a-27④）", "AC-V2a-22：bench 沿用既有协议不新增绝对值断言；G-PERF 复测独立时间盒预留（checker 全集就绪后执行）"],
+      "covers_ac": ["AC-V2a-22", "AC-V2a-27"],
+      "effort": "M",
+      "loc_budget": 100,
+      "file_budget": 4,
+      "critical_path": true,
+      "gate_note": "G-PERF 复测在 SL-08/09/10/11 全部完成后于此切片预留的时间盒内执行；回退阶梯见设计 §6",
+      "status": "pending"
     },
     {
       "id": "SL-05",
-      "req": "REQ-VETO-006",
-      "title": "策略引擎：内置固定 verdict → action 映射表",
-      "layer": "policy",
-      "files": [
-        "src/policy/mapping.ts",
-        "src/policy/engine.ts",
-        "tests/unit/policy/engine.test.ts"
-      ],
-      "depends_on": ["SL-02","SL-03","SL-04"],
-      "verify": [
-        "npx vitest run tests/unit/policy/engine.test.ts",
-        "grep 断言：v1 映射表内不出现 'redact'"
-      ],
-      "covers_ac": ["AC-VETO-006-01","AC-VETO-006-02","AC-VETO-006-03","AC-VETO-006-04"],
-      "priority": "MUST"
+      "title": "canary 域核心：registry 存储与会话状态（D-01/D-02/D-05）",
+      "type": "AFK",
+      "blocked_by": [],
+      "parent_story": "REQ-V2a-07",
+      "layer": "canary（新域）",
+      "files": ["src/canary/store.ts（新）", "architecture.yaml（新增 canary 层）", "tests/unit/architecture-boundaries.test.ts（扩展：checkers 不 import canary、canary=[shared]）", "tests/unit/canary/store.test.ts"],
+      "what_it_delivers": "canary-registry.json 原子写（tmp+renameSync）、LRU 64/TTL 24h、分配/轮换/快照（排除请求方自身）、加载校验失败→registry_unavailable 语义源、熵源可注入、rotation_count/last_rotated_at 持久",
+      "acceptance_criteria": ["store 单测：分配/轮换/淘汰/损坏四族全覆盖（固定熵表驱动）", "architecture-boundaries：canary 层 allowed_imports=[shared]，gateway 扩列 +canary，checkers 不变且不 import canary", "崩溃残留只能是旧完整文件（无半行）"],
+      "covers_ac": ["AC-V2a-19①（语义源）"],
+      "effort": "M",
+      "loc_budget": 180,
+      "file_budget": 4,
+      "status": "pending"
     },
     {
       "id": "SL-06",
-      "req": "REQ-VETO-007",
-      "title": "evidence store：append-only JSONL + SHA-256 链",
-      "layer": "evidence",
-      "files": [
-        "src/evidence/schema.ts (契约 #4 字段表)",
-        "src/evidence/writer.ts (单写者 + fsync best-effort)",
-        "src/evidence/chain.ts (record_hash = H(prev_hash ‖ canonical_json))",
-        "src/evidence/redact-sink.ts",
-        "tests/unit/evidence/*.test.ts"
-      ],
-      "depends_on": ["SL-02"],
-      "verify": [
-        "npx vitest run tests/unit/evidence",
-        "契约 #4 必填字段全断言（缺任一必填字段 → 抛错）",
-        "崩溃残留测试：末行半行丢弃"
-      ],
-      "covers_ac": ["AC-VETO-007-01","AC-VETO-007-02","AC-VETO-007-03","AC-VETO-007-04","AC-VETO-007-05"],
-      "priority": "MUST"
+      "title": "会话键派生 + 注入六分支纯函数（D-06 + §4.4）",
+      "type": "AFK",
+      "blocked_by": ["SL-05"],
+      "parent_story": "REQ-V2a-11",
+      "layer": "canary",
+      "files": ["src/canary/session-key.ts（新）", "src/canary/inject.ts（新）", "tests/unit/canary/session-key.test.ts", "tests/unit/canary/inject.test.ts（六分支参数化）"],
+      "what_it_delivers": "deriveSessionKey（头优先 → sha256(len:text) 前 16 字符回退）+ inject(body, canary) 六分支（只增不改，{body, injected, skip_reason}）——纯字符串/数组手术，零网关依赖",
+      "acceptance_criteria": ["AC-V2a-07：注入仅追加不改写，按六分支参数化断言（B'=B[0..k]+canary+B[k..]）", "AC-V2a-17：session 键头缺失回退可判定（evidence session_id 派生不动属既有）", "AC-V2a-18：六分支全覆盖单元级判定面"],
+      "covers_ac": ["AC-V2a-07（单元级）", "AC-V2a-17", "AC-V2a-18（单元级）"],
+      "effort": "M",
+      "loc_budget": 190,
+      "file_budget": 4,
+      "status": "pending"
     },
     {
       "id": "SL-07",
-      "req": "REQ-VETO-010",
-      "title": "llmveto verify：链完整性 + schema 断言",
-      "layer": "cli + evidence",
-      "files": [
-        "src/evidence/verify.ts",
-        "src/cli/verify.ts",
-        "tests/unit/evidence/verify.test.ts"
-      ],
-      "depends_on": ["SL-06"],
-      "verify": [
-        "npx vitest run tests/unit/evidence/verify.test.ts",
-        "fixture：正常链 → ok；中间改写 → first_bad_seq；schema 违约 → 列出路径"
-      ],
-      "covers_ac": ["AC-VETO-010-01","AC-VETO-010-02","AC-VETO-010-03","AC-VETO-010-04"],
-      "priority": "MUST"
+      "title": "注入网关接线：admin 控制通道 + 请求编排 + sha 语义（D-03/D-04）",
+      "type": "AFK",
+      "blocked_by": ["SL-03", "SL-06"],
+      "parent_story": "REQ-V2a-11",
+      "layer": "gateway",
+      "files": ["src/gateway/server.ts", "src/gateway/core.ts", "tests/integration/canary-inject.test.ts", "tests/integration/registry-degraded.test.ts"],
+      "what_it_delivers": "dispatch 拦截 /_llmveto/*（路由解析前、不产 evidence）+ POST canary/rotate；block 判定后 fetch 前注入编排；request_bytes/request_body_sha256 记注入后体（D-04）；registry 损坏→不注入不匹配+顶层 reason（fail-open 可观测）",
+      "acceptance_criteria": ["AC-V2a-18⑥：跳过注入不改 action（经网关，findings 无注入词汇）", "AC-V2a-19①：registry 不可用→顶层 reason=registry_unavailable 无条件成立", "AC-V2a-21：匹配域不区分客户端", "AC-V2a-07（经网关）：注入后体上链且不破坏既有请求转发"],
+      "covers_ac": ["AC-V2a-07（经网关）", "AC-V2a-18⑥", "AC-V2a-19①", "AC-V2a-21"],
+      "effort": "L",
+      "loc_budget": 110,
+      "file_budget": 4,
+      "status": "pending"
     },
     {
       "id": "SL-08",
-      "req": "REQ-VETO-009",
-      "title": "接入适配器：OpenCode + Delphi，MANAGED_CONFIG_IDS 封闭枚举",
-      "layer": "adapters",
-      "files": [
-        "src/adapters/opencode.ts",
-        "src/adapters/delphi.ts",
-        "src/adapters/index.ts (导出类型 + 枚举)",
-        "tests/unit/adapters/*.test.ts"
-      ],
-      "depends_on": ["SL-02"],
-      "verify": [
-        "npx vitest run tests/unit/adapters",
-        "grep 断言：每适配器 export const MANAGED_CONFIG_IDS: readonly string[]"
-      ],
-      "covers_ac": ["AC-VETO-009-01","AC-VETO-009-02","AC-VETO-009-03"],
-      "priority": "MUST"
+      "title": "canary-return-scan checker + 跨会话串流检测端到端（REQ-V2a-05 检测半）",
+      "type": "AFK",
+      "blocked_by": ["SL-05", "SL-07"],
+      "parent_story": "REQ-V2a-05",
+      "layer": "checkers + gateway",
+      "files": ["src/checkers/canary-return-scan.ts（新）", "src/gateway/registry.ts（spec 注册）", "tests/unit/checkers/canary-return-scan.test.ts", "tests/integration/canary-detection.test.ts"],
+      "what_it_delivers": "T1a 安全类 checker：只读 meta.canary_candidates 快照匹配，命中=block/终止流；持快照判在途请求；FP=0 由快照排除自身 + 明文不进链保证",
+      "acceptance_criteria": ["AC-V2a-06：跨会话串流检出（含单请求内复述判不命中的负样本）", "AC-V2a-08（在途语义）：轮换后旧串即刻退出匹配域", "AC-V2a-19②：在途请求按快照判"],
+      "covers_ac": ["AC-V2a-06", "AC-V2a-08（在途语义）", "AC-V2a-19②"],
+      "effort": "S",
+      "loc_budget": 80,
+      "file_budget": 4,
+      "status": "pending"
     },
     {
       "id": "SL-09",
-      "req": "REQ-VETO-002",
-      "title": "反代核：baseURL 形态 + SSE tee + 扫描单元 + veto-mid-stream",
-      "layer": "gateway",
-      "files": [
-        "src/gateway/server.ts (127.0.0.1 硬绑)",
-        "src/gateway/scan-unit.ts",
-        "src/gateway/sse-tee.ts (per-chunk 先扫描后转发)",
-        "src/gateway/upstream-inject.ts",
-        "src/gateway/veto-stream.ts (event:error + delivered_chunks)",
-        "tests/unit/gateway/*.test.ts"
-      ],
-      "depends_on": ["SL-05","SL-06","SL-08"],
-      "verify": [
-        "npx vitest run tests/unit/gateway",
-        "配置 0.0.0.0 → 启动失败",
-        "认证头不出现在扫描单元（AC-VETO-002-06 单测）"
-      ],
-      "covers_ac": ["AC-VETO-002-01","AC-VETO-002-02","AC-VETO-002-03","AC-VETO-002-04","AC-VETO-002-05","AC-VETO-002-06"],
-      "priority": "MUST"
+      "title": "tool-call-shape checker（T2a 安全类）",
+      "type": "AFK",
+      "blocked_by": ["SL-01", "SL-02", "SL-03"],
+      "parent_story": "REQ-V2a-02",
+      "layer": "checkers",
+      "files": ["src/checkers/tool-call-shape.ts（新）", "src/gateway/registry.ts（spec 注册）", "tests/unit/checkers/tool-call-shape.test.ts", "tests/fixtures/threats/T2a-*.yaml", "tests/fixtures/false-positives.json（两类负样本）"],
+      "what_it_delivers": "非流式 + 流式 reducer（extra 累积）+ window_overflow；三子规则（未知工具名/缺 required/arguments 非法 JSON）；无声明 tools 时前两子规则不适用（D-12 FP=0）",
+      "acceptance_criteria": ["AC-V2a-02：13 类形变检出（AC-V2a-09 对手集前置）", "AC-V2a-03：FP=0（两类负样本：未声明+合法 tool_calls→clean；已声明+合法含复杂嵌套→clean）", "AC-V2a-13：arguments 非法 JSON 归 finding（非 error）"],
+      "covers_ac": ["AC-V2a-02", "AC-V2a-03", "AC-V2a-13"],
+      "effort": "L",
+      "loc_budget": 180,
+      "file_budget": 5,
+      "status": "pending"
     },
     {
       "id": "SL-10",
-      "req": "REQ-VETO-011",
-      "title": "mock-upstream：纯 TS 声明式脚本回放",
-      "layer": "test-utils",
-      "files": [
-        "tests/utils/mock-upstream.ts",
-        "tests/utils/fixture-loader.ts",
-        "tests/unit/utils/mock-upstream.test.ts"
-      ],
-      "depends_on": ["SL-02"],
-      "verify": [
-        "npx vitest run tests/unit/utils/mock-upstream.test.ts",
-        "自定义 chunk 边界：把 U+200B 三字节拆两片可用"
-      ],
-      "covers_ac": ["AC-VETO-011-01","AC-VETO-011-02","AC-VETO-011-03"],
-      "priority": "MUST"
+      "title": "thinking-signature-presence checker（T3a 观测类）",
+      "type": "AFK",
+      "blocked_by": ["SL-02"],
+      "parent_story": "REQ-V2a-03",
+      "layer": "checkers",
+      "files": ["src/checkers/thinking-signature-presence.ts（新）", "src/gateway/registry.ts（spec 注册）", "tests/unit/checkers/thinking-signature-presence.test.ts", "tests/fixtures/threats/T3a-*.yaml（v2a 扩展）"],
+      "what_it_delivers": "双向判定域：请求 thinking 开关 × 响应 thinking 块自洽性，双向均可判 finding；观测类（error 降级不阻断）",
+      "acceptance_criteria": ["AC-V2a-04：双向 fixture（开/关 × 有/无 × 有签名/无签名）判定面全覆盖"],
+      "covers_ac": ["AC-V2a-04"],
+      "effort": "S",
+      "loc_budget": 90,
+      "file_budget": 4,
+      "status": "pending"
     },
     {
       "id": "SL-11",
-      "req": "REQ-VETO-008",
-      "title": "CLI：start / stop / status / doctor（4 命令；verify 由 SL-07 已交付，此处装配）",
-      "layer": "cli",
-      "files": [
-        "src/cli/index.ts (composition root)",
-        "src/cli/start.ts",
-        "src/cli/stop.ts",
-        "src/cli/status.ts",
-        "src/cli/doctor.ts (4 检查项封闭枚举)",
-        "src/index.ts (入口，替换现有 stub)",
-        "tests/unit/cli/*.test.ts"
-      ],
-      "depends_on": ["SL-07","SL-08","SL-09"],
-      "verify": [
-        "npx vitest run tests/unit/cli",
-        "grep 断言：不注册 report / canary 等 stub",
-        "doctor 遍历 MANAGED_CONFIG_IDS；experimental.policies 写入失败仅告警"
-      ],
-      "covers_ac": ["AC-VETO-008-01","AC-VETO-008-02","AC-VETO-008-03","AC-VETO-008-04"],
-      "priority": "MUST"
+      "title": "usage-reconcile checker（T4a 观测类）",
+      "type": "AFK",
+      "blocked_by": ["SL-02"],
+      "parent_story": "REQ-V2a-04",
+      "layer": "checkers",
+      "files": ["src/checkers/usage-reconcile.ts（新）", "src/gateway/registry.ts（spec 注册）", "tests/unit/checkers/usage-reconcile.test.ts", "tests/fixtures/（估算边界样本）"],
+      "what_it_delivers": "三段本地估算 vs 上游自报 usage（ScanUnit.meta）方向性判定；阈值按需求 §4.2 定值内置常量（严格不等边界）；链内无上游自报原值（T4a 行加注已入 S-DOCS）",
+      "acceptance_criteria": ["AC-V2a-05：方向性判定（估算>自报/估算<自报两向 fixture，含阈值边界严格不等）"],
+      "covers_ac": ["AC-V2a-05"],
+      "effort": "M",
+      "loc_budget": 120,
+      "file_budget": 4,
+      "status": "pending"
     },
     {
       "id": "SL-12",
-      "req": "REQ-VETO-012",
-      "title": "威胁样本库 + benign 语料 + 双矩阵",
-      "layer": "test-fixtures",
-      "files": [
-        "tests/fixtures/threats/T1b/*.yaml (≥3)",
-        "tests/fixtures/threats/T2c/*.yaml (≥3，含跨 chunk)",
-        "tests/fixtures/threats/T3a/*.yaml (≥3)",
-        "tests/fixtures/benign/*.yaml (≥50，含 ≥1 认证头 benign)",
-        "tests/fixtures/false-positives.json",
-        "tests/integration/detection-matrix.test.ts",
-        "tests/integration/false-positive-matrix.test.ts"
-      ],
-      "depends_on": ["SL-02","SL-03","SL-04","SL-10"],
-      "verify": [
-        "检出矩阵：v1 门槛 fixture 集内检出率 = 100%",
-        "误报矩阵：model-label-consistency FP ≤ 2%；egress-secret-scan + invisible-unicode-scan FP = 0",
-        "认证头 benign 子集必然通过 AC-VETO-003-02"
-      ],
-      "covers_ac": ["AC-VETO-012-01","AC-VETO-012-02","AC-VETO-012-03","AC-VETO-012-04"],
-      "priority": "MUST"
+      "title": "CLI canary rotate + 计数面 + doctor 扩枚举（D-14）",
+      "type": "AFK",
+      "blocked_by": ["SL-03", "SL-07"],
+      "parent_story": "REQ-V2a-06",
+      "layer": "cli + evidence",
+      "files": ["src/cli/index.ts", "src/evidence/aggregate.ts（新）", "tests/unit/cli/canary-rotate.test.ts", "tests/unit/evidence/aggregate.test.ts", "tests/unit/cli/doctor-v2a.test.ts"],
+      "what_it_delivers": "COMMANDS 5→6（canary rotate：运行时经 loopback 端点等待确认 / 网关未运行时写零字节哨兵标记文件）；assertNoV2Stubs 允 canary 禁 report；durable 计数从链聚合（遮蔽语义按 D-14 登记）；doctor 新增 canary-registry + coverage-counters（[DEGRADED] 前缀）",
+      "acceptance_criteria": ["AC-V2a-08：rotate 双路径（在线确认 / 离线标记文件）+ 未知动词 exit 2", "AC-V2a-19③：CLI 无写能力静态断言（cli 不 import src/canary 写侧，导出粒度）", "doctor 输出单测：[DEGRADED] 前缀断言 + #D 枚举 4→6"],
+      "covers_ac": ["AC-V2a-08", "AC-V2a-19③"],
+      "effort": "M",
+      "loc_budget": 170,
+      "file_budget": 5,
+      "status": "pending"
     },
     {
       "id": "SL-13",
-      "req": "REQ-VETO-013",
-      "title": "性能三台门 G1/G2/G3 + bench/baseline.json",
-      "layer": "bench",
-      "files": [
-        "bench/g1-ttft.ts",
-        "bench/g2-request-gate.ts",
-        "bench/g3-checker-timeout.ts",
-        "bench/baseline.json",
-        "bench/regression-formula.ts",
-        ".github/workflows/bench.yml (或等价 CI 步骤)"
-      ],
-      "depends_on": ["SL-09","SL-10","SL-12"],
-      "verify": [
-        "预热 50 次 + n=200/档 + 报告 p50/p95/p99",
-        "G1 p95<5ms && p99<12ms；G2 三档 3/10/40ms；G3 分档超时→block 用例",
-        "512KB 档 p99_scan < G3 × 0.6，否则触发 ADR 记录"
-      ],
-      "covers_ac": ["AC-VETO-013-01","AC-VETO-013-02","AC-VETO-013-03","AC-VETO-013-04","AC-VETO-013-05"],
-      "priority": "MUST"
+      "title": "evil-relay 13 对手 + 双矩阵扩展（S-RELAY）",
+      "type": "HITL",
+      "blocked_by": ["SL-09", "SL-10", "SL-11"],
+      "parent_story": "REQ-V2a-08",
+      "layer": "test-utils + fixtures",
+      "files": ["testkit/evil-relay.ts（新，需求 §4.2 定值路径）", "tests/fixtures/threats/（13 对手扩展）", "tests/fixtures/false-positives.json（扩展）", "tests/integration/relay-detection.test.ts", "docs/licenses.md（G-RELAY 结论）"],
+      "what_it_delivers": "单一 TS 模块子进程 loopback 模拟器（与 mock-upstream 同族语义、零 Python 零 docker）+ 13 对手逐条行为模板与 fixture + 检出/误报双矩阵 v2a 扩展（TEST §3 回退公式）",
+      "acceptance_criteria": ["AC-V2a-09：13 对手每条 ≥1 fixture 且 expected.verdict/action 显式，runner 可起停", "双矩阵 v2a 项全绿（检出矩阵 + 误报矩阵）", "G-RELAY 结论落 docs/licenses.md 并回填本切片 estimate.chosen"],
+      "covers_ac": ["AC-V2a-09"],
+      "estimate": {
+        "reusable": "fpverify 9 对手行为移植 + 自补 4 类 T2 对手（G-RELAY 许可通过时）",
+        "not_reusable": "按论文描述自建 13 对手，README 标注'对手集为行为复现而非上游同源'（G-RELAY 不可复用时，工作量按 §8.3 清单逐条验收）",
+        "chosen": "pending",
+        "trigger_evidence": "docs/licenses.md#G-RELAY 结论行"
+      },
+      "effort": "L",
+      "loc_budget": 350,
+      "file_budget": 18,
+      "status": "pending"
     },
     {
       "id": "SL-14",
-      "req": "REQ-VETO-014",
-      "title": "端到端演练：受管路径过闸 + fail-closed 场景 1/2/3/4 + doctor 漂移",
-      "layer": "e2e",
-      "files": [
-        "tests/e2e/managed-path-probe.test.ts",
-        "tests/e2e/delphi-path.test.ts",
-        "tests/e2e/fail-closed-request.test.ts",
-        "tests/e2e/fail-closed-stream-scenario3.test.ts",
-        "tests/e2e/fail-closed-stream-scenario4.test.ts",
-        "tests/e2e/doctor-drift.test.ts",
-        "tests/e2e/verify-chain.test.ts"
-      ],
-      "depends_on": ["SL-07","SL-09","SL-10","SL-11","SL-12","SL-13"],
-      "verify": [
-        "harness 遍历 MANAGED_CONFIG_IDS 每条回放 ≥1 探测：evidence 出现 client+provider_id",
-        "Delphi 覆写 → client='delphi' 可观测",
-        "请求侧阻断：mock-upstream 未收到请求（零出境证明）",
-        "流式场景 4：前 N-1 已送达 + event:error + terminated_after_delivery",
-        "流式场景 3：delivered_chunks=0",
-        "doctor 漂移：FAIL + 条目 id",
-        "verify：正常 ok；篡改 → first_bad_seq"
-      ],
-      "covers_ac": ["AC-VETO-014-01","AC-VETO-014-02","AC-VETO-014-03","AC-VETO-014-04","AC-VETO-014-05","AC-VETO-014-06","AC-VETO-014-07"],
-      "priority": "MUST"
+      "title": "双矩阵 CI 工作流（S-CI：test.yml + relay-nightly.yml）",
+      "type": "AFK",
+      "blocked_by": ["SL-01"],
+      "parent_story": "REQ-V2a-09",
+      "layer": "ci",
+      "files": [".github/workflows/test.yml（新）", ".github/workflows/relay-nightly.yml（新）"],
+      "what_it_delivers": "test.yml 每 PR（单测+集成+检出/误报矩阵）+ relay-nightly.yml（nightly 30min / 13 对手 4-way 矩阵，端口争用回退串行+45min 须同 PR 改表）；按设计 D-13 置于 tracer 之后、S-RELAY 之前独立落地",
+      "acceptance_criteria": ["AC-V2a-10：双矩阵 @v2 项进 CI 且 nightly 档位与 §8.4 定值一致", "PR 档不含 13 对手（拍板项 #4）", "首个全量 PR 前本地计时决定是否启用 suite 分片（>10min 启用）"],
+      "covers_ac": ["AC-V2a-10"],
+      "effort": "S",
+      "loc_budget": 120,
+      "file_budget": 2,
+      "status": "pending"
+    },
+    {
+      "id": "SL-15",
+      "title": "文档订正与背离登记（S-DOCS：AC-16 七处 + 拍板项同批订正）",
+      "type": "AFK",
+      "blocked_by": [],
+      "parent_story": "REQ-V2a-10 + REQ-V2a-14",
+      "layer": "docs + tests",
+      "files": ["docs/issues/2-design-v1.md", "docs/issues/4-test-validation.md", "docs/issues/5-roadmap.md", "docs/plans/2026-09-27-v2a-requirements.md（AC-V2a-17 占位名等）", "tests/unit/doc-consistency.test.ts（断言域扩展）"],
+      "what_it_delivers": "AC-V2a-16 文档订正七处（T2b 移出 v2 验收、latency 标量背离加注、T4a 无原值加注、T2c 行订正等）+ 拍板项同批订正（#B 标记文件、#C 漏检登记、#D doctor 枚举、#G code-unit 加注、AC-V2a-17 头名 x-llmveto-session-id）——全部由 doc-consistency grep 型断言把守",
+      "acceptance_criteria": ["AC-V2a-16：七处订正逐条 grep 可断言", "AC-V2a-15：REQ 登记表 T2c 行加注内容显式化", "doc-consistency.test.ts 扩展覆盖 #B/#C/#D/#G 与 AC-V2a-17 头名"],
+      "covers_ac": ["AC-V2a-15", "AC-V2a-16"],
+      "effort": "S",
+      "loc_budget": 120,
+      "file_budget": 6,
+      "status": "pending"
     }
   ],
+  "execution_order": ["SL-01", "SL-15", "SL-03", "SL-05", "SL-02", "SL-06", "SL-04", "SL-07", "SL-10", "SL-11", "SL-14", "SL-09", "SL-08", "SL-12", "SL-13"],
+  "dependency_graph": {
+    "SL-01": [],
+    "SL-15": [],
+    "SL-03": [],
+    "SL-05": [],
+    "SL-02": ["SL-01"],
+    "SL-06": ["SL-05"],
+    "SL-04": ["SL-03"],
+    "SL-07": ["SL-03", "SL-06"],
+    "SL-10": ["SL-02"],
+    "SL-11": ["SL-02"],
+    "SL-14": ["SL-01"],
+    "SL-09": ["SL-01", "SL-02", "SL-03"],
+    "SL-08": ["SL-05", "SL-07"],
+    "SL-12": ["SL-03", "SL-07"],
+    "SL-13": ["SL-09", "SL-10", "SL-11"]
+  },
   "regression_gates": {
     "per_slice": ["npx vitest run", "npx tsc --noEmit", "npx xp-gate check --all"],
-    "architecture": ["tests/unit/architecture-boundaries.test.ts (TEST 契约 #2 双重断言)"]
+    "architecture": ["tests/unit/architecture-boundaries.test.ts（v2a 扩展：canary 层 + checkers 不 import canary + cli 写侧导出粒度）"]
   },
   "traceability": {
     "uncovered_reqs": [],
-    "note": "14 个 REQ ↔ 14 个 slice 一一对应；BUILD-ENTRY-CONTRACT 断言 slices ↔ REQ 全覆盖 specification.yaml.requirements"
+    "note": "15 REQ 全覆盖：REQ-V2a-11 拆 SL-06/SL-07，REQ-V2a-05 由 SL-05+SL-08 共同承载（SL-05 为 registry 半、SL-08 为检测半），REQ-V2a-14 并入 SL-15。27 AC 全部落片（07/18/19 跨切片分层断言：单元级与经网关级分列）。"
   }
 }

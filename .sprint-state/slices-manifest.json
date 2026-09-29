@@ -15,7 +15,8 @@
     "G-RELAY": {
       "closes_before": "SL-13",
       "how": "读 fpverify 许可证文本，逐文件结论落 docs/licenses.md，触发 SL-13.estimate.chosen 二选一（reusable / not_reusable）",
-      "status": "pending"
+      "conclusion": "fpverify = MIT（版权行 Copyright (c) 2026 Mohamed7415 and fpverify contributors；GitHub API repos 端点 + LICENSE 原文核实于 2026-09-29）→ 可复用；详见 docs/licenses.md「v2a G-RELAY 结论」节",
+      "status": "closed"
     },
     "G-WINDOW": {
       "closes_before": "SL-09 集成收尾（bench 部分需 checker 全集）",
@@ -245,7 +246,7 @@
       "estimate": {
         "reusable": "fpverify 9 对手行为移植 + 自补 4 类 T2 对手（G-RELAY 许可通过时）",
         "not_reusable": "按论文描述自建 13 对手，README 标注'对手集为行为复现而非上游同源'（G-RELAY 不可复用时，工作量按 §8.3 清单逐条验收）",
-        "chosen": "pending",
+        "chosen": "reusable",
         "trigger_evidence": "docs/licenses.md#G-RELAY 结论行"
       },
       "effort": "L",

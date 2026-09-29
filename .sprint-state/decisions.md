@@ -219,3 +219,12 @@
 - 备选与否决（F-m1 的另一方向）：直接采纳两段式降级（mock benign 先跑形式判据、录制到位后补人工复核）——否决为默认，因其变更 G-CANARY 门判据协议属规约变更，只能由用户拍板；登记而不采纳。
 - 收链产物：`.sprint-state/delphi-reviewed.json` 更新为 design mode 记录（reviewed_head_commit=ab08cc1、三轮账、残留处置）；`.sprint-state/review/v2a-r2-design-consensus.md` 新增（人读共识报告，含 attempt1/2 作废执行审计）；设计文档头部状态行更新为"R2 评审链已闭合，进入 Step 8 切片"。
 - 未决与复核义务：① #E（10 条真实会话录制）仍待用户提供，G-CANARY 未关闭前不注入上线、录制不交付则 BUILD 不启动（F-m1 预案不改变此默认）；② 设计文档自身尚有"批准后由评审引发的多处订正未再经评审"——与需求文档 §14.4/§14.5 同性质的诚实边界，Phase 4 VERIFY 复核义务清单在 §4.5 双层落点、§5 第二/三/四/五处、REQ-V2a-15、AC-V2a-25/26/27 之外，追加 **D-10 网关值优先序 + D-11 全量双层落链 + D-07 推进点次序**三处评审修订面的实现符合性；③ Phase 2 收口 = Step 8 切片（slices-manifest 含 #E 提醒节点与 S-BUDGET 关键路径）→ Step 9 specification.yaml → phase-transition 2 completed。
+
+## Decision DR-026: G-RELAY 关闭 —— fpverify 核实为 MIT，SL-13 定可复用分支
+
+- 日期：2026-09-29
+- 阶段：Phase 3 BUILD 启动前置（manifest `build_entry_gates.G-RELAY`：允许"BUILD 第一切片前"关闭、零代码依赖，是 #E 之外唯一可先行的门）
+- 决策：核实 fpverify（https://github.com/Mohamed7415/fpverify）上游许可 = **MIT**（GitHub API `repos/Mohamed7415/fpverify` 端点 `license.spdx_id=MIT` + LICENSE 原文逐行核对，版权行 `Copyright (c) 2026 Mohamed7415 and fpverify contributors`，核实日 2026-09-29）。G-RELAY 二选一判为**可复用**：SL-13 对手集 = fpverify 9 对手（honest / drift / quantized / swap / pin / filter_en / true_random / cache / partial_mimic）行为移植为 TS 模板 + 自补 4 类 T2 对手（合计 13，对齐设计 §8.3 清单）；not_reusable 分支（按论文自建 13 对手 + README 覆盖面声明）不触发。落点：`docs/licenses.md` 新增「v2a G-RELAY 结论（2026-09-29）」节并订正台账第 3 行；manifest `build_entry_gates.G-RELAY.status` pending→closed（附 conclusion 字段）、SL-13 `estimate.chosen` pending→reusable。
+- 义务：移植产物（对手模板及派生 fixture）随仓库分发须保留上游 MIT 归属（版权行 + licenses.md 链接）；移植对象是行为语义与对抗策略、非运行时依赖——零 Python 约束（REUSE §fpverify，v1 G-FP 已闭）不变；自补 4 类 T2 对手为原创，无上游义务。
+- 备选与否决：无分支争议——许可证核实为事实判定（MIT 属 OSI 认证、允许行为移植），唯一判断点在"移植行为语义是否构成衍生作品须带归属"，按 MIT 条款保守处置（带归属）即无缺口。
+- 未决与复核义务：**#E（10 条真实 agent 会话录制）仍待用户交付**——用户 2026-09-29 拍板"维持原判据"（F-m1 两段式降级预案不采纳），G-CANARY 未关闭则 BUILD 不启动。BUILD 切片执行在 #E 交付前保持阻塞；G-RELAY 至此关闭，agent 侧已无其他可执行的前置工作，下一步动作权在用户。

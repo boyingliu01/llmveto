@@ -191,3 +191,13 @@
 - 路由说明：本条即 Step 6 的批量决策产物——frontier 已空（设计 §8 无未决分支），用户确认"批准，全部按默认"；差异仅在确认发生在 Step 4 的门上而非独立的 Step 6 会话。R2（Step 7）不受影响，照跑。
 - 连带：需求文档同批订正三处（§4.3 唯一写者行 #B、§7 P4 第⑦条 #C、AC-V2a-25 计量单位 #G），均标注"设计批准 2026-09-29"并经用户直接批准，非代理放宽；#D（doctor 枚举 4→6）与 #A（sha 语义）不改正文，属 BUILD 期实现 + `doc-consistency` 断言域；设计文档状态行更新为 APPROVED（Step 7 未跑）。
 - 未决与复核义务：**批准不替代评审**。设计文档及其依据的 §14.4/§14.5 增补义务仍无独立评审读者；Step 7 R2 必须把"D-03 窄化 §4.3 许可 / D-04 sha 语义 / D-09 首次接门的可用性风险 / D-12 无声明漏检 / LOC +111% 偏差"列为优先核查面。#E（G-CANARY 的 10 条真实会话录制）仍待用户提供，G-CANARY 关闭前不得注入上线。
+
+## Decision DR-023: R2 Round 1 执行与处置 + A 槽模型因 undici 300s 流超时换 flashx
+
+- 日期：2026-09-29
+- 阶段：Phase 2 / Step 7 R2 设计评审，Round 1
+- 决策一（评审执行环境）：A 槽模型由 `g-glm-5.3-flash` 换为同厂 `g-glm-5.3-flashx`（expected_echo `glm-5.3-flash`）。触发事实：flash 在 max_tokens=20000、~180KB 卷包下生成需 ~570s，超过 Node undici（执行器 fetch 的 HTTP/2 栈）默认 stream timeout 300s，两次执行均在 300.1s 处报 `fetch failed`（cause 被执行器吞掉：`InformationalError: HTTP/2 "stream timeout after 300000"`，undici probe 实测复现）；curl 无此限制故能通，不构成"执行器可用"证据。flashx 同任务 55.7s 完成（finish=stop）。厂别不变，三厂约束（智谱/DeepSeek/Qwen 本地）保持。降 max_tokens 不可救：flash 在 8000 档下 16782 字符 reasoning 即撑爆预算、content 为空。小载荷探针（19 token）能通 ≠ 全载荷能通，诊断顺序已记入项目记忆。
+- 决策二（Round 1 缺口处置）：结果 = feasibility APPROVED / architecture+technical REQUEST_CHANGES，共识 2/3 未达 90%；缺口 1C/8M/12m 全部处置（设计文档 §10 对账表）。两条按**需求原文**订正设计（非放宽）：T-C1 → D-10 顶层 reason 优先序反转为网关侧描述值（`registry_unavailable` > `inject_skipped`）优先于 checker error——§4.3/AC-V2a-19① 的承诺本就无条件，checker reason 经 findings 条目全额保全；A-M1/T-m3 → D-11 撤销观测类落链抑制，全部 checker error 同走 REQ-V2a-13(c) 双位（AC-V2a-24② 无分类限定）。其余修复：D-04 取证边界披露、D-09 回退阶梯（调档→规约变更回用户拍板，禁静默降级 warn）、D-12 两类 FP=0 负样本、#E 责任时点钉死（Step 8 前，未交付则 BUILD 不启动）、canary 模块改名 `store.ts`、`deriveSessionKey` 改名、标记文件生命周期、doctor `[DEGRADED]` 标记等。T-M4/T-m4/F-m2 三条"已闭合（事实性）"（所引缺口与现状不符：#F 已批、DoD-4 已含、§8 已含回填义务）。
+- 备选与否决（T-C1 的另一方向）：给 registry_unavailable 加第二顶层可选字段——否决，动契约 #4 冻结域，需 ADR+改断言，重于把设计对齐需求原文；写 findings 条目——否决，§4.5 已论证会被 mapBySpec 消费而改 action。
+- 连带：设计文档 §10 新增（21 项处置对账表）；`var/delphi-v2a/.delphi-config.json` A 槽换模型（gitignored，但其决策记录于此）。
+- 未决与复核义务：Round 2 对账（A2 附录 = r2-round1-gaps.md 逐字导出）进行中；R2 共识未达前不进 Step 8 切片。#E（10 条真实会话录制）仍待用户提供。

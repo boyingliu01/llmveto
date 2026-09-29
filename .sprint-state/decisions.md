@@ -201,3 +201,12 @@
 - 备选与否决（T-C1 的另一方向）：给 registry_unavailable 加第二顶层可选字段——否决，动契约 #4 冻结域，需 ADR+改断言，重于把设计对齐需求原文；写 findings 条目——否决，§4.5 已论证会被 mapBySpec 消费而改 action。
 - 连带：设计文档 §10 新增（21 项处置对账表）；`var/delphi-v2a/.delphi-config.json` A 槽换模型（gitignored，但其决策记录于此）。
 - 未决与复核义务：Round 2 对账（A2 附录 = r2-round1-gaps.md 逐字导出）进行中；R2 共识未达前不进 Step 8 切片。#E（10 条真实会话录制）仍待用户提供。
+
+## Decision DR-024: R2 Round 2 处置 —— A-M1 证实 D-07 推进点写错位置（冻结语义冲突）
+
+- 日期：2026-09-29
+- 阶段：Phase 2 / Step 7 R2 设计评审，Round 2
+- 决策：Round 2 结果 = technical + feasibility APPROVED、architecture REQUEST_CHANGES（共识 2/3 < 90%）；Round 1 的 21 项缺口被三家全部判定闭合/事实性闭合（含 T-C1 与 A-M1/T-m3 两处本轮修订的自洽性确认）。新缺口 0C/2M/8m 全部处置，其中 **A-M1 为真 Major 并按需求原文修复**：D-07 时序 2 原稿把网关的 cursor 推进点写在"进入 checker 循环前"，照字面实现会让 checker 收到已含本片的 cursor —— 与 AC-VETO-004-02 冻结语义（`window.cursor` = 本片之前的已消费码点数，权威声明 `tests/unit/checkers/invisible-unicode-scan.test.ts:50-69`）直接冲突，等于把 v1 双重推进 bug（DR-021/§5 第四处）镜像搬回网关侧，AC-V2a-25 的 offsets 等值断言将系统性判红。修复 = 推进点移至 checker **返回后**的窗口重组处（旧值+len、消费之后下一片之前），§3 时序 2 与 D-07 双处改写。其余：T-M1（D-10 平局序位权威 = REGISTRY 常量声明序 + 与 canary 存储澄清）、A-m1（allowed_imports 按架构惯例不自指订正：canary=[shared]、gateway 扩列）、A-m2（标记文件改零字节哨兵，schema 漂移面归零）、A-m3/T-m2/T-m3/F-m1/F-m2/T-m1 各自落点见设计 §10.1。
+- 备选与否决（A-M1 的另一方向）：改 AC-VETO-004-02 的冻结语义以迁就"循环前推进"——否决，v1 契约明写"不可事后补"，且 checker 权威测试是既有验收面；那是 test-follows-implementation。
+- 教训登记：D-07 在 R1 稿同时写对了意图（网关推进一次）与写错了次序（循环前），Round 1 三家（含跨跑复现的 deepseek）都没抓到，Round 2 才由 flashx 抓出——多轮评审对"次序型"缺陷的检出价值实证。
+- 未决与复核义务：Round 3 对账（A2 附录 = r2-round2-gaps.md）进行中；共识 ≥90% 前不进 Step 8。#E 仍待用户。

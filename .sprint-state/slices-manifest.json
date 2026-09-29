@@ -31,7 +31,7 @@
     "G-CANARY": {
       "closes_before": "BUILD 启动（Step 8 拍板项 #E，owner = 用户）",
       "how": "10 条真实 agent 会话录制（进 var/ 不进 git）+ finish_reason 分布无迁移 + provider 拒绝率增量 0 + 人工复核 10 条输出",
-      "user_deliverable": "#E 录制文件",
+      "user_deliverable": "#E 录制文件（10 个 JSON，落 var/canary-sessions/；格式与字段判据对应见 .sprint-state/g-canary-recording-spec.md）",
       "reminder_nodes": ["slices-manifest（本字段，最早提醒：与无依赖切片 SL-15/SL-01 并行的最早期）", "BUILD 启动前（第二道）"],
       "fallback_pending_user": "R3 F-m1 两段式降级预案（mock benign 先跑形式判据、录制到位后补人工复核）——默认不采纳，采纳属规约变更须用户拍板",
       "status": "pending_user"

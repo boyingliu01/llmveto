@@ -12,7 +12,9 @@
 // 停止：Ctrl-C。10 条真实会话聊完后，由 orchestrator 分割成 session-NN.json（规格见
 // .sprint-state/g-canary-recording-spec.md）。
 
-import { createServer, request as httpRequest } from "node:http";
+import { createServer } from "node:http";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import type { IncomingMessage } from "node:http";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -64,7 +66,8 @@ createServer((req, res) => {
     }
     if (reqBody.length > 0) fwdHeaders["content-length"] = String(reqBody.length);
 
-    const upReq = httpRequest(
+    const transport = upstream.protocol === "https:" ? httpsRequest : httpRequest;
+    const upReq = transport(
       {
         protocol: upstream.protocol,
         hostname: upstream.hostname,

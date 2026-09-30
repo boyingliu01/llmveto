@@ -61,10 +61,20 @@
   见 docs/issues/2-design-v1.md:108）。
 - 文件只进 `var/`，永不入 git；evidence store 同理不收录制原文。
 
-## 采集方式建议（供参考，非强制）
+## 采集方式（推荐：capture-proxy，正文零手工）
 
-- 任选你顺手的方式：客户端侧导出会话、本机抓包、或临时把 v1 网关
-  `evidence.body_capture` 调成 `full` 跑 10 条真实会话后导出（注意 full 模式会把请求体
-  写进 evidence 文件，属 T1b 登记的本地聚集风险，采集完调回 `metadata_only`）。
-- 格式对不上的部分宁可手工补一个转换脚本放 `var/`（`var/*.ts` 可入仓），不要为凑格式
-  重放或改写真实流量——判据要的是"真实"。
+**订正（2026-09-30）**：初版曾建议"临时把 v1 网关 evidence.body_capture 调成 full 再导出"——
+该路已核实不可行：v1 evidence writer 的记录字段里**没有 body 文本位**，full 模式也只落 sha256
+（src/evidence/writer.ts append() 仅含 *_sha256）。删除该建议。
+
+推荐链路：opencode/delphi → **capture-proxy（127.0.0.1:8790）** → v1 网关（127.0.0.1:8787）→ provider
+
+- 代理：`var/capture-proxy.ts`（已入仓）。启动：`node var/capture-proxy.ts`
+- 客户端只需把 baseURL 里 `127.0.0.1:8787` 改成 `127.0.0.1:8790`（其余路径不变，代理透传）；
+- 正常聊天即可，每次交换原样落一行到 `var/canary-sessions/raw-exchanges.jsonl`；
+- 凭据类头（Authorization / x-api-key / Cookie 等）在**记录里**自动打码为 `[STRIPPED]`，转发不受影响；
+- 聊完 ≥10 条真实会话后由 orchestrator 把 raw-exchanges.jsonl 分割为 session-01..10.json 并校验规格；
+- 采完把客户端 baseURL 改回 8787 即恢复原链路（代理与记录文件均可留在 var/）。
+
+真实性与脱敏的边界：判据要的是"真实"，**正文尽量不做人工脱敏**（重放验证需要真实形态）；
+凭据头代理已自动打码；正文中的敏感内容只存在于 var/（gitignored，不出本机、不入 git）。

@@ -4,6 +4,7 @@ import type {
   NonStreamChecker,
   ScanUnit,
 } from "../shared/types.ts";
+import { scanTexts } from "../shared/types.ts";
 
 /**
  * @test REQ-VETO-003
@@ -37,24 +38,33 @@ const RULES: readonly Rule[] = [
 
 export const egressSecretScan: NonStreamChecker = (unit: ScanUnit): CheckerResult => {
   const findings: Finding[] = [];
-  const text = unit.text;
+  // 多投影：原始文本 + 转义还原文本（编码层对抗）。凭据可被 `sk-\u0061…` 这类
+  // 转义写法拆散以规避朴素匹配，故两份都扫；同一 rule 只报一条（取先命中的投影）。
+  const texts = scanTexts(unit);
 
   for (const rule of RULES) {
     rule.re.lastIndex = 0; // 保证纯函数性（regex 是模块级共享对象）
-    let m: RegExpExecArray | null;
     const offsets: number[] = [];
-    while ((m = rule.re.exec(text)) !== null) {
-      // 防御 zero-length 死循环（当前 pattern 不会 zero-length，仍显式保护）
-      if (m.index === rule.re.lastIndex) rule.re.lastIndex++;
-      offsets.push(m.index);
+    let matched = false;
+    for (const text of texts) {
+      rule.re.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = rule.re.exec(text)) !== null) {
+        // 防御 zero-length 死循环（当前 pattern 不会 zero-length，仍显式保护）
+        if (m.index === rule.re.lastIndex) rule.re.lastIndex++;
+        if (text === texts[0]) offsets.push(m.index);
+        matched = true;
+      }
+      if (matched) break; // 该 rule 已命中，无需在后续投影上重复报
     }
-    if (offsets.length > 0) {
+    if (matched) {
       findings.push({
         checker: "egress-secret-scan",
         threat: "T1b",
         verdict: "finding",
         severity: "high",
-        offsets,
+        // 转义投影命中时无可靠位置（长度口径不同），只报规则命中这一事实
+        ...(offsets.length > 0 ? { offsets } : {}),
         rule_id: rule.id,
       });
     }

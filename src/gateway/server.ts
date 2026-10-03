@@ -26,7 +26,15 @@ export async function startGateway(opts: StartOptions): Promise<{ server: Return
     throw new Error(`AC-VETO-002-01: gateway MUST bind to 127.0.0.1; got '${host}'. Loopback-only is a security invariant.`);
   }
   const core = new GatewayCore(opts.config);
-  const server = createServer((req, res) => { void dispatch(req, res, core, opts.config); });
+  // fail-closed 的边界（REQ-VETO-002）：dispatch 是 async，而其内部会 await 上游 fetch。
+  // 上游失败（ECONNRESET / 超时 / DNS）会抛出——若不在**这里**兜住，异常会冒泡成
+  // unhandledRejection 并杀死整个 daemon 进程：客户端拿不到任何响应、该次交互不落 evidence、
+  // 且此后全部流量失去网关保护。故每个请求的失败必须被收敛成"这一个请求的 502 + 留痕"。
+  const server = createServer((req, res) => {
+    dispatch(req, res, core, opts.config).catch((err: unknown) => {
+      handleDispatchFailure(req, res, opts.config, err);
+    });
+  });
   await new Promise<void>((resolve) => server.listen(opts.port ?? 0, host, () => resolve()));
   const addr = server.address() as AddressInfo;
   const url = `http://${host}:${addr.port}`;
@@ -120,11 +128,7 @@ async function dispatch(req: IncomingMessage, res: ServerResponse, core: Gateway
   for await (const c of req) chunks.push(c as Buffer);
   const bodyBuf = Buffer.concat(chunks);
   const bodyText = bodyBuf.toString("utf8");
-  const headers: Record<string, string> = {};
-  for (const [k, v] of Object.entries(req.headers)) {
-    if (typeof v === "string") headers[k.toLowerCase()] = v;
-    else if (Array.isArray(v) && v.length > 0) headers[k.toLowerCase()] = v[0]!;
-  }
+  const headers = normalizeHeaders(req.headers);
   // 身份识别：路径段优先，x-llmveto-* 头作 fallback（兼容 legacy 直连 /v1 与测试 harness）。
   // 信任边界：网关硬绑 127.0.0.1，本机客户端视为同一信任域，故身份头不做认证——它们只影响
   // evidence 归属与（catch-all 路径下的）路由条目选择，不改变转发目标；唯一能改变目标的是
@@ -227,6 +231,67 @@ function writeEvidence(cfg: GatewayConfig, p: EvidenceWriteParams): void {
 
 function safeHost(url: string): string {
   try { return new URL(url).host; } catch { return "unparseable"; }
+}
+
+/**
+ * dispatch 未捕获异常的兜底（fail-closed）。此路径覆盖"上游不可达 / 连接被重置 / DNS 失败 /
+ * 响应体读取中途出错"等**网络层**故障，以及任何非预期的内部异常。
+ *
+ * 契约：
+ *   ① 客户端必须收到确定的失败响应（502 + `llmveto:upstream-error`），绝不静默挂起；
+ *   ② 该次交互必须落 evidence（否则审计链出现无法解释的缺口），action_taken = blocked_before_forward；
+ *   ③ 本函数自身**绝不抛出** —— 它是进程存活性的最后一道防线，否则又回到"一次上游抖动杀掉 daemon"。
+ */
+function handleDispatchFailure(req: IncomingMessage, res: ServerResponse, cfg: GatewayConfig, err: unknown): void {
+  const body = JSON.stringify({ error: { code: "llmveto:upstream-error" } });
+  try {
+    if (!res.headersSent) {
+      res.statusCode = 502;
+      res.setHeader("content-type", "application/json");
+    }
+  } catch { /* 响应头已失效：仍继续尝试留痕 */ }
+  try { res.end(body); } catch { /* 客户端已断开：留痕优先 */ }
+
+  try {
+    const t0 = Date.now();
+    const headers = normalizeHeaders(req.headers);
+    const requestId = headers["x-llmveto-request-id"] ?? randomUUID();
+    const failureFinding: EvidenceFinding = {
+      checker: "gateway",
+      threat: "T0",
+      verdict: "error",
+      severity: "high",
+      // rule_id 承载可读成因摘要：error 类 finding 无 offsets，此处是唯一的成因落点。
+      // 截断到 160 字符：evidence 是 append-only 审计面，不因超长错误串膨胀。
+      rule_id: ("upstream-unreachable: " + (err instanceof Error ? `${err.name}: ${err.message}` : String(err))).slice(0, 160),
+    };
+    writeEvidence(cfg, {
+      sessionId: headers["x-llmveto-session-id"] ?? "s-" + requestId.slice(0, 8),
+      turnId: headers["x-llmveto-turn-id"] ?? "t-" + requestId.slice(0, 8),
+      requestId,
+      client: headers["x-llmveto-client"] ?? "unknown",
+      providerId: headers["x-llmveto-provider"] ?? cfg.providerId ?? "unknown",
+      endpointHost: headers["x-llmveto-endpoint-host"] ?? "unknown",
+      bodyText: "",
+      bodyBuf: Buffer.alloc(0),
+      respText: body,
+      stream: false,
+      findings: [failureFinding],
+      actionTaken: "blocked_before_forward",
+      deliveredChunks: 0,
+      t0,
+    });
+  } catch { /* evidence 写入失败不改变"已向客户端 fail-closed"这一事实，但不得再抛出 */ }
+}
+
+/** 请求头归一化（小写键 + 多值取首）：dispatch 与本文件兜底路径共用，避免两处口径漂移。 */
+function normalizeHeaders(raw: IncomingMessage["headers"]): Record<string, string> {
+  const headers: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (typeof v === "string") headers[k.toLowerCase()] = v;
+    else if (Array.isArray(v) && v.length > 0) headers[k.toLowerCase()] = v[0]!;
+  }
+  return headers;
 }
 
 function safeParse(s: string): Record<string, unknown> | null {

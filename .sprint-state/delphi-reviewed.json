@@ -1,0 +1,82 @@
+{
+  "_schema_version": 1,
+  "artifact": "design-reviewed",
+  "mode": "design",
+  "sprint_id": "sprint-20260927-46",
+  "phase": 2,
+  "gate": "R2 design review (v2a detection core, DESIGN Step 7 hard gate)",
+  "review_target": "docs/plans/2026-09-27-v2a-design.md",
+  "verdict": "APPROVED",
+  "timestamp": "2026-09-29T00:47:20Z",
+  "consensus_ratio": 1,
+  "consensus_percent": 100,
+  "threshold_percent": 90,
+  "rounds_used": 3,
+  "round_budget": 5,
+  "reviewed_head_commit": "ab08cc1c53950fe5b8b3d6872c171bf7e6bb82e6",
+  "reviewed_design_sha256": "2800fe792551e79fc5640b1dc71414aa00f4b386c0bb65476c60cfc745afa9c2",
+  "hash_note": "Round 3 评审的文档基线 = ab08cc1（Round 1/2 处置已落盘）；本轮残留 0C/1M/6m 的处置（§10.2）落在收链提交，处置内容不回灌本轮评审基线",
+  "panel": {
+    "executor": "~/.qoder/skills/delphi-review/scripts/delphi-experts.cjs",
+    "config": "var/delphi-v2a/.delphi-config.json (profile example-provider-flash)",
+    "experts": [
+      { "id": "A", "role": "architecture", "requested_model": "g-glm-5.3-flashx", "executed_echo": "glm-5.3-flashx" },
+      { "id": "B", "role": "technical", "requested_model": "g-deepseek-flash", "executed_echo": "deepseek-flash" },
+      { "id": "C", "role": "feasibility", "requested_model": "local-qwen3.8-27b", "executed_echo": "Qwen3_8-27B" }
+    ],
+    "checks_final_round": {
+      "all_experts_succeeded": true,
+      "requested_models_distinct": true,
+      "executed_models_distinct": true,
+      "executed_models_match_expected_echo": true
+    }
+  },
+  "rounds": [
+    {
+      "round": 1,
+      "date": "2026-09-29",
+      "verdicts": { "architecture": "REQUEST_CHANGES", "technical": "REQUEST_CHANGES", "feasibility": "APPROVED" },
+      "issues_by_severity": { "critical": 1, "major": 8, "minor": 12 },
+      "outcome": "not_passed",
+      "disposition": "design doc §10 (21 行对账表)",
+      "fix_commit": "71dc4c4",
+      "evidence": "var/delphi-v2a/r2-round1-experts.json",
+      "gaps": "var/delphi-v2a/r2-round1-gaps.md",
+      "model_note": "A 槽两次 fetch failed 根因修复后重跑（g-glm-5.3-flash 撞 undici HTTP/2 300s stream timeout，换 g-glm-5.3-flashx）；attempt1/attempt2 作废不聚合"
+    },
+    {
+      "round": 2,
+      "date": "2026-09-29",
+      "verdicts": { "architecture": "REQUEST_CHANGES", "technical": "APPROVED", "feasibility": "APPROVED" },
+      "consensus_percent": 66.7,
+      "prior_round_issues_resolved": "21/21（三家一致判定闭合）",
+      "issues_by_severity": { "critical": 0, "major": 2, "minor": 8 },
+      "outcome": "not_passed_below_threshold",
+      "disposition": "design doc §10.1 (10 行对账表)",
+      "fix_commit": "ab08cc1",
+      "evidence": "var/delphi-v2a/r2-round2-experts.json",
+      "gaps": "var/delphi-v2a/r2-round2-gaps.md"
+    },
+    {
+      "round": 3,
+      "date": "2026-09-29",
+      "verdicts": { "architecture": "APPROVED", "technical": "APPROVED", "feasibility": "APPROVED" },
+      "confidence": { "architecture": 8, "technical": 8, "feasibility": 8 },
+      "consensus_percent": 100,
+      "prior_round_issues_resolved": "10/10（三家一致判定闭合）",
+      "issues_by_severity": { "critical": 0, "major": 1, "minor": 6 },
+      "outcome": "passed",
+      "disposition": "design doc §10.2 (7 行对账表)；Major T-M1 补钉 D-10 对应关系，6 Minor 为登记/补钉类",
+      "evidence": "var/delphi-v2a/r2-round3-experts.json",
+      "gaps": "var/delphi-v2a/r2-round3-gaps.md"
+    }
+  ],
+  "residuals_after_consensus": {
+    "critical": 0,
+    "major": 0,
+    "minor": 6,
+    "note": "唯一 Major（technical M-1，D-10 顶层↔findings 对应关系）已补钉；6 Minor 全部登记或补钉；APPROVED 定义（无 Critical 未闭合、剩余 Major 已处置或登记）满足"
+  },
+  "report": ".sprint-state/review/v2a-r2-design-consensus.md",
+  "decisions_ref": ".sprint-state/decisions.md (DR-022..DR-025)"
+}

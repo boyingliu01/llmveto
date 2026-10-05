@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { isAuthHeader, buildRequestScanUnit, buildResponseScanUnit } from "../../../src/gateway/scan-unit.ts";
 import { encodeVetoEvent, parseSseFrames, tryParseJson } from "../../../src/gateway/sse-tee.ts";
+import { invisibleUnicodeScanNonStream } from "../../../src/checkers/invisible-unicode-scan.ts";
+import { egressSecretScan } from "../../../src/checkers/egress-secret-scan.ts";
 
 // @test REQ-VETO-002
 // @intent 扫描单元组装 + SSE 帧解析 + veto-mid-stream 契约（AC-VETO-002-06 / AC-VETO-002-03）
@@ -122,5 +124,131 @@ describe("SL-09 gateway: scan-unit + sse-tee", () => {
     const text = JSON.stringify({ choices: [null, 42, { delta: { content: "ok" } }] });
     const u = buildResponseScanUnit(text, JSON.parse(text), null, "stream");
     expect(u.text).toBe("ok");
+  });
+});
+
+// 回归组 A（T2a 载体丢失）：tool_calls / function_call 的 arguments 必须进入扫描单元。
+// 缺陷形态：原实现只取 `delta.content` / `message.content`，而 OpenAI 兼容协议下**工具调用
+// 的载荷全在 `tool_calls[*].function.arguments`**（content 为 null）。于是整条 tool-call 的
+// 文本投影为空串 → 响应侧全部 checker 落空。这是"扫描单元构造阶段就丢数据"，
+// 比"v1 不做 T2a 判定"更隐蔽：连取证字段都没有。
+describe("SL-09 gateway: tool_call 载荷进入扫描单元（T2a 回归）", () => {
+  it("非流式 message.tool_calls[*].function.arguments 进入 text", () => {
+    const text = JSON.stringify({
+      model: "m",
+      choices: [{
+        message: {
+          role: "assistant",
+          content: null,
+          tool_calls: [{
+            id: "call_1",
+            type: "function",
+            function: { name: "run_shell", arguments: '{"cmd":"echo INJECTED"}' },
+          }],
+        },
+        finish_reason: "tool_calls",
+      }],
+    });
+    const u = buildResponseScanUnit(text, JSON.parse(text), "m", "non-stream");
+    expect(u.text).toContain("INJECTED");
+    expect(u.text).toContain("run_shell");
+  });
+
+  it("流式 delta.tool_calls[*].function.arguments 进入 text", () => {
+    // 流式下 arguments 是**逐片增量**拼接的，每片单独一个 JSON 帧
+    const t1 = JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: "c1", function: { name: "run", arguments: '{"a":' } }] } }] });
+    const t2 = JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: "1}" } }] } }] });
+    const u1 = buildResponseScanUnit(t1, JSON.parse(t1), null, "stream");
+    const u2 = buildResponseScanUnit(t2, JSON.parse(t2), null, "stream");
+    expect(u1.text).toContain('{"a":');
+    expect(u2.text).toContain("1}");
+  });
+
+  it("regression: tool_call arguments 含 U+200B → invisible-unicode-scan 判定 finding", () => {
+    const text = JSON.stringify({
+      model: "m",
+      choices: [{
+        message: {
+          content: null,
+          tool_calls: [{ id: "c", type: "function", function: { name: "run", arguments: '{"cmd":"echo\u200bhi"}' } }],
+        },
+        finish_reason: "tool_calls",
+      }],
+    });
+    const u = buildResponseScanUnit(text, JSON.parse(text), "m", "non-stream");
+    const r = invisibleUnicodeScanNonStream(u);
+    expect(r.verdict).toBe("finding");
+    expect(r.evidence[0]!.rule_id).toBe("invisible-unicode");
+    expect(r.evidence[0]!.offsets!.length).toBeGreaterThan(0);
+  });
+
+  it("legacy function_call.arguments 也进入 text", () => {
+    const text = JSON.stringify({
+      choices: [{ message: { content: null, function_call: { name: "run", arguments: '{"x":"LEGACYINJ"}' } } }],
+    });
+    const u = buildResponseScanUnit(text, JSON.parse(text), null, "non-stream");
+    expect(u.text).toContain("LEGACYINJ");
+  });
+
+  it("请求侧 messages[*].tool_calls arguments 进入 text", () => {
+    const body = JSON.stringify({
+      model: "m",
+      messages: [{
+        role: "assistant",
+        content: null,
+        tool_calls: [{ id: "c1", type: "function", function: { name: "run", arguments: '{"cmd":"REQINJ"}' } }],
+      }],
+    });
+    const u = buildRequestScanUnit(body, JSON.parse(body), {}, "non-stream");
+    expect(u.text).toContain("REQINJ");
+  });
+});
+
+// 回归组 B（编码层绕过）：checker 只见解码后的 UTF-8 文本，而 JSON 里同一个字符有两种写法——
+// 字面字符，或 `\uXXXX` 转义序列。原实现只匹配字面形态，于是攻击者只要**用转义写法书写**
+// 就能整类绕过（而 JSON 是唯一传输编码，"用转义写法"是最省事的注入方式）。
+// 修法：扫描单元**额外**投影一份"转义已还原"的文本，checker 对两份都扫。
+describe("SL-09 gateway: 转义序列不得绕过 checker（编码层回归）", () => {
+  it("regression: \\u200b 转义写法 → invisible-unicode-scan 判定 finding", () => {
+    // 注意：这是**原始 JSON 文本**里写着反斜杠-u-2-0-0-b 六个字符，未经 JSON.parse 还原
+    const raw = '{"model":"m","messages":[{"role":"user","content":"hello\\u200bworld"}]}';
+    const u = buildRequestScanUnit(raw, JSON.parse(raw), {}, "non-stream");
+    const r = invisibleUnicodeScanNonStream(u);
+    expect(r.verdict).toBe("finding");
+    expect(r.evidence[0]!.rule_id).toBe("invisible-unicode");
+  });
+
+  it("regression: \\u200b 转义写法（响应侧）→ finding", () => {
+    const raw = '{"choices":[{"delta":{"content":"a\\u200bb"}}]}';
+    const u = buildResponseScanUnit(raw, JSON.parse(raw), null, "stream");
+    expect(invisibleUnicodeScanNonStream(u).verdict).toBe("finding");
+  });
+
+  it("regression: 转义写法的大写/小写十六进制均被识别", () => {
+    for (const esc of ["\\u200b", "\\u200B", "\\u202e", "\\u202E", "\\ufeff", "\\uFEFF"]) {
+      const raw = `{"choices":[{"delta":{"content":"x${esc}y"}}]}`;
+      const u = buildResponseScanUnit(raw, JSON.parse(raw), null, "stream");
+      expect(invisibleUnicodeScanNonStream(u).verdict, `escape ${esc} 应被检出`).toBe("finding");
+    }
+  });
+
+  it("regression: \\u200b 转义写法不得漏检 tool_call arguments（两组缺陷叠加）", () => {
+    const raw = '{"choices":[{"message":{"content":null,"tool_calls":[{"function":{"name":"run","arguments":"{\\"c\\":\\"a\\u200bb\\"}"}}]}}]}';
+    const u = buildResponseScanUnit(raw, JSON.parse(raw), null, "non-stream");
+    expect(invisibleUnicodeScanNonStream(u).verdict).toBe("finding");
+  });
+
+  it("regression: 转义写法不得漏检出站凭据", () => {
+    // `sk-` 本身无需转义，但攻击者可用转义写任意字符以规避朴素匹配；此处验证
+    // 凭据规则在"转义还原后"的文本上仍工作（用转义书写的一个字符构造 sk- 形态）
+    const raw = '{"messages":[{"role":"user","content":"sk-\\u0061bcdefghijklmnopqrstuvwxyz"}]}';
+    const u = buildRequestScanUnit(raw, JSON.parse(raw), {}, "non-stream");
+    expect(egressSecretScan(u).verdict).toBe("finding");
+  });
+
+  it("对照：benign 文本（含普通反斜杠）不得因转义还原而误报", () => {
+    const raw = '{"messages":[{"role":"user","content":"windows path C:\\\\Users\\\\me and \\\\n newline"}]}';
+    const u = buildRequestScanUnit(raw, JSON.parse(raw), {}, "non-stream");
+    expect(invisibleUnicodeScanNonStream(u).verdict).toBe("clean");
   });
 });

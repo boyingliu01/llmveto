@@ -34,6 +34,7 @@
       "user_deliverable": "#E 录制文件（10 个 JSON，落 var/canary-sessions/；格式与字段判据对应见 .sprint-state/g-canary-recording-spec.md）",
       "reminder_nodes": ["slices-manifest（本字段，最早提醒：与无依赖切片 SL-15/SL-01 并行的最早期）", "BUILD 启动前（第二道）"],
       "fallback_pending_user": "R3 F-m1 两段式降级预案（mock benign 先跑形式判据、录制到位后补人工复核）——默认不采纳，采纳属规约变更须用户拍板",
+      "status_note_2026-10-05": "接管核查：raw-exchanges.jsonl 唯一一条是 GET /v1/models（非会话，切分脚本丢弃）→ 有效录制 0/10。前置工具已交付：var/canary-split.ts 切分 + 三门判据核对清单 + --check 退出码作门关证据；采集执行手册见 .sprint-state/g-canary-recording-spec.md「采集执行手册」节（含 delphi 不经 v1 网关的链路订正）。同源 merge main@73e28fa 已完成，基线 296 passed / 3 skipped。见 DR-027。",
       "status": "pending_user"
     }
   },

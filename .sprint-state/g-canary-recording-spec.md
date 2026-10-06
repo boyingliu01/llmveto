@@ -78,3 +78,70 @@
 
 真实性与脱敏的边界：判据要的是"真实"，**正文尽量不做人工脱敏**（重放验证需要真实形态）；
 凭据头代理已自动打码；正文中的敏感内容只存在于 var/（gitignored，不出本机、不入 git）。
+
+## 采集执行手册（2026-10-05 接管后补齐；切分工具 = `var/canary-split.ts`）
+
+**现状订正**：`var/canary-sessions/raw-exchanges.jsonl` 里 9-30 那条是 `GET /gateway/v1/models`
+（拉模型清单的烟测，129KB 响应），**不是会话**——切分脚本按非 chat 请求丢弃。有效录制计数仍为 **0/10**。
+
+**链路订正**：上文"opencode/delphi → 代理 → v1 网关 → provider"只对 **opencode** 成立。
+**delphi 不经网关**：`var/delphi-v2a/.delphi-config.json` 的 `base_url` 是
+`https://internal-gateway.invalid/redacted` 直连。故按客户端分两趟采，代理 `--upstream` 不同。
+
+### 趟 A — opencode（经 v1 网关，≥7 条会话）
+
+1. 起网关：`npm start`（127.0.0.1:8787；当前未运行，已核实）
+2. 起代理：`node var/capture-proxy.ts --upstream http://127.0.0.1:8787`
+3. `~/.config/opencode/opencode.json` 第 190/195 行的 `127.0.0.1:8787` → `127.0.0.1:8790`
+   （`/opencode/openai`、`/opencode/anthropic` 路径原样保留，代理透传；第 200 行 mock 不必改）
+4. 正常用 opencode 干真活 ≥7 个会话（多轮最佳——上下文增长的轮次会自动归为同一会话）
+5. 改回 8787，Ctrl-C 停代理
+
+### 趟 B — delphi（直连 example-provider，补齐剩余会话）
+
+1. 起代理：`node var/capture-proxy.ts --upstream https://internal-gateway.invalid`
+2. `var/delphi-v2a/.delphi-config.json` 的 `base_url` → `http://127.0.0.1:8790/gateway`
+3. 跑一次真实 delphi 评审 = 3 个单轮会话（三专家各一，persona 不同故不会被误并）
+4. 改回 base_url，停代理
+
+两趟写同一个 `raw-exchanges.jsonl`（append），**不要同时开两个代理实例**（并发追加同一文件在
+Windows 上不保证行完整性）。WSL 侧 `~/.config/opencode/` 无 8787 引用，录制在 Windows 端做。
+
+### 切分 + 门关判据
+
+```bash
+node var/canary-split.ts --require 10              # 切分并写 session-01..10.json，出核对清单
+node var/canary-split.ts --require 10 --check      # 只校验已落盘文件；退出码非 0 = G-CANARY 不关
+```
+
+- 归组规则：真实 agent 循环上下文单调增长，"上一轮 messages 是本轮真前缀"即判同会话；等长或更短
+  的新请求另起会话（故重复单轮调用各自成一条）。取 exchanges 最多的 10 个写盘。
+- 流式响应：`data:` 帧原文进 `response.chunks`，须含带 `finish_reason`/`stop_reason` 的终止帧，
+  否则脚本报"规格问题"（判据① 无法计算分布）。
+- 清单直接给出三门判据输入：`finish_reason 分布（基线臂）`①、`provider 拒绝样本 非2xx/总数`②、
+  逐会话 `client/model/exchanges/status/body` 摘要供③ 人工复核。
+- `client` 依 path 前缀与 UA 自动判（`/opencode/`→opencode，node/undici→delphi）；判成 `unknown`
+  时脚本会点名，用 `--client opencode|delphi` 强制标注后重跑。
+
+**链路已烟测（2026-10-05）**：假上游 8799 → capture-proxy:8790 → 记录落盘 → 切分出 1 会话，
+证明 `Authorization` 在记录里为 `[STRIPPED]`、中文正文原样保留、SSE 终止帧可解析；客户端收到的
+流式响应与不经代理时一致（代理不改写转发）。烟测产物已删除。
+
+## 抗中断约束（本机 WSL2 会随机整机 panic —— 2026-10-05 实测）
+
+诊断结论：近 10 天内 WSL2 内核 5 次 `Kernel panic - not syncing: Fatal machine check`
+（9-27 16:20 / 9-30 18:03 / 10-3 14:20 / 10-3 14:53 / 10-5 22:47，签名逐字相同，
+`mce: [Hardware Error]: Processor context corrupt`，见 `%TEMP%\wsl-crashes\kernel-panic-*.txt`）。
+VM 被整体带走时，同一次 panic 里所有 WSL 进程一起消失，落盘中的最后半行会留在 jsonl 里。
+
+对采集的影响与处置：
+
+1. **代理与网关放在 Windows 侧跑**（`capture-proxy` + `llmveto` 网关都是 node/bun 进程，与 WSL 无关）。
+   `.wslconfig` 是 `networkingMode=mirrored`，WSL 里的客户端照样能连 `127.0.0.1:8790`，
+   所以 WSL 会话**可以**入选，但它被 panic 带走的概率最高 —— 优先从 Windows 端 opencode 录。
+2. 已加固 `var/capture-proxy.ts`：客户端硬断/上游断链时代理进程不死、把已收部分落盘并标
+   `truncated: true`；`var/canary-split.ts` 剔除 `truncated` 交换与 JSON 坏行，
+   判据不会被半截会话污染（清单会单列"坏行剔除""客户端中断/截断"两行）。
+3. 每录完 2-3 个会话跑一次 `node var/canary-split.ts --require 10 --dry-run` 早暴露；
+   被 panic 打断的会话**重录**即可，无需清理 jsonl。
+4. 录制期间不要把 `raw-exchanges.jsonl` 放 WSL 侧路径（跨 9P 边界写大文件在 VM 硬切时更易留残块）。

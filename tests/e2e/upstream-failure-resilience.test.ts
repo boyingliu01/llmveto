@@ -37,13 +37,34 @@ async function startResettingUpstream(): Promise<{ server: Server; url: string }
 }
 
 /** 上游行为：先吐 SSE 头 + 2 个 chunk，再销毁 socket（模拟**流中途** reset）。
- *  这是 PWR1-B-M3 的场景：失败抵达兜底路径时 headers 已出、部分字节已交付客户端。 */
+ *  这是 PWR1-B-M3 的场景：失败抵达兜底路径时 headers 已出、部分字节已交付客户端。
+ *
+ *  PWR2-C-M1 / PWR2-B-m2 / PWR2-A-m1（三家同指）：销毁时机不得用固定 `setTimeout(30)`——
+ *  慢速 CI 上网关可能一帧未转发即被 destroy，落入 blocked_before_forward 分支使断言随机红。
+ *  改为**事件驱动**：监听本端 socket 的 `data`（网关 fetch 在内核缓冲被对端读取时触发），
+ *  累计被消费的响应字节达到两帧长度（允许网关一次 read 全吃下）即证明两帧已进入网关进程
+ *  （其 `res.write` 转发在 for-await 消费链上先行发生），然后销毁。
+ *  600ms 仅作防死等的兜底上界，不参与时序正确性。 */
 async function startMidStreamResettingUpstream(): Promise<{ server: Server; url: string }> {
   const server = createServer((req, res) => {
     res.writeHead(200, { "content-type": "text/event-stream" });
-    res.write('data: {"choices":[{"delta":{"content":"par"}}]}\n\n');
-    res.write('data: {"choices":[{"delta":{"content":"tial"}}]}\n\n');
-    setTimeout(() => res.destroy(), 30);
+    const f1 = 'data: {"choices":[{"delta":{"content":"par"}}]}\n\n';
+    const f2 = 'data: {"choices":[{"delta":{"content":"tial"}}]}\n\n';
+    res.write(f1);
+    res.write(f2);
+    const bothFramesBytes = Buffer.byteLength(f1) + Buffer.byteLength(f2);
+    let consumedBytes = 0;
+    let destroyed = false;
+    const destroy = () => {
+      if (destroyed) return;
+      destroyed = true;
+      res.destroy();
+    };
+    res.socket?.on("data", (chunk: Buffer) => {
+      consumedBytes += chunk.length;
+      if (consumedBytes >= bothFramesBytes) destroy();
+    });
+    setTimeout(destroy, 600); // 防死等兜底；正常路径由 data 事件先触发
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
   const addr = server.address() as AddressInfo;

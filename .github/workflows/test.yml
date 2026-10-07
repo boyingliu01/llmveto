@@ -6,7 +6,9 @@ name: test
 #   80% 覆盖率四项门与双向 typecheck 装上 CI 执行面（此前只在本地显式跑才生效）。
 # - integration/e2e 两面的 linux 首观测由本 job 的**首次运行**产生：推送 main 前先开 PR，
 #   本 job 在 PR 上即触发（pull_request 支线），首跑红按四类口径归因（业务代码/测试数据/
-#   规格/环境），属正常还债而非掩盖（PWR1-A-M2）。
+#   规格/环境），属正常还债而非掩盖（PWR1-A-M2）。PWR2-C-m1 补口径：若红在 setup-bun/
+#   bun install 步，coverage 产物缺失属**预期现象**（upload 步 if-no-files-found: warn），
+#   归因直接记 ENVIRONMENT_ERROR，不需另查覆盖率面。
 # - 覆盖面诚实申报：xp-gate 提交钩子 12+1 道门**不含覆盖率门**，80% 四项门仅在本 job
 #   （及本地显式跑）强制 —— CI 是覆盖率契约的唯一执行面。
 # - dist 相关用例（cli-smoke distSuite）在无 dist 的干净检出上按既有条件门自动 skip，不是掩盖。

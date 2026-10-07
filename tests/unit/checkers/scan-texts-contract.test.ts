@@ -26,6 +26,12 @@ interface Exemption {
   readonly file: string;
   readonly pattern: RegExp;
   readonly reason: string;
+  /**
+   * PWR2-B-m1：豁免理由若是"该文件根本不触碰 text"，则理由本身必须机械可核 ——
+   * 登记 touch_free 后，守卫额外断言该文件**零** text 触碰；日后有人在该文件
+   * 新读 `unit.text` 时，即使触碰形态恰好被同文件另一条豁免遮蔽，touch_free 也会红。
+   */
+  readonly touch_free?: boolean;
 }
 
 const ALLOWLIST: readonly Exemption[] = [
@@ -38,11 +44,12 @@ const ALLOWLIST: readonly Exemption[] = [
   },
   {
     file: "model-label-consistency.ts",
-    // `unit.meta.model_requested/model_responded` —— meta 是反代核解析后的**结构性字段**
-    // （JSON 解析产物），转义在 JSON.parse 时已还原，不存在字面转义规避面；本 checker
-    // 完全不触碰 text 字段，登记以防未来误判为豁免缺失。
+    // 纯 meta 比对（model_requested vs model_responded）：meta 是反代核 JSON 解析产物，
+    // 转义在 parse 时已还原，不存在字面转义规避面。登记 touch_free 让"不触碰 text"从
+    // 人工申报变成机械断言（PWR2-B-m1）。
     pattern: /unit\.meta\b/,
     reason: "只读 meta 结构字段（model 标签），不读 text（PWR1-A-M1 审查批准豁免）",
+    touch_free: true,
   },
 ];
 
@@ -90,6 +97,16 @@ describe("scanTexts 契约机械守卫（PWR1-A-M1）", () => {
       }
       expect(found, `豁免条目（${e.file} / ${e.pattern.source}）已无对应代码，属死登记`).toBe(true);
     }
+
+    // PWR2-B-m1：touch_free 豁免的"根本不触碰 text"理由必须机械成立——
+    // 否则豁免登记表就只是自我声明，登记一条 meta 豁免即可掩护未来的 text 直读。
+    for (const e of ALLOWLIST.filter((x) => x.touch_free)) {
+      const hits = [...srcs.get(e.file)!.matchAll(TEXT_TOUCH)].map((m) => m[0]!);
+      expect(
+        hits,
+        `src/checkers/${e.file} 登记为 touch_free（理由：${e.reason}），但源码存在 text 触碰：${hits.join(", ")}`,
+      ).toEqual([]);
+    }
   });
 
   it("③ 读取 unit.text 做内容扫描的 checker 必须导入 scanTexts 函数本体", () => {
@@ -111,5 +128,8 @@ describe("scanTexts 契约机械守卫（PWR1-A-M1）", () => {
     // 非 `unit` 的迭代变量名同样必须落入捕获面（防止模式退化为只认 unit.*）
     const variant = `const seg = evt.text.slice(0, 3);`;
     expect([...variant.matchAll(TEXT_TOUCH)].map((m) => m[0])).toEqual(["evt.text.slice"]);
+    // touch_free 判别面：把 model-label 豁免文件换成含 text 直读的样本源码，断言必被拒
+    const tfSample = `const m = readString(unit.meta, "x"); const t = unit.text.length;`;
+    expect([...tfSample.matchAll(TEXT_TOUCH)].map((m) => m[0])).toContain("unit.text.length");
   });
 });

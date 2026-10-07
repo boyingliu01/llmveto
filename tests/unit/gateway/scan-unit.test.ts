@@ -259,10 +259,11 @@ describe("SL-09 gateway: 转义序列不得绕过 checker（编码层回归）",
   });
 
   it("regression: 双反斜杠转义写法不得漏检 tool_call arguments（两组缺陷叠加）", () => {
-    // 外层 JSON 串内再嵌一个 JSON 串（arguments 是字符串形态）：内层 `"` 需三层反斜杠转义。
-    // 外层 JSON.parse 后 arguments 留字面 `\"c\": \"a\\u200bb\"`（双反斜杠 zwsp 未被 parse 还原）
+    // 外层 JSON 串内再嵌一个 JSON 串（arguments 是字符串形态）。线路形态里内层的引号
+    // 写作 `\"` 即一次反斜杠+引号（`\\\"` 三反斜杠在模板字面量里是冗余转义，oxlint 判 useless）。
+    // 外层 JSON.parse 后 arguments 留字面 `a\\u200bb`（双反斜杠 zwsp 未被 parse 还原）
     // —— 恰是 decodeEscapes 最内层塌缩的适用面。
-    const raw = `{"choices":[{"message":{"content":null,"tool_calls":[{"function":{"name":"run","arguments":"{\\\"c\\\":\\\"a${WIRE_ESC.zwsp}b\\\"}"}}]}}]}`;
+    const raw = `{"choices":[{"message":{"content":null,"tool_calls":[{"function":{"name":"run","arguments":"{\\"c\\":\\"a${WIRE_ESC.zwsp}b\\"}"}}]}}]}`;
     const u = buildResponseScanUnit(raw, JSON.parse(raw), null, "non-stream");
     const r = invisibleUnicodeScanNonStream(u);
     expect(r.verdict).toBe("finding");

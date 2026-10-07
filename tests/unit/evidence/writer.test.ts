@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
@@ -127,5 +127,22 @@ describe("SL-06 evidence store (REQ-VETO-007)", () => {
     const r2 = sealRecord({ prev_hash: GENESIS_HASH, record: base as never });
     expect(r1.record_hash).toBe(r2.record_hash);
     expect(a.record_hash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  // AC-VETO-007-04 补面：半行丢弃之外的另一侧——非崩溃残留的损坏必须硬失败，不得静默续链
+  it("init：坏行但以换行结尾（非半行残留）→ 抛 corrupt，拒绝在损坏历史上追加", () => {
+    const p = join(dir, "corrupt.jsonl");
+    writeFileSync(p, "{ not valid json }\n", "utf8");
+    const w = new EvidenceWriter(p);
+    expect(() => w.init()).toThrow(/evidence file corrupt at line 1/);
+  });
+
+  // append 前置 schema 校验的拒绝面：非法哈希直接拒写，不落盘
+  it("append：request_body_sha256 非 hex64 → 抛 schema invalid 且不产生任何记录", () => {
+    const p = join(dir, "reject.jsonl");
+    const w = new EvidenceWriter(p);
+    w.init();
+    expect(() => w.append(sampleInput({ request_body_sha256: "not-a-hex-hash" }))).toThrow(/evidence schema invalid/);
+    expect(existsSync(p)).toBe(false);
   });
 });

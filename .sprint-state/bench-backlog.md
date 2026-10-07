@@ -4,9 +4,10 @@
 - **登记日期**: 2026-09-22
 - **处置期限**: 2026-09-30 23:59 (UTC+8)。**期限覆盖本文件所有行，跟踪项（`-N` 型）不例外**（R10R4-C-m1
   起成文；此前 intro 只说"处置期限"、未点明跟踪项是否算待办，构成可被无限顺延的缝）。
-  **OPEN 项 1 条**：`R10R2-A-m2`（`tests/integration/**` +
-  `tests/e2e/**` 共 12 文件仍无 CI 执行面，bench.yml 是全仓唯一 workflow）——守卫步已扩到单测面，
-  该行按 OPEN 保留至 test job 落地。`R10R3-A-N1`（多文件批的跨面捆绑）由 R10 R4 批按四面拆分提交而消化，
+  **OPEN 项 0 条**：原唯一 OPEN 项 `R10R2-A-m2`（`tests/integration/**` +
+  `tests/e2e/**` 共 12 文件无 CI 执行面）已于 2026-10-07 由新增 `.github/workflows/test.yml`
+  全量 test job 消化，终局处置见该行状态列。**如实记账**：该处置落在本文件处置期限（2026-09-30）之后
+  7 天，属逾期首项补办，逾期事实不以落地成功冲销。`R10R3-A-N1`（多文件批的跨面捆绑）由 R10 R4 批按四面拆分提交而消化，
   其"无到期条款"的元缺陷同时升为下面的通则。其余：R9 交换轮 6 条 + 两条历史延后项
   `R6-C2`/`R7-B2` 已随 R10 批次收口，R10 匿名轮 18 个 ID 已随 R10 R1 收口提交处置，R10 交换轮 13 个 ID
   （1 Major + 12 Minor）随 R10 R2 收口提交处置，R10 修复复评轮 13 个 ID（1 Major + 11 Minor + 1 跟踪项）
@@ -600,7 +601,7 @@ R10 R2（交换轮，评审对象 = 收口提交 `2f2aa6c`）：A/B 各自 APPRO
 | R10R2-C-M1 | `bench/record-baseline.ts` 守卫 + ADR 决策 6 残余④ + 验证节 | 「④ NTFS ADS 已代码收口」只在**流已存在**时成立：尚不存在的流名令 realpath 与 stat 双双 ENOENT → 名字与身份双判据皆假 → `bench/baseline.json:<任意新流名>` 穿透并写出备用流（C 端到端实测 5241 字节）。R10 R1 的"六形态全部 refuse"结论系出题方与 B 各验自己创建过的字面量流名，判别力名字空间从未被覆盖 | C | 已消化（守卫增第三段**宿主折叠**：win32 上把末段首个 `:` 及其后全部流后缀剥掉（多级流一次剥净）再走双判据；合法路径末段无 `:` 故恒等、只增拒绝。17 形态矩阵复跑 + ADR④/验证节改写为"两段收口"并公开此前结论的不泛化） |
 | R10R2-A-m1 | `tests/unit/backlog-integrity.test.ts` `parseTables` | 围栏盲区：``` 代码块内的示例表格被认作真实表 → 幻影行虚增棘轮下界（55 恰在下界，可掩护真实行被删）、幻影 ID 入超集、示例表缺「状态」列触发结构断言假红。既有 R10-C-m1 自检只验了游离 `\|` 行，给了错误信心 | A | 已消化（`parseTables` 按 GFM 维护 inFence（同字符、不小于开启长度者闭合），围栏内行不入块；新增内存 fixture 用例覆盖"闭合围栏内示例表 + 未闭合围栏吞掉其后内容"两形态。当前登记处 `grep '^```'` = 0，属潜伏面。**勘误（R10R3）**："按 GFM 维护"当时只覆盖了开启串的字符与长度，闭合行的 info string 与缩进两面仍偏离 GFM，由 `R10R3-A-m2`/`R10R3-B-m1`/`R10R3-B-m2` 收口） |
 | R10R2-B-1 | 同上 | 同一件（B 独立发现并已固化形态） | B | 已消化（并入 `R10R2-A-m1`） |
-| R10R2-A-m2 | `.github/workflows/bench.yml` / 本表 R10-A-M1 行 | 根因未消：bench.yml 是全仓唯一 workflow、无任何 test job，上批只给单个文件开执行面，`env-gate`/`repeat`/`runner-format`/`regression-formula`/`architecture-boundaries`/`toolchain-smoke` 仍无 CI 执行面；本表却记为完整"已消化"并称"当前无 OPEN 项" | A | **部分消化 → OPEN**（守卫步扩为单测面，判据公式与估计量口径两面纳入 CI；`tests/integration/**` + `tests/e2e/**` 共 12 文件仍无 CI 执行面，本行按 OPEN 保留至该面落地，不再由"扩了一个文件"冒充根因已消。**勘误（R10R3）**：原文"20 文件 169 用例"的 169 系瞬时值、写死计数本身即反模式，措辞已改为不随用例数漂移；扩面形态后又由 `R10R3-A-M1` 从裸目录名定形为显式文件列表） |
+| R10R2-A-m2 | `.github/workflows/bench.yml` / 本表 R10-A-M1 行 | 根因未消：bench.yml 是全仓唯一 workflow、无任何 test job，上批只给单个文件开执行面，`env-gate`/`repeat`/`runner-format`/`regression-formula`/`architecture-boundaries`/`toolchain-smoke` 仍无 CI 执行面；本表却记为完整"已消化"并称"当前无 OPEN 项" | A | **部分消化 → OPEN**（守卫步扩为单测面，判据公式与估计量口径两面纳入 CI；`tests/integration/**` + `tests/e2e/**` 共 12 文件仍无 CI 执行面，本行按 OPEN 保留至该面落地，不再由"扩了一个文件"冒充根因已消。**勘误（R10R3）**：原文"20 文件 169 用例"的 169 系瞬时值、写死计数本身即反模式，措辞已改为不随用例数漂移；扩面形态后又由 `R10R3-A-M1` 从裸目录名定形为显式文件列表。**终局（2026-10-07）**：解除 OPEN——新增 `.github/workflows/test.yml`（全量 vitest + COVERAGE_ALL 四项 80% 门 + typecheck/typecheck:dist + oxlint），integration/e2e 两面自落地起获得 linux 执行面，首推 run 即观测凭证；本处置落在本文件期限 2026-09-30 之后 7 天，按逾期纪律首项补办、逾期照记。本行原文"部分消化 → OPEN"留作当时快照，不改写历史 |
 | R10R2-B-2 | 同上 | 同一件的 B 视角：对称缺口应在登记处成文为观测项，而非只留在 workflow 注释里 | B | 已消化（并入 `R10R2-A-m2` 的 OPEN 行；workflow 注释与本行互为指针） |
 | R10R2-C-m1 | `bench/regression-formula.test.ts` / `bench/repeat.test.ts` | 同一件的 C 视角：守护判据公式与 min-of-N 口径的两个测试不在任何 CI 面；C 实测合跑 142 用例仅 1.09s，"避免 e2e 假红"的顾虑可用显式文件列表近乎免费消除 | C | 已消化（并入 `R10R2-A-m2`；正是采 C 的"显式文件列表"修法） |
 | R10R2-B-3 | `bench/record-baseline.ts` `fileIdentity` + ADR 残余① | 身份判据的 `statSync` catch-all 在权限受限（EPERM/EACCES）时静默退让为"仅名字判定"，残余①只点名了 realpath 词法回退，未覆盖此面，且无告警 | B | 已消化（ADR 残余①改写为"两个面同为 catch-all 静默退让"并给出退让后果链；不改代码——加 warn 需在正常路径 stat 失败时刷屏，且落"防误操作"模型内） |

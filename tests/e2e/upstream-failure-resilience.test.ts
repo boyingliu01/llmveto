@@ -23,8 +23,10 @@ let dir: string;
 let gw: Awaited<ReturnType<typeof startGateway>> | null = null;
 let badUpstream: Server | null = null;
 let badUpstreamUrl = "";
+let midStreamUpstream: Server | null = null;
+let midStreamUrl = "";
 
-/** 上游行为：接受连接后立即销毁 socket（模拟中途 reset）。 */
+/** 上游行为：接受连接后立即销毁 socket（模拟 reset，headers 都还没回）。 */
 async function startResettingUpstream(): Promise<{ server: Server; url: string }> {
   const server = createServer((req) => {
     req.socket.destroy();
@@ -34,23 +36,49 @@ async function startResettingUpstream(): Promise<{ server: Server; url: string }
   return { server, url: `http://127.0.0.1:${addr.port}` };
 }
 
-function chatBody(): string {
-  return JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "hello" }] });
+/** 上游行为：先吐 SSE 头 + 2 个 chunk，再销毁 socket（模拟**流中途** reset）。
+ *  这是 PWR1-B-M3 的场景：失败抵达兜底路径时 headers 已出、部分字节已交付客户端。 */
+async function startMidStreamResettingUpstream(): Promise<{ server: Server; url: string }> {
+  const server = createServer((req, res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.write('data: {"choices":[{"delta":{"content":"par"}}]}\n\n');
+    res.write('data: {"choices":[{"delta":{"content":"tial"}}]}\n\n');
+    setTimeout(() => res.destroy(), 30);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const addr = server.address() as AddressInfo;
+  return { server, url: `http://127.0.0.1:${addr.port}` };
 }
 
+function chatBody(stream = false): string {
+  return JSON.stringify({ model: "gpt-4o", ...(stream ? { stream: true } : {}), messages: [{ role: "user", content: "hello" }] });
+}
+
+// PWR1-A-m4：对"无未处理拒绝"做**显式**断言，而不是只靠"进程还活着"间接推断。
+// （间接推断在未来引入 log-only 容错时仍会绿，而缺陷语义已变。）
+const observedRejections: unknown[] = [];
+function onRejection(reason: unknown): void { observedRejections.push(reason); }
 beforeAll(async () => {
+  process.on("unhandledRejection", onRejection);
   dir = mkdtempSync(join(tmpdir(), "llmveto-upstream-fail-"));
   const bad = await startResettingUpstream();
   badUpstream = bad.server;
   badUpstreamUrl = bad.url;
+  const mid = await startMidStreamResettingUpstream();
+  midStreamUpstream = mid.server;
+  midStreamUrl = mid.url;
 });
 
 afterEach(async () => {
   if (gw) { await gw.close(); gw = null; }
+  expect(observedRejections, `unhandledRejection: ${observedRejections.map(String).join("; ")}`).toHaveLength(0);
+  observedRejections.length = 0;
 });
 
 afterAll(() => {
+  process.off("unhandledRejection", onRejection);
   badUpstream?.close();
+  midStreamUpstream?.close();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -125,5 +153,36 @@ describe("e2e: 上游失败时的 fail-closed 与进程存活 (REQ-VETO-002)", (
     const lines = readFileSync(evPath, "utf8").split("\n").filter(Boolean);
     expect(lines.length).toBe(1);
     expect(JSON.parse(lines[0]!).action_taken).toBe("blocked_before_forward");
+  });
+
+  // PWR1-B-M3 判别用例：失败发生在**部分 SSE 已交付之后**（headersSent=true）。
+  // 缺陷形态（修复前）：兜底路径往 event-stream 里追加 JSON body（污染客户端解析），
+  // 且 evidence 硬编码 delivered_chunks=0 / partial 缺失——客户端明明拿到了内容，审计却说"什么都没发"。
+  it("流中途 reset（已交付部分 chunk）→ 只断流不追加 JSON；evidence 如实记 partial 与真实计数", async () => {
+    const evPath = join(dir, "midstream.jsonl");
+    const writer = new EvidenceWriter(evPath);
+    gw = await startGateway({ config: { upstreamBaseUrl: midStreamUrl, evidenceWriter: writer } });
+
+    const r = await fetch(gw.url + "/opencode/prov/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: chatBody(true),
+    });
+    // headers 已出 → 客户端拿到的是 200 + SSE 头（失败信号是流终止，不是状态码改写）
+    expect(r.status).toBe(200);
+    const text = await r.text();
+    expect(text).toContain("data:");
+    // 关键：交付面**不得**混入 JSON 错误体（SSE 流里塞裸 JSON 是二次破坏）
+    expect(text).not.toContain("upstream-error");
+
+    const lines = readFileSync(evPath, "utf8").split("\n").filter(Boolean);
+    expect(lines.length).toBe(1);
+    const rec = JSON.parse(lines[0]!);
+    expect(rec.action_taken).toBe("terminated_after_delivery");
+    expect(rec.transport).toBe("stream");
+    expect(rec.chunk_count).toBeGreaterThan(0);
+    expect(rec.response_delivered.partial).toBe(true);
+    expect(rec.response_delivered.delivered_chunks).toBeGreaterThan(0);
+    expect(rec.findings[0].checker).toBe("gateway");
   });
 });

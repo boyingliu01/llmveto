@@ -44,6 +44,9 @@ export interface ScanUnit {
  * 契约：不含转义序列时返回 `[text]`（与历史行为逐字一致，零额外开销）；
  * 含转义序列时返回 `[text, decoded]`——**两份都要扫**，任一命中即为 finding。
  * checker 不得直接读 `unit.text` 做安全判定（否则编码层回归会静默复现）。
+ * 该契约由 tests/unit/checkers/scan-texts-contract.test.ts 机械强制：
+ * 除其中逐字登记理由的豁免（如流式 cursor 只取 `chunk.text.length`、meta-only
+ * checker 不触碰 text）外，任何 src/checkers/*.ts 触碰 text 字段即测试红。
  */
 export function scanTexts(unit: ScanUnit): readonly string[] {
   return unit.decoded !== undefined && unit.decoded !== unit.text

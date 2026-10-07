@@ -39,6 +39,13 @@ export function isAuthHeader(name: string): boolean {
  * 刻意**不做**通用 JSON 解转义（不处理 `\"` `\\` `\n` 等）：目标是让转义编码的
  * 敏感字符以真实码点出现在被扫文本里，而非重建原文；保持转换单向、幂等、无状态。
  * 无转义序列时返回原串（`scanTexts` 据此省略第二遍扫描）。
+ *
+ * 已知边界（PWR1 Round 1 成文，均在 README 扫描面口径有对应申报）：
+ *   - 多重反斜杠（如 `\\u200b`）：最内层"单个反斜杠 + uXXXX"总会被还原，前置的多余
+ *     反斜杠留作字面量——多层转义**不**构成绕过面（逐层实测见 decodeEscapes 单测）。
+ *   - `\uD83D\uDE00` 类代理对逐元还原为两个孤立代理码元（String.fromCharCode 不解 Pair）。
+ *     v1 冻结码点集全为 BMP，无现实缺陷；扩集时须先补代理对合并。
+ *   - URL 编码（`%E2%80%8B`）、base64 等**二次编码不还原**（排场外语，非疏漏）。
  */
 export function decodeEscapes(s: string): string {
   if (!s.includes("\\")) return s;
@@ -62,7 +69,9 @@ function safeFromCodePoint(cp: number): string {
  *   - `tool_calls[*].function.{name,arguments}`（现代）
  *   - `tool_calls[*].{name,arguments}`（部分网关扁平化）
  *   - `function_call.{name,arguments}`（legacy）
- * 另含 `tool_call_id` / `id`，使工具身份也可被取证（但不单独构成 finding 语义）。
+ * `arguments` 协议规定为字符串，但个别网关直发对象形态——一并 `JSON.stringify` 入扫描面，
+ * 否则又构成"载体丢失"（PWR1-B-m5）。`tool_call_id`/`id` 是随机标识、无可扫文本，**不**入单元
+ * （原注释声称"另含 id"与代码不符，PWR1-B-m1 订正）。
  */
 function collectToolCallParts(tc: unknown, out: string[]): void {
   if (!tc || typeof tc !== "object") return;
@@ -71,11 +80,17 @@ function collectToolCallParts(tc: unknown, out: string[]): void {
   if (fn && typeof fn === "object") {
     const f = fn as Record<string, unknown>;
     if (typeof f.name === "string") out.push(f.name);
-    if (typeof f.arguments === "string") out.push(f.arguments);
+    pushArguments(f.arguments, out);
   }
   // 扁平形态（无 function 包裹）
   if (typeof t.name === "string") out.push(t.name);
-  if (typeof t.arguments === "string") out.push(t.arguments);
+  if (!fn) pushArguments(t.arguments, out); // 扁平分支才在这里取；function 包裹的已在上面取过
+}
+
+/** arguments 可为 string（协议）或 object（非标准网关直发）；其余类型不可扫。 */
+function pushArguments(args: unknown, out: string[]): void {
+  if (typeof args === "string") out.push(args);
+  else if (args && typeof args === "object") out.push(JSON.stringify(args));
 }
 
 /** 抽 choices[*] 里 message/delta 的文本 + 工具调用载荷；同时回填结构性 meta。 */

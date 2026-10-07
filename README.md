@@ -17,8 +17,9 @@
 **扫描面口径（2026-09-27 修复后）**：checker 能看到 `messages[*].content` / `system` / `tools` / 自定义 `extra_headers`，
 以及**工具调用载荷** `tool_calls[*].function.arguments`（含 legacy `function_call`，请求侧与响应侧均含）。
 每个扫描单元同时产出"原始文本"与"转义已还原文本"（`\uXXXX` / `\u{…}` / `\xXX`）两份投影，两份都扫——
-故**用转义写法书写隐形字符不再能绕过检测**。仍**不**覆盖：base64 等二次编码、NFKC 归一化后同形变体、
-自定义 PUA 编码、认证类头（`Authorization` 等 6 项按设计排除出扫描单元，见 REQ §T1b 行）。
+故**用转义写法书写隐形字符不再能绕过检测**；多重反斜杠（`\\uXXXX` 等）在还原时最内层 `\uXXXX` 成对塌缩，
+同样落入还原投影，不额外构成规避面。仍**不**覆盖：URL 编码（`%E2%80%8B`）、base64 等二次编码、
+NFKC 归一化后同形变体、自定义 PUA 编码、认证类头（`Authorization` 等 6 项按设计排除出扫描单元，见 REQ §T1b 行）。
 **tool-call 的"结构"判定**（参数形态 / 危险命令 / 越权工具名）属 v2，v1 对"用正常字符写出的恶意命令"不判定。
 
 完整口径见 [REQ §v1 残余风险登记表](docs/issues/1-req-threat-model.md)。**装上网关 ≠ 已被保护**：未接入客户端的流量在 v1 完全不受管。
@@ -144,7 +145,7 @@ v1 产品外壳已补齐（M1–M3）：真实路径路由、adapters 真实读�
 | 1 | `dispatch` 未捕获异常 | 上游连接重置（ECONNRESET 等）抛出未处理拒绝 → **整个 daemon 进程被杀**：客户端无响应、该次交互零留痕、此后全部流量失去保护 | `tests/e2e/upstream-failure-resilience.test.ts` |
 | 2 | `verify` 完整性边界过宽 | 链被**整体清空**时原实现报 `ok`；记录被重新编号不报错 | `tests/unit/evidence/verify.test.ts` |
 | 3 | 扫描单元丢失 tool-call 载荷 | `tool_calls[*].function.arguments`（`content` 为 null 时）完全不进扫描单元 → 响应侧 checker 全部落空 | `tests/unit/gateway/scan-unit.test.ts` |
-| 4 | 转义序列绕过检测 | 用 `\u200b` **转义写法**书写隐形字符即判 `clean`（JSON 是唯一传输编码，这是最省事的注入方式） | `tests/unit/gateway/scan-unit.test.ts` |
+| 4 | 转义序列绕过检测 | 用 `\u200b` **转义写法**书写隐形字符即判 `clean`（JSON 是唯一传输编码，这是最省事的注入方式）；多重反斜杠变体经最内层塌缩同样被还原投影捕获 | `tests/unit/gateway/scan-unit.test.ts` |
 
 **未修复并已登记的残余风险**（详见 REQ §证据信任边界）：evidence 链的**尾部截断**在本机无外部锚定的前提下原理上不可检测，
 故不修复、只把它写成显式的 negative-contract 测试，防止日后被误读为已覆盖。

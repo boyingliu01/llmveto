@@ -56,9 +56,12 @@ function scanUnitTexts(unit: ScanUnit, baseCursor: number): Finding[] {
   if (texts.length > 1) {
     // 第二投影命中：原文本里没有字面该字符，是转义写法。offsets 对还原文本无意义
     // （长度不同），故不报位置，只报"该单元含转义编码的隐形字符"这一事实。
+    // 显式剔除 offsets 键（与 egress-secret-scan 的转义分支同一口径）——spread 保留
+    // scanText 产出的 offsets 会把"还原文本坐标"冒充"原始文本坐标"写进取证字段（PWR1-B-M1）。
     const esc = scanText(texts[1]!, 0);
     if (esc.length > 0 && findings.length === 0) {
-      return [{ ...esc[0]!, rule_id: "invisible-unicode-escaped" }];
+      const { offsets: _dropped, ...rest } = esc[0]!;
+      return [{ ...rest, rule_id: "invisible-unicode-escaped" }];
     }
   }
   return findings;

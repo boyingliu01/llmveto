@@ -31,8 +31,10 @@ export async function startGateway(opts: StartOptions): Promise<{ server: Return
   // unhandledRejection 并杀死整个 daemon 进程：客户端拿不到任何响应、该次交互不落 evidence、
   // 且此后全部流量失去网关保护。故每个请求的失败必须被收敛成"这一个请求的 502 + 留痕"。
   const server = createServer((req, res) => {
-    dispatch(req, res, core, opts.config).catch((err: unknown) => {
-      handleDispatchFailure(req, res, opts.config, err);
+    // 每请求转发计数：兜底路径据此如实写 evidence 的 delivered_chunks（PWR1-B-M3）。
+    const fwd = { chunks: 0 };
+    dispatch(req, res, core, opts.config, fwd).catch((err: unknown) => {
+      handleDispatchFailure(req, res, opts.config, err, fwd);
     });
   });
   await new Promise<void>((resolve) => server.listen(opts.port ?? 0, host, () => resolve()));
@@ -105,7 +107,13 @@ export function joinUpstream(base: string, rest: string, viaHeader: boolean, sea
   return trimmed + rest + search;
 }
 
-async function dispatch(req: IncomingMessage, res: ServerResponse, core: GatewayCore, cfg: GatewayConfig): Promise<void> {
+async function dispatch(
+  req: IncomingMessage,
+  res: ServerResponse,
+  core: GatewayCore,
+  cfg: GatewayConfig,
+  fwd: { chunks: number },
+): Promise<void> {
   const t0 = Date.now();
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
   const route = parseRoute(req.url ?? "/");
@@ -155,7 +163,7 @@ async function dispatch(req: IncomingMessage, res: ServerResponse, core: Gateway
     };
     writeEvidence(cfg, { sessionId, turnId, requestId, client, providerId, endpointHost,
       bodyText, bodyBuf, respText: body, stream: false, findings: [routerFinding],
-      actionTaken: "blocked_before_forward", deliveredChunks: 0, t0 });
+      actionTaken: "blocked_before_forward", deliveredChunks: 0, partial: false, t0 });
     return;
   }
 
@@ -184,14 +192,18 @@ async function dispatch(req: IncomingMessage, res: ServerResponse, core: Gateway
   // 交付的是 JSON 体，若仍标 text/event-stream 会令流式客户端解析失败（R2 评审 A-N-1）。
   res.setHeader("content-type", outcome.sse ? "text/event-stream" : "application/json");
   if (outcome.sse) {
-    for await (const chunk of outcome.sse) res.write(chunk);
+    for await (const chunk of outcome.sse) {
+      res.write(chunk);
+      fwd.chunks++; // 兜底路径据此如实记 delivered_chunks（PWR1-B-M3）
+    }
     res.end();
   } else {
     res.end(respText);
   }
   writeEvidence(cfg, { sessionId, turnId, requestId, client, providerId, endpointHost,
     bodyText, bodyBuf, respText, stream, findings: outcome.findings,
-    actionTaken: outcome.actionTaken, deliveredChunks: outcome.deliveredChunks, t0 });
+    actionTaken: outcome.actionTaken, deliveredChunks: outcome.deliveredChunks,
+    partial: outcome.actionTaken === "terminated_after_delivery", t0 });
 }
 
 interface EvidenceWriteParams {
@@ -200,7 +212,11 @@ interface EvidenceWriteParams {
   readonly bodyText: string; readonly bodyBuf: Buffer; readonly respText: string;
   readonly stream: boolean; readonly findings: readonly EvidenceFinding[];
   readonly actionTaken: ActionTaken;
-  readonly deliveredChunks: number; readonly t0: number;
+  readonly deliveredChunks: number;
+  /** 客户端是否已拿到**部分**响应字节。此前由 actionTaken 间接推导，兜底路径在
+   *  headersSent 之后需要独立申报（PWR1-B-M3），改为显式字段，两处口径不得各推各的。 */
+  readonly partial: boolean;
+  readonly t0: number;
 }
 
 function writeEvidence(cfg: GatewayConfig, p: EvidenceWriteParams): void {
@@ -222,7 +238,7 @@ function writeEvidence(cfg: GatewayConfig, p: EvidenceWriteParams): void {
     latency: Date.now() - p.t0,
     findings: p.findings,
     action_taken: p.actionTaken,
-    response_delivered: { partial: p.actionTaken === "terminated_after_delivery", delivered_chunks: p.deliveredChunks },
+    response_delivered: { partial: p.partial, delivered_chunks: p.deliveredChunks },
     request_body_sha256: sha256Hex(p.bodyText),
     response_body_sha256: sha256Hex(p.respText),
     body_capture: bodyCapture,
@@ -238,19 +254,33 @@ function safeHost(url: string): string {
  * 响应体读取中途出错"等**网络层**故障，以及任何非预期的内部异常。
  *
  * 契约：
- *   ① 客户端必须收到确定的失败响应（502 + `llmveto:upstream-error`），绝不静默挂起；
- *   ② 该次交互必须落 evidence（否则审计链出现无法解释的缺口），action_taken = blocked_before_forward；
+ *   ① 客户端必须收到确定的失败响应，绝不静默挂起：headers 未出 → 502 + `llmveto:upstream-error`
+ *      JSON；headers 已出（SSE 转发已开始）→ **只断流、不追加 JSON**——往 event-stream 里塞
+ *      JSON 体是对客户端解析的二次破坏，流的非正常终止本身就是失败信号（PWR1-B-M3）。
+ *   ② 该次交互必须落 evidence（否则审计链出现无法解释的缺口）：delivered_chunks 用 dispatch
+ *      的真实转发计数，headers 已出时 partial=true、action_taken=terminated_after_delivery；
+ *      headers 未出时 0 / false / blocked_before_forward。
  *   ③ 本函数自身**绝不抛出** —— 它是进程存活性的最后一道防线，否则又回到"一次上游抖动杀掉 daemon"。
  */
-function handleDispatchFailure(req: IncomingMessage, res: ServerResponse, cfg: GatewayConfig, err: unknown): void {
+function handleDispatchFailure(
+  req: IncomingMessage,
+  res: ServerResponse,
+  cfg: GatewayConfig,
+  err: unknown,
+  fwd: { chunks: number },
+): void {
   const body = JSON.stringify({ error: { code: "llmveto:upstream-error" } });
+  const forwarded = res.headersSent;
   try {
-    if (!res.headersSent) {
+    if (!forwarded) {
       res.statusCode = 502;
       res.setHeader("content-type", "application/json");
+      res.end(body);
+    } else {
+      // 只收尾不追加 body；已转发的 SSE chunk 保持原样，客户端以流中断感知失败
+      res.end();
     }
-  } catch { /* 响应头已失效：仍继续尝试留痕 */ }
-  try { res.end(body); } catch { /* 客户端已断开：留痕优先 */ }
+  } catch { /* 客户端已断开：留痕优先 */ }
 
   try {
     const t0 = Date.now();
@@ -274,11 +304,14 @@ function handleDispatchFailure(req: IncomingMessage, res: ServerResponse, cfg: G
       endpointHost: headers["x-llmveto-endpoint-host"] ?? "unknown",
       bodyText: "",
       bodyBuf: Buffer.alloc(0),
-      respText: body,
-      stream: false,
+      // headers 已出时并未把 JSON body 交付给客户端——evidence 不虚报交付内容（respText 与
+      // response_body_sha256 描述"实际交付面"），失败原因由 findings 承载。
+      respText: forwarded ? "" : body,
+      stream: fwd.chunks > 0,
       findings: [failureFinding],
-      actionTaken: "blocked_before_forward",
-      deliveredChunks: 0,
+      actionTaken: fwd.chunks > 0 ? "terminated_after_delivery" : "blocked_before_forward",
+      deliveredChunks: fwd.chunks,
+      partial: fwd.chunks > 0,
       t0,
     });
   } catch { /* evidence 写入失败不改变"已向客户端 fail-closed"这一事实，但不得再抛出 */ }

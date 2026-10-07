@@ -54,9 +54,21 @@ function filterHeaders(h: IncomingMessage["headers"]): Record<string, string> {
 
 let seq = 0;
 
+process.on("uncaughtException", (err) => {
+  // 录制代理是多小时采集的单点：一次未捕获异常会让后续所有会话静默不再落盘，
+  // 故记录后继续服务，不退出。
+  console.error("[capture] 未捕获异常（已忽略，继续服务）:", err);
+});
+process.on("unhandledRejection", (err) => {
+  console.error("[capture] 未处理 rejection（已忽略，继续服务）:", err);
+});
+
 createServer((req, res) => {
+  res.on("error", (err) => console.error("[capture] 客户端写出错:", err.message));
+
   const reqChunks: Buffer[] = [];
   req.on("data", (c: Buffer) => reqChunks.push(c));
+  req.on("error", (err) => console.error("[capture] 请求流错误:", err.message));
   req.on("end", () => {
     const reqBody = Buffer.concat(reqChunks);
     const fwdHeaders: Record<string, string> = {};
@@ -78,14 +90,33 @@ createServer((req, res) => {
       },
       (upRes) => {
         const respChunks: Buffer[] = [];
-        upRes.on("data", (c: Buffer) => {
+        let recorded = false;
+
+        // 客户端中途断开（opencode Esc/超时/整终端被硬切）时 res.write 会抛错，
+        // 未处理即拖垮整个代理；故这里只向已断开的连接丢弃写失败，落盘照常。
+        const forward = (c: Buffer) => {
           respChunks.push(c);
-          res.write(c);
-        });
-        upRes.on("end", () => {
-          res.end();
+          if (!res.writableEnded && !res.destroyed) {
+            try {
+              res.write(c);
+            } catch {
+              /* 连接已断，记录继续 */
+            }
+          }
+        };
+
+        const finalize = (truncated: boolean) => {
+          if (recorded) return;
+          recorded = true;
+          if (!res.writableEnded && !res.destroyed) {
+            try {
+              res.end();
+            } catch {
+              /* ignore */
+            }
+          }
           const respBody = Buffer.concat(respChunks);
-          const record = {
+          const record: Record<string, unknown> = {
             capture_seq: ++seq,
             ts: new Date().toISOString(),
             method: req.method,
@@ -96,26 +127,46 @@ createServer((req, res) => {
             content_type: upRes.headers["content-type"] ?? null,
             response_body: respBody.toString("utf8"),
           };
+          if (truncated) record.truncated = true;
           try {
             appendFileSync(OUT, JSON.stringify(record) + "\n", "utf8");
           } catch (err) {
             console.error("[capture] 落盘失败（不影响转发）:", err);
           }
           console.log(
-            `[capture #${record.capture_seq}] ${record.ts} ${req.method} ${req.url} -> ${record.response_status} (${reqBody.length}B / ${respBody.length}B)`,
+            `[capture #${record.capture_seq}] ${record.ts} ${req.method} ${req.url} -> ${record.response_status} (${reqBody.length}B / ${respBody.length}B)${truncated ? " [TRUNCATED]" : ""}`,
           );
+        };
+
+        upRes.on("data", forward);
+        upRes.on("end", () => finalize(false));
+        upRes.on("error", (err) => {
+          console.error("[capture] 上游响应流中断:", err.message);
+          finalize(true);
+        });
+        res.on("close", () => {
+          // 客户端断开：仍把已收到的部分落盘并标 truncated，供切分脚本剔除
+          if (!recorded) {
+            upRes.destroy();
+            finalize(true);
+          }
         });
         res.writeHead(upRes.statusCode ?? 502, upRes.headers);
       },
     );
     upReq.on("error", (err) => {
-      res.writeHead(502, { "content-type": "application/json" });
-      res.end(
-        JSON.stringify({
-          error: { code: "capture_proxy_upstream_error", message: String(err) },
-        }),
-      );
       console.error(`[capture] upstream error: ${err}`);
+      if (res.writableEnded || res.destroyed) return;
+      try {
+        res.writeHead(502, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            error: { code: "capture_proxy_upstream_error", message: String(err) },
+          }),
+        );
+      } catch (writeErr) {
+        console.error("[capture] 错误响应写出失败（客户端已断）:", writeErr);
+      }
     });
     upReq.end(reqBody);
   });

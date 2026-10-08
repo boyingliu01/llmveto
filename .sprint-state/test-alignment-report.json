@@ -7,7 +7,8 @@
   "specification_sha256": "7c50d41ec17288d89bbaff3002da9de9b2891334ffabfbc9c2daaa7432f620ba",
   "spec_hash": "7c50d41ec17288d89bbaff3002da9de9b2891334ffabfbc9c2daaa7432f620ba",
   "generated_at": "2026-10-08T06:56:44Z",
-  "note_vs_previous_run": "本报告为 2026-09-27 版（HEAD 2ddff28 / spec 7c50d41e）的 HEAD 对齐刷新：specification.yaml 期间零提交，hash 不变；测试面由 34 文件/280 用例增至 36 文件/327 用例（326 过 + 1 条件 skip），新增面 = e2e/upstream-failure-resilience（上游连接层失败 fail-closed 回归，@test REQ-VETO-002）与 unit/checkers/scan-texts-contract（PWR1-A-M1 处置的 scanTexts 契约机械守卫）；覆盖率四项 86.87/80.03/91.89/90.22 → 89.7/84.16/93.54/92.75。",
+  "note_vs_previous_run": "本报告为 2026-09-27 版（HEAD 2ddff28 / spec 7c50d41e）的 HEAD 对齐刷新：specification.yaml 期间零提交，hash 不变；测试面由 34 文件/280 用例增至 36 文件/327 用例（326 过 + 1 条件 skip），新增面 = e2e/upstream-failure-resilience（上游连接层失败 fail-closed 回归，@test REQ-VETO-002）与 unit/checkers/scan-texts-contract（PWR1-A-M1 处置的 scanTexts 契约机械守卫）；覆盖率四项 86.87/80.03/91.89/90.22 → 89.7/84.16/93.54/92.75。**coverage 数演进注（PW4 走查 PWR4R2-F-1/B-1 处置，2026-10-08）**：本报告 89.7 组绑定 4445374（COVERAGE_ALL=1 本机实跑，覆盖域仅 src/**，vitest.config.ts COVERAGE_ALL 支），为现行值；86.87 组绑定 2ddff28（上一版报告）；登记处 R11R9-C-M1 回填段所记 89.65/84.00/93.54/92.72 组绑定 f9fdce2（CI run 37712912238 + 本机同 sha 实测）——三组数字各自绑 sha、均为实测；f9fdce2 → 4445374 的差异成因 = 4445374 新增 cli verify 两断言多执行 src/cli/index.ts 与 src/evidence/verify.ts 的分支（functions 93.54 持平）。",
+  "head_commit_semantics": "head_commit 指测量对象提交（4445374）；本报告由其后一提交引入（97b8514 起，其后对齐类提交可再修订本文），故 head_commit ≠ 报告引入提交，属设计语义而非错位。",
   "summary": {
     "total_requirements": 14,
     "requirements_requiring_tests": 13,

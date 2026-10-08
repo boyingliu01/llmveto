@@ -104,6 +104,10 @@ function buildSmokeEnv() {
 
 // R2 T-R2-01 冻结：doctor 前置受管配置副本最小字段集，与 src/adapters/{opencode,delphi}.ts 的
 // detectDrift 期望值一一对应；适配器受管字段演进时必须同步此处。
+// 机器校验面（REL-CW R2 T-R2-02 处置）：副本对错并不只靠本注释声明——smoke row 6 以真
+// detectDrift 对副本执行（doctor.config-drift 任一失配即 exit 1 → 门红），适配器期望值演进而
+// 副本未同步时门链大声失败、非静默失配；row 6 报 drift 时以本函数为诊断起点。
+// 注：src/ 本迭代冻结（AC-REL-05a），故不在适配器侧导出常量供本脚本导入。
 function managedConfigCopies(gatewayUrl) {
   const base = gatewayUrl.replace(/\/+$/, "");
   return {
@@ -131,11 +135,18 @@ function writeManagedCopies(ctx) {
 }
 
 async function seedEvidenceRecord(gatewayUrl) {
-  const res = await fetch(`${gatewayUrl}/smoke/seed`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ purpose: "release-gate smoke: seed one evidence record via fail-closed no-route path" }),
-  });
+  // 与 run() 的每步超时纪律一致（REL-CW R2 T-R2-01）：daemon 挂起时 fail-closed 而非无限阻塞。
+  let res;
+  try {
+    res = await fetch(`${gatewayUrl}/smoke/seed`, {
+      method: "POST",
+      signal: AbortSignal.timeout(30_000),
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ purpose: "release-gate smoke: seed one evidence record via fail-closed no-route path" }),
+    });
+  } catch (e) {
+    fail("smoke seed: request failed (daemon hung or unreachable?)", [e?.message ?? String(e)]);
+  }
   if (res.status !== 502) {
     const body = await res.text().catch(() => "");
     fail(`smoke seed: expected 502 (no-upstream-route), got ${res.status}`, [tail(body, 5)]);
@@ -192,6 +203,8 @@ function packStep(ctx) {
   // 修订注（2026-10-09 实测，npm 11）：npm 默认纳入 README* 全部变体，files 白名单/.npmignore/
   // files 取反（"!x"）均无法排除——README.zh-CN.md 随包为不可消除的既成事实；DD-5 意图
   // （npm 渲染面 = 英文 README）不受影响（npm 取 readme 时用 README.md）。
+  // 该例外绑定 npm 11 实测行为（REL-CW R2 T-R2-03）：npm 大版本升级若改变 README* 自动
+  // 收录语义，白名单须随其实测结果修订，勿凭记忆改动。
   const t = run("tar", ["-tzf", name], { cwd: ctx.ws, timeout: 60_000 });
   if (t.code !== 0) fail("pack: tar -tzf inspection failed", [tail(t.stderr, 10)]);
   const files = pkg.files ?? [];
@@ -230,7 +243,7 @@ function teardown(ctx) {
       run("llmveto", ["stop"], { env: { ...ctx.smokeEnv, LLMVETO_STATE_DIR: ctx.stateDir }, timeout: 30_000 });
     } catch { /* best-effort */ }
   }
-  try { run("npm", ["rm", "-g", "llmveto"], { timeout: 120_000 }); } catch { /* best-effort */ }
+  try { run("npm", ["rm", "-g", "--ignore-scripts", "llmveto"], { timeout: 120_000 }); } catch { /* best-effort */ }
   for (const p of [ctx.stateDir, ctx.ws]) {
     try { if (p) rmSync(p, { recursive: true, force: true }); } catch { /* best-effort */ }
   }

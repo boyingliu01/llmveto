@@ -49,7 +49,8 @@
         "AC-REL-07d"
       ],
       "effort": "M",
-      "status": "pending"
+      "status": "done",
+      "notes": "publication-runbook.md 落地（SHA 映射模板并入）：07a gitleaks git+dir 双扫（高置信 0，误报逐条归因不留档不放过）；07b ls-files 清单 + .gitignore 完备性（实测补 .sprint-history/ 与 .archlint-cache/ 两显式忽略）+ .sprint-state/ 保留为公开审计面声明（T-12）；07c 三段式（bundle 回滚锚点 / mirror 预演人工审查 / force-push+三重复扫）+ 替换对象集合动态导出（A-MN-01：冻结时点 4 文件为基线，本 sprint 自产处置引用文件为预期新增，未知文件即停）+ 改写后闭环（测试复跑/映射桥接不重做评审/悬链登记/本地重建）（T-05/F-CRIT-01）；07d commit+tag message 双扫 + --replace-message 追加轮（T-06）；Windows 双路径（WSL/Git-Bash）+ replacements.txt UTF-8 LF 无 BOM"
     },
     {
       "id": "RL-02",

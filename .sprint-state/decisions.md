@@ -39,3 +39,43 @@
 - **Choice**: ① --force 退役
 - **Rationale**: v2a 冻结产物已全部并入 main（PR #8），活动登记仅占用状态机；旧状态已备份至 .sprint-history/sprint-state-sprint-20260927-46-2026-10-08T12-20-11.json；v2a BUILD 归属由 DR-001 承接（独立挂起）
 - **Timestamp**: 2026-10-08T12:20+08:00
+
+## Decision DR-006
+- **Phase**: 2/6 DESIGN（设计拍板项 DD-11）
+- **Question**: 内部端点历史处置口径？（已识别 4 文件含 `https://internal-gateway.invalid/redacted`，均已合并 main；仓库仍 PRIVATE，处置窗口存在）
+- **Options**: ① filter-repo 全量改写（全库新 SHA）② 前瞻脱敏新提交 + 接受历史残留
+- **Choice**: ① filter-repo 全量改写
+- **Rationale**: 用户拍板（采推荐项）——"安全、透明性"优先级下历史零残留最干净；代价（SHA 映射登记 / worktree 作废 / PR 引用悬链）在设计 D-07 显式登记为义务；执行时点 = merge 后 flip 前由用户确认
+- **Timestamp**: 2026-10-08T20:40+08:00
+
+## Decision DR-007
+- **Phase**: 2/6 DESIGN（设计拍板项 DD-10）
+- **Question**: README 主文件方向？
+- **Options**: ① README.md = 英文全量 + README.zh-CN.md 中文镜像 ② 反之（README.md 保持中文）
+- **Choice**: ① README.md = 英文全量 + README.zh-CN.md 中文镜像
+- **Rationale**: 用户拍板（采推荐项）——GitHub 默认展示面为英文受众；中文全量镜像保底中文开发者；同步机制随 DD-2（DR-010）
+- **Timestamp**: 2026-10-08T20:40+08:00
+
+## Decision DR-008
+- **Phase**: 2/6 DESIGN（设计拍板项 DD-3）
+- **Question**: 首个公开发布版本号？
+- **Options**: ① 0.2.0 直发 ② bump 0.2.1 ③ 0.3.0 ④ 1.0.0-rc
+- **Choice**: ① 0.2.0 直发
+- **Rationale**: 用户拍板（采推荐项）——VERSION 与 package.json 已一致（Gate 0 绿），v1 验收 6/6 + 296 测试基线支撑；公开发布 = v0.1 → v0.2 的既有演进线，无 bump 必要
+- **Timestamp**: 2026-10-08T20:40+08:00
+
+## Decision DR-009
+- **Phase**: 2/6 DESIGN（设计拍板项 DD-6 + DD-7）
+- **Question**: 外部贡献口径（DD-6）与 Support Policy 口径（DD-7）？
+- **Options**: ① 保守承诺（PR 须过全部门禁与走查链；漏洞私下报告 + best-effort 响应）② 积极社区承诺（SLA / 快速响应）
+- **Choice**: ① 保守承诺
+- **Rationale**: 用户拍板（采推荐项）——个人维护的开源项目，承诺超出维护能力即失信；"自用守门员"定位下 PR 全门禁恰好复用项目自身的质量体系（12 门 + Gate MW + #367）
+- **Timestamp**: 2026-10-08T20:40+08:00
+
+## Decision DR-010
+- **Phase**: 2/6 DESIGN（锁默认批 DD-1/2/4/5/8/9 + 新披露决策）
+- **Question**: 其余拍板项未提请用户时按何口径锁默认？（随设计文档一并披露，用户可在评审中挑战）
+- **Options**: 锁默认并披露 vs 全部逐项再问
+- **Choice**: 锁默认并披露：DD-1 设立 CHANGELOG（Keep a Changelog 轻量、英文）；DD-2 中文为技术口径基准 + 同 PR 同改 + 人工检查单，不建 CI 机器核对；DD-4 ruleset 防删防移、公开化后配置、本迭代交付 runbook；DD-5 files 保持 ["dist","README.md","LICENSE"]；DD-8 不加 SPDX 文件级头；DD-9 双保险（本机门链 + runner 冒烟）不引 Docker。新披露：SECURITY/CONTRIBUTING/CHANGELOG = 英文；术语对照表落 CONTEXT.md；门链脚本 scripts/release-gate.mjs + prepublishOnly 双层防跳过；07c 占位符 = https://internal-gateway.invalid/redacted
+- **Rationale**: 六项默认均为低争议高惯例口径，逐项提问稀释用户注意力；披露即接受挑战，R2 设计评审三专家为第一道挑战面
+- **Timestamp**: 2026-10-08T20:40+08:00

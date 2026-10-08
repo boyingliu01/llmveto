@@ -16,7 +16,7 @@
     "CONTEXT.md"
   ],
   "hash_method": "sha256(requirements_statement + CONTEXT.md exact UTF-8 content + timestamp YYYY-MM-DD)",
-  "head_commit": "c01acaf9c5a140d1095555b3d7a8406952cee01a",
+  "head_commit": "10d431bfd5684a5d1dfe3f79eeecad95e8c67b77",
   "context_file_used": "CONTEXT.md",
   "round": 2,
   "rounds_used": 2,
@@ -93,5 +93,6 @@
     "revision": "docs/plans/2026-10-08-release-requirements.md v2（REQ-REL-07 新增 + AC 客观化 + DD-1..11）",
     "round_2": "var/delphi-r11/rel-experts-r2.json（3×APPROVED 9/8/9；首两跑 C 槽 8192 输出预算截断 ERROR，18000 预算重跑解除——非单家重跑，整轮重跑合规）",
     "executor": "var/delphi-r11/delphi-experts.cjs（四 checks 全过）"
-  }
+  },
+  "head_commit_note": "HEAD 对齐刷新（v2a 先例 97b8514/46a7c36 模式）：需求评审基线 c01acaf 以来 requirements v2 与 CONTEXT.md 逐字未变（requirements_hash 不变），仅新增设计面提交（bbdade7/bc4f065/10d431b）；head_commit 语义 = 刷新时点 HEAD，内容绑定以 requirements_hash 为准"
 }

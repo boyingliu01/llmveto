@@ -82,7 +82,7 @@
 
 ## Decision DR-011
 - **Phase**: 2/6 DESIGN（R2 设计评审 Round 1 处置）
-- **Question**: 设计 v1 评审 A=APPROVED(8) / B=REQUEST_CHANGES(8) / C=REQUEST_CHANGES(8)，3 Critical + 8 Major + 13 Minor 如何处置？
+- **Question**: 设计 v1 评审 A=APPROVED(8) / B=REQUEST_CHANGES(8) / C=REQUEST_CHANGES(8)，3 Critical + 9 Major + 9 Minor 如何处置？
 - **Options**: ① 逐条处置落设计 v2 后交换轮重评 ② 挑选 Critical 处置、Major 登记 ③ 上报用户仲裁
 - **Choice**: ① 逐条处置落设计 v2 后交换轮重评
 - **Rationale**: 零容忍纪律（Critical/Major 全部处理）；处置要点 = 冒烟判据按 CLI 实况冻结（CLI 无 --help、干净环境 doctor 必漂移两处按实况修正）、"纯 Node"判定改 PATH 剥离 Bun、门链 teardown 化、release.yml 显式单一真源 + publish 幂等、filter-repo 三段式（bundle 备份 + 预演审查）+ message 改写轮、双语加 parity 脚本；全表见设计 v2 §8 处置台账

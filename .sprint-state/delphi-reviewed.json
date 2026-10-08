@@ -2,25 +2,26 @@
   "_schema_version": 1,
   "artifact": "design-reviewed",
   "mode": "design",
-  "sprint_id": "sprint-20260927-46",
+  "sprint_id": "sprint-20261008-26",
   "phase": 2,
-  "gate": "R2 design review (v2a detection core, DESIGN Step 7 hard gate)",
-  "review_target": "docs/plans/2026-09-27-v2a-design.md",
+  "gate": "R2 design review (GitHub open-source release, DESIGN hard gate)",
+  "review_target": "docs/plans/2026-10-08-release-design.md (v2)",
+  "requirements_baseline": "docs/plans/2026-10-08-release-requirements.md v2 (requirements-reviewed.json, requirements_hash 510273de…)",
   "verdict": "APPROVED",
-  "timestamp": "2026-09-29T00:47:20Z",
+  "timestamp": "2026-10-08T16:19:57Z",
   "consensus_ratio": 1,
   "consensus_percent": 100,
   "threshold_percent": 90,
-  "rounds_used": 3,
+  "rounds_used": 2,
   "round_budget": 5,
-  "reviewed_head_commit": "ab08cc1c53950fe5b8b3d6872c171bf7e6bb82e6",
-  "reviewed_design_sha256": "2800fe792551e79fc5640b1dc71414aa00f4b386c0bb65476c60cfc745afa9c2",
-  "hash_note": "Round 3 评审的文档基线 = ab08cc1（Round 1/2 处置已落盘）；本轮残留 0C/1M/6m 的处置（§10.2）落在收链提交，处置内容不回灌本轮评审基线",
+  "reviewed_head_commit": "bc4f06523c147fb7e29fbe087ad2217ca23f9a3c",
+  "reviewed_design_sha256": "46e3fe3a5df08c9cc7b6845a4c4bb4db2deb04d9ca98e370a9e3d622fffb5e50",
+  "hash_note": "Round 2 评审的文档基线 = bc4f065（Round 1 处置已落盘为设计 v2 §8 处置台账）；Round 2 残留 5 Minor 的处置落在 specification.yaml 对应切片验收，不回灌本轮评审基线",
   "panel": {
-    "executor": "~/.qoder/skills/delphi-review/scripts/delphi-experts.cjs",
-    "config": "var/delphi-v2a/.delphi-config.json (profile example-provider-flash)",
+    "executor": "var/delphi-r11/delphi-experts.cjs (外部执行器，无工具)",
+    "config": "var/delphi-r11/.delphi-config.json (profile example-provider-flash)",
     "experts": [
-      { "id": "A", "role": "architecture", "requested_model": "g-glm-5.3-flashx", "executed_echo": "glm-5.3-flashx" },
+      { "id": "A", "role": "architecture", "requested_model": "g-qwen3.8-flash", "executed_echo": "qwen3.8-flash" },
       { "id": "B", "role": "technical", "requested_model": "g-deepseek-flash", "executed_echo": "deepseek-flash" },
       { "id": "C", "role": "feasibility", "requested_model": "local-qwen3.8-27b", "executed_echo": "Qwen3_8-27B" }
     ],
@@ -34,49 +35,35 @@
   "rounds": [
     {
       "round": 1,
-      "date": "2026-09-29",
-      "verdicts": { "architecture": "REQUEST_CHANGES", "technical": "REQUEST_CHANGES", "feasibility": "APPROVED" },
-      "issues_by_severity": { "critical": 1, "major": 8, "minor": 12 },
+      "date": "2026-10-09",
+      "verdicts": { "architecture": "APPROVED", "technical": "REQUEST_CHANGES", "feasibility": "REQUEST_CHANGES" },
+      "confidence": { "architecture": 8, "technical": 8, "feasibility": 8 },
+      "issues_by_severity": { "critical": 3, "major": 9, "minor": 9 },
       "outcome": "not_passed",
-      "disposition": "design doc §10 (21 行对账表)",
-      "fix_commit": "71dc4c4",
-      "evidence": "var/delphi-v2a/r2-round1-experts.json",
-      "gaps": "var/delphi-v2a/r2-round1-gaps.md",
-      "model_note": "A 槽两次 fetch failed 根因修复后重跑（g-glm-5.3-flash 撞 undici HTTP/2 300s stream timeout，换 g-glm-5.3-flashx）；attempt1/attempt2 作废不聚合"
+      "disposition": "design doc v2 §8 (21 行处置台账)，两处按 CLI 实况修正（无 --help；doctor 需预写受管配置）",
+      "fix_commit": "bc4f065",
+      "evidence": "var/delphi-r11/rel-design-experts-r1.json",
+      "packet": "var/delphi-r11/input-rel-design-r1.md"
     },
     {
       "round": 2,
-      "date": "2026-09-29",
-      "verdicts": { "architecture": "REQUEST_CHANGES", "technical": "APPROVED", "feasibility": "APPROVED" },
-      "consensus_percent": 66.7,
-      "prior_round_issues_resolved": "21/21（三家一致判定闭合）",
-      "issues_by_severity": { "critical": 0, "major": 2, "minor": 8 },
-      "outcome": "not_passed_below_threshold",
-      "disposition": "design doc §10.1 (10 行对账表)",
-      "fix_commit": "ab08cc1",
-      "evidence": "var/delphi-v2a/r2-round2-experts.json",
-      "gaps": "var/delphi-v2a/r2-round2-gaps.md"
-    },
-    {
-      "round": 3,
-      "date": "2026-09-29",
+      "date": "2026-10-09",
       "verdicts": { "architecture": "APPROVED", "technical": "APPROVED", "feasibility": "APPROVED" },
-      "confidence": { "architecture": 8, "technical": 8, "feasibility": 8 },
+      "confidence": { "architecture": 9, "technical": 8, "feasibility": 9 },
       "consensus_percent": 100,
-      "prior_round_issues_resolved": "10/10（三家一致判定闭合）",
-      "issues_by_severity": { "critical": 0, "major": 1, "minor": 6 },
+      "issues_by_severity": { "critical": 0, "major": 0, "minor": 5 },
       "outcome": "passed",
-      "disposition": "design doc §10.2 (7 行对账表)；Major T-M1 补钉 D-10 对应关系，6 Minor 为登记/补钉类",
-      "evidence": "var/delphi-v2a/r2-round3-experts.json",
-      "gaps": "var/delphi-v2a/r2-round3-gaps.md"
+      "disposition": "5 Minor 登记处置落 specification.yaml 对应切片验收（parity 复审触发约定 / 受管配置副本字段集冻结 / npm view 失败 fail-closed）",
+      "evidence": "var/delphi-r11/rel-design-experts-r2.json",
+      "packet": "var/delphi-r11/input-rel-design-r2.md"
     }
   ],
   "residuals_after_consensus": {
     "critical": 0,
     "major": 0,
-    "minor": 6,
-    "note": "唯一 Major（technical M-1，D-10 顶层↔findings 对应关系）已补钉；6 Minor 全部登记或补钉；APPROVED 定义（无 Critical 未闭合、剩余 Major 已处置或登记）满足"
+    "minor": 5,
+    "note": "5 Minor 全部登记并给出规格落点（见 .sprint-state/review/rel-design-r2-consensus.md 残留表）；APPROVED 定义（无 Critical 未闭合、无 Major 未处置）满足"
   },
-  "report": ".sprint-state/review/v2a-r2-design-consensus.md",
-  "decisions_ref": ".sprint-state/decisions.md (DR-022..DR-025)"
+  "report": ".sprint-state/review/rel-design-r2-consensus.md",
+  "decisions_ref": ".sprint-state/decisions.md (DR-006..DR-011)"
 }

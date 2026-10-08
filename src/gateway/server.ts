@@ -6,7 +6,7 @@ import { GatewayCore, handleChatCompletions, sha256Hex } from "./core.ts";
 import type { GatewayConfig } from "./core.ts";
 import { redactSink } from "../evidence/redact-sink.ts";
 import type { EvidenceFinding } from "../evidence/schema.ts";
-import type { ActionTaken } from "../shared/types.ts";
+import type { ActionTaken, Transport } from "../shared/types.ts";
 
 /**
  * @test REQ-VETO-002
@@ -32,7 +32,7 @@ export async function startGateway(opts: StartOptions): Promise<{ server: Return
   // 且此后全部流量失去网关保护。故每个请求的失败必须被收敛成"这一个请求的 502 + 留痕"。
   const server = createServer((req, res) => {
     // 每请求转发计数：兜底路径据此如实写 evidence 的 delivered_chunks（PWR1-B-M3）。
-    const fwd = { chunks: 0 };
+    const fwd: DeliveryState = { chunks: 0 };
     dispatch(req, res, core, opts.config, fwd).catch((err: unknown) => {
       handleDispatchFailure(req, res, opts.config, err, fwd);
     });
@@ -76,6 +76,16 @@ export interface UpstreamResolution {
 }
 
 /**
+ * 每请求交付状态，由 dispatch 写、由兜底路径读，两处共用同一份事实（PWR1-B-M3 / PWR3-B-m1）。
+ * 两字段**各自表述一件事、不得互推**：`chunks` 是实际转发帧数（交付面），`transport` 是 dispatch
+ * 对响应形态的判定（请求面）；判定前就抛错时 `transport` 保持未设，兜底路径按非流式记。
+ */
+interface DeliveryState {
+  chunks: number;
+  transport?: Transport;
+}
+
+/**
  * upstream 解析（单一真相源）：头 > upstreams["c/p"] > upstreams["c/*"] > catch-all。
  * 头覆盖默认关闭（allowUpstreamHeaderOverride），仅可测试性契约 #1 的注入场景显式开启；
  * 生产 daemon 不开启 → 转发目标只由受管路由表决定。
@@ -112,7 +122,7 @@ async function dispatch(
   res: ServerResponse,
   core: GatewayCore,
   cfg: GatewayConfig,
-  fwd: { chunks: number },
+  fwd: DeliveryState,
 ): Promise<void> {
   const t0 = Date.now();
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
@@ -173,6 +183,10 @@ async function dispatch(
   const stream = /"stream"\s*:\s*true/.test(bodyText)
     || url.searchParams.get("stream") === "1"
     || headers["x-llmveto-transport"] === "stream";
+  const transport: Transport = stream ? "stream" : "non-stream";
+  // 判定一出即登记进每请求状态：兜底路径的 evidence 传输字段据此写，不再由交付计数反推
+  // （PWR3-B-m1：`fwd.chunks > 0` 在 headers 已出而零帧转发时会把流式请求误记为非流式）。
+  fwd.transport = transport;
   const outcome = await handleChatCompletions(core, {
     body: bodyText,
     headers,
@@ -183,7 +197,7 @@ async function dispatch(
     client,
     providerId,
     endpointHost,
-    transport: stream ? "stream" : "non-stream",
+    transport,
   });
 
   const respText = outcome.body;
@@ -267,7 +281,7 @@ function handleDispatchFailure(
   res: ServerResponse,
   cfg: GatewayConfig,
   err: unknown,
-  fwd: { chunks: number },
+  fwd: DeliveryState,
 ): void {
   const body = JSON.stringify({ error: { code: "llmveto:upstream-error" } });
   const forwarded = res.headersSent;
@@ -307,7 +321,9 @@ function handleDispatchFailure(
       // headers 已出时并未把 JSON body 交付给客户端——evidence 不虚报交付内容（respText 与
       // response_body_sha256 描述"实际交付面"），失败原因由 findings 承载。
       respText: forwarded ? "" : body,
-      stream: fwd.chunks > 0,
+      // 传输形态取 dispatch 的判定值；判定前就抛错时 fwd.transport 为 undefined ⇒ 非流式
+      // （那条路径必然一帧未转，与交付面一致）。交付事实仍由 fwd.chunks 独立申报，两者不互推。
+      stream: fwd.transport === "stream",
       findings: [failureFinding],
       actionTaken: fwd.chunks > 0 ? "terminated_after_delivery" : "blocked_before_forward",
       deliveredChunks: fwd.chunks,

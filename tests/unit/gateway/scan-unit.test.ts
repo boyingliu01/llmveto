@@ -317,6 +317,16 @@ describe("SL-09 gateway: decodeEscapes 直接单测", () => {
   it("代理对逐码元还原（拼接后恰为配对形态；v1 码点集全 BMP，成文边界）", () => {
     expect(decodeEscapes("\\uD83D\\uDE00")).toBe("\u{1F600}");
   });
+  it("孤立代理码元：\\uXXXX 与 \\u{...} 两语法一律保留该码元（PWR3-B-m2）", () => {
+    // 改前 `\u{d800}` 走 String.fromCodePoint 抛错被吞成空串，等于该字符从解码投影里**消失**；
+    // 同一码元的 `\ud800` 式却保留 —— 语法差异即绕过面。两式现须逐字相同。
+    expect(decodeEscapes("a\\u{d800}b")).toBe("a\uD800b");
+    expect(decodeEscapes("a\\ud800b")).toBe("a\uD800b");
+    expect(decodeEscapes("a\\u{d800}b")).toBe(decodeEscapes("a\\ud800b"));
+  });
+  it("超上限码点仍丢字（两式一致，非绕过面：0x110000 无对应字符）", () => {
+    expect(decodeEscapes("a\\u{110000}b")).toBe("ab");
+  });
   it("无转义序列 → 返回同一字符串引用（scanTexts 由此省略第二遍）", () => {
     const s = "no escapes here";
     expect(decodeEscapes(s)).toBe(s);

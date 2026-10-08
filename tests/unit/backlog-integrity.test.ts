@@ -468,10 +468,85 @@ const LOCKED_IDS = [
   "R11R15-SR-1",
   "R11R15-SR-2",
   "R11R15-SR-3",
+  "PWR1-A-M1",
+  "PWR1-A-M2",
+  "PWR1-A-m1",
+  "PWR1-A-m2",
+  "PWR1-A-m3",
+  "PWR1-A-m4",
+  "PWR1-B-M1",
+  "PWR1-B-M2",
+  "PWR1-B-M3",
+  "PWR1-B-M4",
+  "PWR1-B-M5",
+  "PWR1-B-m1",
+  "PWR1-B-m2",
+  "PWR1-B-m3",
+  "PWR1-B-m4",
+  "PWR1-B-m5",
+  "PWR1-B-m6",
+  "PWR1-B-m7",
+  "PWR1-B-m8",
+  "PWR1-B-m9",
+  "PWR1-C-M1",
+  "PWR1-C-M2",
+  "PWR1-C-m1",
+  "PWR1-C-m2",
+  "PWR1-C-m3",
+  "PWR1-C-m4",
+  "PWR2-A-m1",
+  "PWR2-B-m1",
+  "PWR2-B-m2",
+  "PWR2-C-M1",
+  "PWR2-C-m1",
+  "PWR2-C-m2",
+  "PWR3-A-m1",
+  "PWR3-B-m1",
+  "PWR3-B-m2",
+  "PWR3-C-m1",
+  "PWR3-C-m2",
+  "R11R15-A-M1",
+  "R11R15-A-M2",
+  "R11R15-A-M3",
+  "R11R15-A-m1",
+  "R11R15-A-m2",
+  "R11R15-A-m3",
+  "R11R15-A-m4",
+  "R11R15-A-m5",
+  "R11R15-A-m6",
+  "R11R15-B-M1",
+  "R11R15-B-M2",
+  "R11R15-B-M3",
+  "R11R15-B-M4",
+  "R11R15-B-M5",
+  "R11R15-B-M6",
+  "R11R15-B-m1",
+  "R11R15-B-m2",
+  "R11R15-B-m3",
+  "R11R15-B-m4",
+  "R11R15-B-m5",
+  "R11R15-B-m6",
+  "R11R15-B-m7",
+  "R11R15-B-m8",
+  "R11R15-B-m9",
+  "R11R15-B-m10",
+  "R11R15-C-M1",
+  "R11R15-C-M2",
+  "R11R15-C-m1",
+  "R11R15-C-m2",
+  "R11R15-C-m3",
+  "R11R15-C-m4",
+  "R11R15-C-m5",
+  "PWR1-SR-1",
 ] as const;
 
-/** 规范 ID 记号；`R2-A-M2 / R2-C-M1` 型合写行按 `/` 拆开，`（并入 R8-B-M1）` 型说明格不入选。 */
-const ID_TOKEN = /^R[A-Za-z0-9]*-[A-Za-z0-9-]+$/;
+/**
+ * 规范 ID 记号；`R2-A-M2 / R2-C-M1` 型合写行按 `/` 拆开，`（并入 R8-B-M1）` 型说明格不入选。
+ * `PWR[0-9]` 支 = pw1 批次按**逐字原名**登记 pw1 链 37 个 ID 时扩宽：改名换前缀会与已入库的提交信息、
+ * 代码注释指称、gitignored 卷面三处产生双名漂移，故扩记号而不改 ID；头部「三种计数的定义体」②支
+ * 逐字引用本正则，改动须同批同步两处（登记处 `PWR1-SR-1` 行）。
+ */
+const ID_TOKEN = /^(?:R[A-Za-z0-9]*|PWR[0-9])-[A-Za-z0-9-]+$/;
 
 /**
  * ID 表里首格刻意**不写**规范 ID 的说明行（按整格全文匹配）。它就是登记处头部「三种计数的定义体」① 里
@@ -808,6 +883,9 @@ function qualifierObligationProblems(section: BatchSection): string[] {
  *   - 判"批节正文出现 `--no-verify` 却没指 rounds.json 的裁决字段"，**判不到** commit message 与
  *     PR 描述里的援引（`core.hooksPath` 指向仓外 xp-gate，本仓无机器位）——该面已在头部逐字承认
  *     "可判性 = 0"，本条不假装覆盖。
+ *   - **也不判指针的真伪**（`R11R15-A-M1` / `B-m2` 三跑复现后写破）：本条判的是"指针像样"
+ *     （字面合 `r\d+_user_decision` 形），凭空编一个 `r99_user_decision` 照样过门——"可核对 ≠ 可验证"，
+ *     指针是否真存在于 rounds.json 归走查，本条不引入对 rounds.json 的第二事实源读取。
  */
 const OFFBOOK_MARKER = "落点在卷外";
 const OFFBOOK_TERMINAL = "终局判据";
@@ -908,7 +986,11 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
     // `R11R12-C-*` 5 + `R11R13-SR-*` 2；5 Major + 19 Minor + 自查 2）。
     // 297 = R11 R14 批次后的实测数据行数（25 张 ID 表，本批新增 22 行 = `R11R13-A-*` 4 + `R11R13-B-*` 11 +
     // `R11R13-C-*` 5 + `R11R14-SR-*` 2；4 Major + 16 Minor + 自查 2）。
-    const MIN_BACKLOG_ROWS = 330;
+    // 330 = R11 R15 批次后的实测数据行数（26 张 ID 表，本批新增 33 行 = `R11R14-*` 30 + `R11R15-SR-*` 3；
+    // 8 Major + 22 Minor + 自查 3）。
+    // 400 = pw1 批次后的实测数据行数（27 张 ID 表，本批新增 70 行 = `PWR1-*` 26 + `PWR2-*` 6 + `PWR3-*` 5 +
+    // `R11R15-A-*` 9 + `R11R15-B-*` 16 + `R11R15-C-*` 7 + `PWR1-SR-*` 1；21 Major + 49 Minor，全部 1:1 单行）。
+    const MIN_BACKLOG_ROWS = 400;
     expect(
       rows.length,
       `${BACKLOG_REL} 表行数 ≠ 棘轮常量 ${String(MIN_BACKLOG_ROWS)}（当前 ${String(rows.length)}）：` +
@@ -1008,7 +1090,10 @@ describe("bench backlog 登记处完整性（R7-B2 机器守卫）", () => {
     // **fixture 的起点标题由本常量派生**（`R11R11-SR-3`）：原先这里写死 `"### R11 R10 批次（起点）"`，
     // 于是改动 `OBLIGATION_FROM` 会让 fixture 自身崩掉（`startFound` 为假），报出的红看着像"本条检测到
     // 管辖变形"、其实只是前提失效——三条断言同时红时读者分不清哪条在做真判据。派生后：改常量时只有
-    // 第十三条红（它判真实登记处），本条与第二条仍绿。前缀字面仍由本条的 `before` 承担判别力。
+    // 「管辖起点常量须恰命中一个批次标题」那条红（它判真实登记处），本条与「每一批正文须含 linux 义务
+    // 三数记号」那条仍绿。前缀字面仍由本条的 `before` 承担判别力。
+    // （指称形式订正 = `R11R15-B-M1` / `A-m2` / `C-m2` 三家同题：原句写作"第十三条红"是按位次指称，
+    // 而 `R11R14-A-m1` 行新立的口径要求按标题指称，且本文件新增 `it()` 后位次已漂移。）
     const startHeading = `${OBLIGATION_FROM}（起点）`;
     const nextHeading = "### ZZ 批次（起点之后的下一批）";
     const before = ["### ZZ 批次（起点之前的旧批，不受管辖）", "正文只有 滤前 与 滤后。", ""].join("\n");

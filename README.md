@@ -65,6 +65,7 @@ Tools that cannot override baseURL  ── v3 onboarding (HTTPS_PROXY + NODE_EXT
   Since v0.2.0 the `"private"` flag has been removed — the promotion path reserved by ADR-0001 is fulfilled: the release process = an explicit gate chain in the release workflow (`npm run release:gate`, including a pure-Node smoke test); see [docs/release/publishing.md](docs/release/publishing.md).
 - **Running from source (development mode)**: `bun run src/cli/index.ts …` executes `.ts` directly (Bun-native). Runtime code **uses only Node standard-library APIs** (`node:http` / `node:crypto` / Web Streams) and **no Bun-only APIs**; CI runs on vitest (Node) precisely to machine-enforce this constraint.
 - **Single-binary distribution (not delivered, outside v1 promises)**: `bun build --compile` into a runtime-free single file is a v2 roadmap candidate; v1 does not provide that artifact and makes no command-name promise.
+- **Upstream fault-tolerance boundary (explicit in v1)**: **No retry and no failover upstream.** An upstream failure is answered fail-closed per request (502 + an `llmveto:upstream-error` evidence record) and the daemon survives; upstream resilience is a v2 operations concern. See the [threat-model T0 row](docs/issues/1-req-threat-model.md).
 
 > ⚠️ `.ts` sources are not a Node-runnable distribution artifact (`.ts` specifiers / parameter properties / `import.meta.main` — three incompatibilities); distribution must go through `dist/`, see ADR-0001.
 

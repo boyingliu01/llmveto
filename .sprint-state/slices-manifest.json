@@ -191,7 +191,8 @@
         "AC-REL-05a"
       ],
       "effort": "S",
-      "status": "pending"
+      "status": "done",
+      "notes": "双语 fail-closed 边界 bullet 落 README 中/英分发承诺段（英文定译落地版把候选句 audit record 按术语表定为 evidence record）；docs/release/boundary-checklist.md 逐点留档（T0 行 L119 基准 + 双 bullet + src 零改动 base=bd4bb40 diff 0 行 + parity 复跑 PASS）"
     },
     {
       "id": "RL-08",

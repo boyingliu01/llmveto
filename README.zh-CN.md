@@ -65,6 +65,7 @@ Claude Code / Codex / promptfoo     ── v2 接入
   v0.2.0 起 `"private"` 已移除——ADR-0001 预留的转正路径兑现：发布流程 = release workflow 显式门链（`npm run release:gate`，含纯 Node 环境冒烟），口径见 [docs/release/publishing.md](docs/release/publishing.md)。
 - **源码运行（开发态）**：`bun run src/cli/index.ts …` 直接跑 `.ts`（Bun 原生）。运行时代码**仅使用 Node 标准库 API**（`node:http` / `node:crypto` / Web Streams），**禁用 Bun-only API**；CI 在 vitest（Node）上执行正是为机器化保证这一约束。
 - **单二进制分发（未交付，不在 v1 承诺内）**：`bun build --compile` 打包为免 runtime 的单文件分属 v2 路线候选，v1 不提供该产物、不承诺命令名。
+- **上游容错边界（v1 明示）**：**无重试、无备用上游**。上游故障 = 单请求 fail-closed（502 + `llmveto:upstream-error` evidence 留痕），daemon 存活；上游健康管理属 v2 运营面。见[威胁模型 T0 行](docs/issues/1-req-threat-model.md)。
 
 > ⚠️ `.ts` 源码不是 Node 可直接运行的分发物（`.ts` 说明符 / 参数属性 / `import.meta.main` 三处不兼容）——分发必须走 `dist/`，见 ADR-0001。
 

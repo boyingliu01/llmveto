@@ -28,5 +28,6 @@
 
 ## USER ACCEPTANCE
 
-- 状态：**待用户手动验收**（禁止自动化代办）
-- 验收材料：本文件 + phase-1..5 summaries + [rel-cw-consensus.md](review/rel-cw-consensus.md) + PR #9
+- 状态：**验收通过**（用户手动确认，AskUserQuestion 2026-10-09，登记 DR-012）
+- 验收材料：本文件 + phase-1..5 summaries + [rel-cw-consensus.md](review/rel-cw-consensus.md) + PR #9/#10（main@a422551，CI 全绿）
+- 用户选择：① 验收通过，清理收尾（worktree + 分支清理随本 PR 后执行）

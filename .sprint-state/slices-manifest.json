@@ -144,7 +144,8 @@
         "AC-REL-03b"
       ],
       "effort": "L",
-      "status": "pending"
+      "status": "done",
+      "notes": "README.md=English 全量 + README.zh-CN.md 中文迁移（首行互链）；stale 内容随迁修正（分发承诺 bullet：private 移除/npm registry 发布/release:gate 门链口径；快速开始补 npm i -g 主路径）——标题序列不动；CONTEXT.md Glossary 26 行（25 受控词 + evidence 保留原名；vetting 行附 avoid 语义注）；check-readme-parity.mjs：中英 10 标题冻结对表逐对相等 + 5 张表行数序列相等 [5,8,9,7,6] + --check-migration 迁入自检 diff=0 PASS；能力表/环境变量表/CLI 表行级人工核对=翻译逐行对应（本切片同作业完成）"
     },
     {
       "id": "RL-06",

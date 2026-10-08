@@ -111,3 +111,36 @@ _Avoid_: 主功能 / 附属功能
 **期次纪律**:
 任一期的验收条目只能引用该期范围内的交付物。能力缺口写进残余风险登记表，不得靠"总体目标"含糊带过。
 _Avoid_: 延后补齐（未登记的延后即违规）
+
+## Glossary（受控词英文定译）
+
+AC-REL-03b 冻结：英文 README 与公开面文档对下列受控词使用定译，Avoid 列 = 英文行文中不得用这些词**指称该受控词概念**（非禁用其一般义）。`evidence` / `action_taken` 保留原名不译。
+
+| 受控词 | 英文定译 | Avoid（英文） |
+|---|---|---|
+| 过闸 | vetting | interception, filtering, sanitization（注：avoid 指不得用这些词指称"过闸"概念，非禁用其一般义） |
+| 扫描单元（scan unit） | scan unit | payload, buffer, fragment |
+| verdict | verdict | judgment result, block, hit |
+| action | action | verdict, ruling |
+| 安全类 checker | security-class checker | critical checker, hard checker |
+| 观测类 checker | observational checker | weak checker, non-security checker |
+| redact | redact | injection, sink-level sanitization |
+| 注入（金丝雀注入） | (canary) injection | rewrite, instrumentation |
+| 零缓冲 | zero buffering | stream pass-through, unbuffered |
+| 滚动窗口（ScanWindow） | rolling window (ScanWindow) | session buffer, global state |
+| 终止流 | stream termination | block（不区分终止流/响应级拒绝时）, abort |
+| 响应级拒绝 | response-level rejection | block, kill |
+| action_taken | action_taken（evidence 字段保留原名不译） | action, verdict |
+| 观测类降级 | observational degradation | skip, fail-open |
+| 受管配置枚举（MANAGED_CONFIG_IDS） | managed-config enumeration (MANAGED_CONFIG_IDS) | all traffic, all clients |
+| 金丝雀（canary） | canary | honeypot, watermark |
+| 会话（session） | session | conversation, connection |
+| 匹配域 | match domain | index, cache store |
+| 跨会话串流 | cross-session spill | backflow, echo, cross-session streaming |
+| 保留位 | reserved slot | reserved field |
+| 取证可得性 | forensic availability | covered, detected |
+| 证伪信号 | refutation signal | fingerprint, verification |
+| 双向自洽判定 | bidirectional self-consistency check | allowlist validation, capability table |
+| 检测核心 / 运营面 | detection core / operations plane | main feature, auxiliary feature |
+| 期次纪律 | cohort discipline | unregistered deferral |
+| evidence | evidence（审计证据链，保留原名不译） | log, trace |

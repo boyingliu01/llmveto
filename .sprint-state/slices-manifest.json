@@ -1,317 +1,228 @@
 {
   "_schema_version": 1,
-  "sprint_id": "sprint-20260927-46",
-  "source": "docs/plans/2026-09-27-v2a-design.md（Step 4 批准 + R2 3/3 APPROVED，评审基线 ab08cc1）",
-  "specification_ref": "specification.yaml (SPEC-V2A-001, v0.2.0, 15 REQ / 27 AC)",
-  "generated_at": "2026-09-29",
+  "sprint_id": "sprint-20261008-26",
+  "source": "docs/plans/2026-10-08-release-design.md v2（R2 设计评审 3/3 APPROVED，评审基线 bc4f065）",
+  "specification_ref": "specification.yaml (SPEC-REL-001, v0.2.0, 7 REQ / 13 AC)",
+  "generated_at": "2026-10-09",
   "review_gate": {
     "r1_requirements_reviewed": ".sprint-state/phase-outputs/requirements-reviewed.json",
-    "r2_design_reviewed": ".sprint-state/delphi-reviewed.json (design mode, 3/3 APPROVED, Round 3/5)",
+    "r2_design_reviewed": ".sprint-state/delphi-reviewed.json (design mode, 3/3 APPROVED, Round 2/5)",
     "consensus_percent": 100,
     "threshold_percent": 90
   },
-  "notes": "v2a 检测核心：15 REQ → 15 切片（REQ-V2a-11 拆 06/07 两个子切片、REQ-V2a-14 并入 S-DOCS）。tracer = SL-01（响应扫描单元 tool-call 路径，最快暴露 meta 下传与流式 delta 归并的 unknown unknowns）。切片内 LOC 为运行时改动估算（含该切片摊派的测试），单切片 ≤200 运行时 LOC。G-RELAY/G-WINDOW/G-PERF/G-CANARY 四门的关闭安排见 build_entry_gates。v1 版 manifest（sprint-20260914-49）见 git 历史。",
+  "notes": "发布面交付：src/ 零改动（全局红线），全部切片为脚本/工作流/文档/清单。RL-01 工具先交付但执行在 merge 后（filter-repo 改写作废 worktree 的时序约束）；RL-05→RL-07 串行（README 结构冻结先于边界段核对）；RL-08 收口。冒烟判据 8 行表已按 src/cli/index.ts 实况冻结入规格（含 CLI 无 --help、doctor 需预写受管配置两处实况修正）。R2 残留 5 Minor 的处置已内嵌对应切片验收（parity 复审触发约定 → RL-05/06；受管配置副本最小字段集 → RL-02；npm view 失败 fail-closed → RL-03/04）。",
   "build_entry_gates": {
-    "G-RELAY": {
-      "closes_before": "SL-13",
-      "how": "读 fpverify 许可证文本，逐文件结论落 docs/licenses.md，触发 SL-13.estimate.chosen 二选一（reusable / not_reusable）",
-      "conclusion": "fpverify = MIT（版权行 Copyright (c) 2026 Mohamed7415 and fpverify contributors；GitHub API repos 端点 + LICENSE 原文核实于 2026-09-29）→ 可复用；详见 docs/licenses.md「v2a G-RELAY 结论」节",
-      "status": "closed"
-    },
-    "G-WINDOW": {
-      "closes_before": "SL-09 集成收尾（bench 部分需 checker 全集）",
-      "how": "AC-V2a-14 的 2049×128B 构造 fixture（SL-02 交付）+ bench 流式 tool_call 场景 ttft_delta 与累积量 p99<64KiB（TEST §5 协议）",
+    "G-PUBLISH": {
+      "closes_before": "RL-03（release.yml 依赖门链成形）",
+      "how": "scripts/release-gate.mjs 全链本机跑通一次（RL-02 交付即演练，R-3 固化为可重复脚本）",
       "status": "pending"
     },
-    "G-PERF": {
-      "closes_before": "Phase 3 收尾（SL-04 复测时间盒，需 4 新 checker 全集 = SL-09/10/11/08 完成后）",
-      "how": "4 新 checker 全集跑既有 bench 三台；D-09 接线后复测；超阈走回退阶梯（复测→ADR 修订档位→调档后仍误阻则规约变更回用户拍板，禁静默放宽）",
+    "G-REWRITE": {
+      "closes_before": "公开化动作（用户扣扳机点，merge 后）",
+      "how": "filter-repo 三段式：bundle 备份 → mirror clone 预演人工审查 → force-push + 三重复扫零残留 + SHA 映射表留档",
       "status": "pending"
-    },
-    "G-CANARY": {
-      "closes_before": "BUILD 启动（Step 8 拍板项 #E，owner = 用户）",
-      "how": "10 条真实 agent 会话录制（进 var/ 不进 git）+ finish_reason 分布无迁移 + provider 拒绝率增量 0 + 人工复核 10 条输出",
-      "user_deliverable": "#E 录制文件（10 个 JSON，落 var/canary-sessions/；格式与字段判据对应见 .sprint-state/g-canary-recording-spec.md）",
-      "reminder_nodes": ["slices-manifest（本字段，最早提醒：与无依赖切片 SL-15/SL-01 并行的最早期）", "BUILD 启动前（第二道）"],
-      "fallback_pending_user": "R3 F-m1 两段式降级预案（mock benign 先跑形式判据、录制到位后补人工复核）——默认不采纳，采纳属规约变更须用户拍板",
-      "status_note_2026-10-05": "接管核查：raw-exchanges.jsonl 唯一一条是 GET /v1/models（非会话，切分脚本丢弃）→ 有效录制 0/10。前置工具已交付：var/canary-split.ts 切分 + 三门判据核对清单 + --check 退出码作门关证据；采集执行手册见 .sprint-state/g-canary-recording-spec.md「采集执行手册」节（含 delphi 不经 v1 网关的链路订正）。同源 merge main@73e28fa 已完成，基线 296 passed / 3 skipped。见 DR-027。",
-      "status": "pending_user"
     }
   },
   "slices": [
     {
-      "id": "SL-01",
-      "title": "响应扫描单元补齐 tool-call 路径（tracer bullet）",
-      "type": "AFK",
+      "id": "RL-01",
+      "title": "公开化前置检查工具化与 runbook（REQ-REL-07）",
+      "type": "docs+tools",
       "blocked_by": [],
-      "parent_story": "REQ-V2a-01",
-      "layer": "gateway",
-      "files": ["src/gateway/scan-unit.ts", "src/shared/types.ts", "tests/unit/gateway/scan-unit.test.ts", "tests/fixtures/threats/T2c-*.yaml（arguments 路径样本）"],
-      "what_it_delivers": "非流式 message.tool_calls 与流式 delta.tool_calls 的 arguments 文本并入响应扫描单元 unit.text，meta.declared_tools/declared_required 下传——invisible-unicode-scan 的参数覆盖面从声明变为事实，经网关 evidence 可验证",
-      "acceptance_criteria": ["AC-V2a-01：含 tool_calls 的响应 fixture 在单元与经网关两层均可观测到 arguments 文本进入扫描域", "流式 delta.tool_calls 跨 chunk 归并不丢字节", "既有 v1 扫描面（content 路径）零回归"],
-      "covers_ac": ["AC-V2a-01"],
+      "parent_story": "REQ-REL-07",
+      "layer": "release",
+      "files": [
+        "docs/release/publication-runbook.md",
+        "docs/release/sha-mapping-template.md（或并入 runbook）"
+      ],
+      "what_it_delivers": "07a gitleaks 指令清单（全历史+工作区，工具不入仓）；07b git ls-files 核查清单（含 .sprint-state/ 保留为公开审计面的处置声明）；07c filter-repo 三段式 runbook（bundle 备份 / mirror clone 预演人工审查 / force-push + 07a/07b/07d 三重复扫）+ 全历史 grep 前置确认 + --replace-message 追加轮 + SHA 映射表模板 + Windows（WSL/Git-Bash）执行路径；07d 提交信息扫描指令（对象含 commit 与 tag message）",
+      "acceptance_criteria": [
+        "AC-REL-07a：指令清单可执行且判据=高置信 0",
+        "AC-REL-07b：核查清单含全部排除项与 .sprint-state/ 处置声明",
+        "AC-REL-07c：三段式完整、回滚锚点（bundle）+ 预演审查 + 三重复扫判据 + 映射表模板齐备",
+        "AC-REL-07d：扫描口径含 message 侧与追加轮指令"
+      ],
+      "covers_ac": [
+        "AC-REL-07a",
+        "AC-REL-07b",
+        "AC-REL-07c",
+        "AC-REL-07d"
+      ],
       "effort": "M",
-      "loc_budget": 130,
-      "file_budget": 6,
-      "status": "pending"
+      "status": "done",
+      "notes": "publication-runbook.md 落地（SHA 映射模板并入）：07a gitleaks git+dir 双扫（高置信 0，误报逐条归因不留档不放过）；07b ls-files 清单 + .gitignore 完备性（实测补 .sprint-history/ 与 .archlint-cache/ 两显式忽略）+ .sprint-state/ 保留为公开审计面声明（T-12）；07c 三段式（bundle 回滚锚点 / mirror 预演人工审查 / force-push+三重复扫）+ 替换对象集合动态导出（A-MN-01：冻结时点 4 文件为基线，本 sprint 自产处置引用文件为预期新增，未知文件即停）+ 改写后闭环（测试复跑/映射桥接不重做评审/悬链登记/本地重建）（T-05/F-CRIT-01）；07d commit+tag message 双扫 + --replace-message 追加轮（T-06）；Windows 双路径（WSL/Git-Bash）+ replacements.txt UTF-8 LF 无 BOM"
     },
     {
-      "id": "SL-02",
-      "title": "流式窗口归属与 offsets 修复（D-07/D-08）+ 终止流幂等判定面",
-      "type": "AFK",
-      "blocked_by": ["SL-01"],
-      "parent_story": "REQ-V2a-15",
-      "layer": "gateway",
-      "files": ["src/gateway/window-store.ts（新）", "src/gateway/core.ts", "tests/unit/gateway/window-store.test.ts", "tests/integration/stream-windows.test.ts", "tests/fixtures/（astral 字符先于命中的样本）"],
-      "what_it_delivers": "per-checker 窗口 Map、网关在 checker 返回后唯一一次推进 cursor（旧值+len）、回传 cursor 忽略 / extra 保留；offsets 钉 UTF-16 code-unit 口径（含 astral fixture 防漂移）；经网关 offsets 等值断言",
-      "acceptance_criteria": ["AC-V2a-25：链上 offsets 经网关路径与 code-unit 口径等值（AC-VETO-004-02 冻结语义下 checker 收到本片之前的 cursor）", "AC-V2a-26：多 checker 窗口隔离 + extra 跨片存活", "AC-V2a-14 构造性 fixture（2049×128B 单笔硬上界）+ AC-V2a-20 终止流幂等"],
-      "covers_ac": ["AC-V2a-14", "AC-V2a-20", "AC-V2a-25", "AC-V2a-26"],
-      "effort": "L",
-      "loc_budget": 160,
-      "file_budget": 6,
-      "status": "pending"
-    },
-    {
-      "id": "SL-03",
-      "title": "error 双层落链 + 顶层 reason 可选位 + degraded 机制（D-10/D-11）",
-      "type": "AFK",
+      "id": "RL-02",
+      "title": "发布前置门链 + 元数据转正（REQ-REL-01a）",
+      "type": "tools+config",
       "blocked_by": [],
-      "parent_story": "REQ-V2a-13",
-      "layer": "evidence + policy + gateway",
-      "files": ["src/evidence/schema.ts", "src/evidence/writer.ts", "src/policy/engine.ts", "src/policy/mapping.ts", "src/gateway/core.ts", "tests/unit/evidence/reason.test.ts", "tests/unit/policy/degraded.test.ts"],
-      "what_it_delivers": "AppendInput.reason 可选位（整键缺席语义）+ findings[] 内 verdict:error 条目（flattenFindings 扩展）+ validateEvidence reason 词汇域校验（六值 + 可缺席）+ decide() degraded 标志与 action_taken 优先序；顶层单值规则按 R2 订正版（网关描述值优先 + 重放选取对应关系）",
-      "acceptance_criteria": ["AC-V2a-12：安全类 error→block 可达且 fixture 断言双层痕迹", "AC-V2a-24：scanner_error/input_malformed 仍可达且顶层+findings 同时出现", "AC-V2a-23：REQUIRED_FIELDS 26 项不变、v1 记录集 verify 全过（reason 整键缺席不破链）", "AC-V2a-11：观测类 error → action_taken=degraded_observational 机制可达"],
-      "covers_ac": ["AC-V2a-11", "AC-V2a-12", "AC-V2a-23", "AC-V2a-24"],
+      "parent_story": "REQ-REL-01",
+      "layer": "release",
+      "files": [
+        "scripts/release-gate.mjs",
+        "package.json",
+        "VERSION"
+      ],
+      "what_it_delivers": "release-gate.mjs 十步链（clean→install→build→test→typecheck→typecheck:dist→pack→install-tarball→smoke→publish-dry-run）；8 行冒烟判据表以结构化断言常量内置；受控 PATH 剥离 Bun + bun 不可达断言 + node ≥18 断言；try/finally teardown（stop daemon + npm rm -g + 临时目录）；doctor 前置受管配置副本生成（最小字段集冻结留档，R2 T-R2-01）；prepublishOnly 接线；package.json 元数据转正（private 移除 + repository/homepage/bugs/keywords，files/license/engines 不动）与 VERSION 终版核对同批提交；scripts/ 门禁负担核对留档（oxlint/tsconfig 均不含 scripts/）",
+      "acceptance_criteria": [
+        "AC-REL-01a：门链全链本机跑通，8 行判据全过，失败路径无残留",
+        "AC-REL-06a（同批提交部分）：元数据与 VERSION 同批提交且 Gate 0 绿"
+      ],
+      "covers_ac": [
+        "AC-REL-01a"
+      ],
       "effort": "M",
-      "loc_budget": 120,
-      "file_budget": 7,
-      "status": "pending"
+      "status": "done",
+      "notes": "G-PUBLISH 本机全链 PASS：10 步 + smoke 8 行判据全过（含 seed 502 留痕），teardown 无残留（全局包/临时目录核查）；链序修正：install → clean（fresh checkout 下 rimraf 未装，D-01 原序不可行；clean-rebuild 语义不变，dist 先删后建）；修复 clean 脚本坏依赖：rimraf 补入 devDependencies ^6.1.3（原脚本引用未声明依赖，全仓 bun run clean 皆不可用）；smoke 解析两坑：ANSI 剥离（[32m326 破坏 \b）+ Tests 行锚定（避开 Test Files 行）；tar 检查 cwd=ws 裸文件名（GNU tar 把 C: 盘符当远程主机）；基线实况 326 passed | 1 skipped ≥ 冻结下界 296 passed；门禁负担核对（R1 T-13）：scripts/ 不在 oxlint(src tests)/typecheck(两 tsconfig)/vitest include(tests+bench)/coverage include(src) 任一门范围；AC-REL-06a 同批提交部分：package.json 元数据改动与 VERSION(0.2.0, 未动) 同批，Gate 0 镜像核对内置 preflight；DD-5 修订注（BUILD 收口实测）：npm 默认纳入 README* 全部变体，files/.npmignore/files 取反均不可排除（npm 11 实测三连败）——tar 白名单显式接受 package/README.zh-CN.md，DD-5 意图（npm 渲染面=英文 README）不受影响"
     },
     {
-      "id": "SL-04",
-      "title": "预算门接线（D-09，S-BUDGET —— critical path）",
-      "type": "AFK",
-      "blocked_by": ["SL-03"],
-      "parent_story": "REQ-V2a-12",
-      "layer": "gateway",
-      "files": ["src/gateway/budget.ts（新）", "src/gateway/core.ts", "tests/unit/gateway/budget.test.ts", "tests/integration/budget-gate.test.ts"],
-      "what_it_delivers": "GatewayConfig.checkerBudgetMs 注入口 + runWithBudget 事后判定 + G3_TIER 三档/G1_PER_CHUNK 常量源（fixture 引用非复抄）；超时改写为 checker_timeout 双层落链、不改写窗口；三条路径默认全接线",
-      "acceptance_criteria": ["AC-V2a-27：注入预算即确定性可达 checker_timeout→error→block（裁决面语义）", "改写不吞回传窗口（AC-V2a-27④）", "AC-V2a-22：bench 沿用既有协议不新增绝对值断言；G-PERF 复测独立时间盒预留（checker 全集就绪后执行）"],
-      "covers_ac": ["AC-V2a-22", "AC-V2a-27"],
-      "effort": "M",
-      "loc_budget": 100,
-      "file_budget": 4,
-      "critical_path": true,
-      "gate_note": "G-PERF 复测在 SL-08/09/10/11 全部完成后于此切片预留的时间盒内执行；回退阶梯见设计 §6",
-      "status": "pending"
+      "id": "RL-03",
+      "title": "release.yml 工作流（REQ-REL-01b）",
+      "type": "ci",
+      "blocked_by": [
+        "RL-02"
+      ],
+      "parent_story": "REQ-REL-01",
+      "layer": "release",
+      "files": [
+        ".github/workflows/release.yml"
+      ],
+      "what_it_delivers": "tag ^v[0-9]+\\.[0-9]+\\.[0-9]+$ + workflow_dispatch 触发；ubuntu-latest + permissions contents:write；步骤链含显式 npm run release:gate 门链步（单一真源）与 runner 冒烟（PATH 剥离 Bun）；npm publish 幂等前置（npm view 已存在则跳过；查询失败 fail-closed 阻断，R2 T-R2-02）；gh release create 取 CHANGELOG 对应节；同 tag 三情形语义成立",
+      "acceptance_criteria": [
+        "AC-REL-01b：触发条件/失败语义/幂等/三情形/runbook 情形表全部成立，workflow 文件无内部信息字面量"
+      ],
+      "covers_ac": [
+        "AC-REL-01b",
+        "AC-REL-02a"
+      ],
+      "effort": "S",
+      "status": "done",
+      "notes": "release.yml 落地 D-02：tag 触发 ^vd+.d+.d+ + workflow_dispatch 补建入口；显式 npm run release:gate 权威门步；tag↔package.json 版本一致性（AC-REL-06a CI 面）；publish 幂等前置（E404→publish、已存在→skip、非 E404 查询失败→fail-closed）+ --ignore-scripts（避免 prepublishOnly 重复整链，权威门=显式步）；Release 正文 awk index() 提取 CHANGELOG 节（方括号避开正则元字符）、节缺失 fail-closed、release 已存在幂等跳过、workflow_dispatch 走 --target GITHUB_SHA。本地静态核对（yaml 结构 + shell 块走查）；真跑验证留待用户打 tag（R-3 演练面=门链本机 PASS）"
     },
     {
-      "id": "SL-05",
-      "title": "canary 域核心：registry 存储与会话状态（D-01/D-02/D-05）",
-      "type": "AFK",
+      "id": "RL-04",
+      "title": "发布 runbook：凭据安全与故障处置（REQ-REL-01c + 发布面 runbook）",
+      "type": "docs",
       "blocked_by": [],
-      "parent_story": "REQ-V2a-07",
-      "layer": "canary（新域）",
-      "files": ["src/canary/store.ts（新）", "architecture.yaml（新增 canary 层）", "tests/unit/architecture-boundaries.test.ts（扩展：checkers 不 import canary、canary=[shared]）", "tests/unit/canary/store.test.ts"],
-      "what_it_delivers": "canary-registry.json 原子写（tmp+renameSync）、LRU 64/TTL 24h、分配/轮换/快照（排除请求方自身）、加载校验失败→registry_unavailable 语义源、熵源可注入、rotation_count/last_rotated_at 持久",
-      "acceptance_criteria": ["store 单测：分配/轮换/淘汰/损坏四族全覆盖（固定熵表驱动）", "architecture-boundaries：canary 层 allowed_imports=[shared]，gateway 扩列 +canary，checkers 不变且不 import canary", "崩溃残留只能是旧完整文件（无半行）"],
-      "covers_ac": ["AC-V2a-19①（语义源）"],
-      "effort": "M",
-      "loc_budget": 180,
-      "file_budget": 4,
-      "status": "pending"
-    },
-    {
-      "id": "SL-06",
-      "title": "会话键派生 + 注入六分支纯函数（D-06 + §4.4）",
-      "type": "AFK",
-      "blocked_by": ["SL-05"],
-      "parent_story": "REQ-V2a-11",
-      "layer": "canary",
-      "files": ["src/canary/session-key.ts（新）", "src/canary/inject.ts（新）", "tests/unit/canary/session-key.test.ts", "tests/unit/canary/inject.test.ts（六分支参数化）"],
-      "what_it_delivers": "deriveSessionKey（头优先 → sha256(len:text) 前 16 字符回退）+ inject(body, canary) 六分支（只增不改，{body, injected, skip_reason}）——纯字符串/数组手术，零网关依赖",
-      "acceptance_criteria": ["AC-V2a-07：注入仅追加不改写，按六分支参数化断言（B'=B[0..k]+canary+B[k..]）", "AC-V2a-17：session 键头缺失回退可判定（evidence session_id 派生不动属既有）", "AC-V2a-18：六分支全覆盖单元级判定面"],
-      "covers_ac": ["AC-V2a-07（单元级）", "AC-V2a-17", "AC-V2a-18（单元级）"],
-      "effort": "M",
-      "loc_budget": 190,
-      "file_budget": 4,
-      "status": "pending"
-    },
-    {
-      "id": "SL-07",
-      "title": "注入网关接线：admin 控制通道 + 请求编排 + sha 语义（D-03/D-04）",
-      "type": "AFK",
-      "blocked_by": ["SL-03", "SL-06"],
-      "parent_story": "REQ-V2a-11",
-      "layer": "gateway",
-      "files": ["src/gateway/server.ts", "src/gateway/core.ts", "tests/integration/canary-inject.test.ts", "tests/integration/registry-degraded.test.ts"],
-      "what_it_delivers": "dispatch 拦截 /_llmveto/*（路由解析前、不产 evidence）+ POST canary/rotate；block 判定后 fetch 前注入编排；request_bytes/request_body_sha256 记注入后体（D-04）；registry 损坏→不注入不匹配+顶层 reason（fail-open 可观测）",
-      "acceptance_criteria": ["AC-V2a-18⑥：跳过注入不改 action（经网关，findings 无注入词汇）", "AC-V2a-19①：registry 不可用→顶层 reason=registry_unavailable 无条件成立", "AC-V2a-21：匹配域不区分客户端", "AC-V2a-07（经网关）：注入后体上链且不破坏既有请求转发"],
-      "covers_ac": ["AC-V2a-07（经网关）", "AC-V2a-18⑥", "AC-V2a-19①", "AC-V2a-21"],
-      "effort": "L",
-      "loc_budget": 110,
-      "file_budget": 4,
-      "status": "pending"
-    },
-    {
-      "id": "SL-08",
-      "title": "canary-return-scan checker + 跨会话串流检测端到端（REQ-V2a-05 检测半）",
-      "type": "AFK",
-      "blocked_by": ["SL-05", "SL-07"],
-      "parent_story": "REQ-V2a-05",
-      "layer": "checkers + gateway",
-      "files": ["src/checkers/canary-return-scan.ts（新）", "src/gateway/registry.ts（spec 注册）", "tests/unit/checkers/canary-return-scan.test.ts", "tests/integration/canary-detection.test.ts"],
-      "what_it_delivers": "T1a 安全类 checker：只读 meta.canary_candidates 快照匹配，命中=block/终止流；持快照判在途请求；FP=0 由快照排除自身 + 明文不进链保证",
-      "acceptance_criteria": ["AC-V2a-06：跨会话串流检出（含单请求内复述判不命中的负样本）", "AC-V2a-08（在途语义）：轮换后旧串即刻退出匹配域", "AC-V2a-19②：在途请求按快照判"],
-      "covers_ac": ["AC-V2a-06", "AC-V2a-08（在途语义）", "AC-V2a-19②"],
+      "parent_story": "REQ-REL-01",
+      "layer": "release",
+      "files": [
+        "docs/release/publishing.md"
+      ],
+      "what_it_delivers": "granular token 最小权限 + 2FA 确认 + NPM_TOKEN 入 secret（本地不持有=绕过面关闭口径）+ 轮换口径；情形表：publish 成功 Release 失败 → dispatch 补建；同 tag 三情形判读；发布后真装烟测失败决策树（安全缺陷 deprecate+72h unpublish+公告 / 非安全 deprecate+0.2.1，R2 F-MAJ-01）；DD-4 ruleset 配置口径（公开化 checklist 项）；npm view 失败重试口径（R2 T-R2-02）",
+      "acceptance_criteria": [
+        "AC-REL-01c：四要素（token 权限/2FA/secret/轮换）+ 情形表 + 决策树齐备且与 AC-REL-01b 语义一致"
+      ],
+      "covers_ac": [
+        "AC-REL-01c"
+      ],
       "effort": "S",
-      "loc_budget": 80,
-      "file_budget": 4,
-      "status": "pending"
+      "status": "done",
+      "notes": "publishing.md 落地：AC-REL-01c 四要素（granular token 仅 Packages publish 权限限 llmveto / 2FA / NPM_TOKEN 仅 GitHub secret=本地绕过面关闭 / 90 天轮换）+ 同 tag 情形表（①no-op ②dispatch 补建 ③publish成功Release失败 ④非E404 fail-closed（T-R2-02） ⑤EPUBLISHCONFLICT 兜底）+ 真装烟测失败决策树（F-MAJ-01：安全缺陷 deprecate+72h unpublish+公告 / 非安全 deprecate+0.2.1）+ DD-4 ruleset 口径 + 发布日 checklist 与演练/真发关系（R-3/R-4）"
     },
     {
-      "id": "SL-09",
-      "title": "tool-call-shape checker（T2a 安全类）",
-      "type": "AFK",
-      "blocked_by": ["SL-01", "SL-02", "SL-03"],
-      "parent_story": "REQ-V2a-02",
-      "layer": "checkers",
-      "files": ["src/checkers/tool-call-shape.ts（新）", "src/gateway/registry.ts（spec 注册）", "tests/unit/checkers/tool-call-shape.test.ts", "tests/fixtures/threats/T2a-*.yaml", "tests/fixtures/false-positives.json（两类负样本）"],
-      "what_it_delivers": "非流式 + 流式 reducer（extra 累积）+ window_overflow；三子规则（未知工具名/缺 required/arguments 非法 JSON）；无声明 tools 时前两子规则不适用（D-12 FP=0）",
-      "acceptance_criteria": ["AC-V2a-02：13 类形变检出（AC-V2a-09 对手集前置）", "AC-V2a-03：FP=0（两类负样本：未声明+合法 tool_calls→clean；已声明+合法含复杂嵌套→clean）", "AC-V2a-13：arguments 非法 JSON 归 finding（非 error）"],
-      "covers_ac": ["AC-V2a-02", "AC-V2a-03", "AC-V2a-13"],
-      "effort": "L",
-      "loc_budget": 180,
-      "file_budget": 5,
-      "status": "pending"
-    },
-    {
-      "id": "SL-10",
-      "title": "thinking-signature-presence checker（T3a 观测类）",
-      "type": "AFK",
-      "blocked_by": ["SL-02"],
-      "parent_story": "REQ-V2a-03",
-      "layer": "checkers",
-      "files": ["src/checkers/thinking-signature-presence.ts（新）", "src/gateway/registry.ts（spec 注册）", "tests/unit/checkers/thinking-signature-presence.test.ts", "tests/fixtures/threats/T3a-*.yaml（v2a 扩展）"],
-      "what_it_delivers": "双向判定域：请求 thinking 开关 × 响应 thinking 块自洽性，双向均可判 finding；观测类（error 降级不阻断）",
-      "acceptance_criteria": ["AC-V2a-04：双向 fixture（开/关 × 有/无 × 有签名/无签名）判定面全覆盖"],
-      "covers_ac": ["AC-V2a-04"],
-      "effort": "S",
-      "loc_budget": 90,
-      "file_budget": 4,
-      "status": "pending"
-    },
-    {
-      "id": "SL-11",
-      "title": "usage-reconcile checker（T4a 观测类）",
-      "type": "AFK",
-      "blocked_by": ["SL-02"],
-      "parent_story": "REQ-V2a-04",
-      "layer": "checkers",
-      "files": ["src/checkers/usage-reconcile.ts（新）", "src/gateway/registry.ts（spec 注册）", "tests/unit/checkers/usage-reconcile.test.ts", "tests/fixtures/（估算边界样本）"],
-      "what_it_delivers": "三段本地估算 vs 上游自报 usage（ScanUnit.meta）方向性判定；阈值按需求 §4.2 定值内置常量（严格不等边界）；链内无上游自报原值（T4a 行加注已入 S-DOCS）",
-      "acceptance_criteria": ["AC-V2a-05：方向性判定（估算>自报/估算<自报两向 fixture，含阈值边界严格不等）"],
-      "covers_ac": ["AC-V2a-05"],
-      "effort": "M",
-      "loc_budget": 120,
-      "file_budget": 4,
-      "status": "pending"
-    },
-    {
-      "id": "SL-12",
-      "title": "CLI canary rotate + 计数面 + doctor 扩枚举（D-14）",
-      "type": "AFK",
-      "blocked_by": ["SL-03", "SL-07"],
-      "parent_story": "REQ-V2a-06",
-      "layer": "cli + evidence",
-      "files": ["src/cli/index.ts", "src/evidence/aggregate.ts（新）", "tests/unit/cli/canary-rotate.test.ts", "tests/unit/evidence/aggregate.test.ts", "tests/unit/cli/doctor-v2a.test.ts"],
-      "what_it_delivers": "COMMANDS 5→6（canary rotate：运行时经 loopback 端点等待确认 / 网关未运行时写零字节哨兵标记文件）；assertNoV2Stubs 允 canary 禁 report；durable 计数从链聚合（遮蔽语义按 D-14 登记）；doctor 新增 canary-registry + coverage-counters（[DEGRADED] 前缀）",
-      "acceptance_criteria": ["AC-V2a-08：rotate 双路径（在线确认 / 离线标记文件）+ 未知动词 exit 2", "AC-V2a-19③：CLI 无写能力静态断言（cli 不 import src/canary 写侧，导出粒度）", "doctor 输出单测：[DEGRADED] 前缀断言 + #D 枚举 4→6"],
-      "covers_ac": ["AC-V2a-08", "AC-V2a-19③"],
-      "effort": "M",
-      "loc_budget": 170,
-      "file_budget": 5,
-      "status": "pending"
-    },
-    {
-      "id": "SL-13",
-      "title": "evil-relay 13 对手 + 双矩阵扩展（S-RELAY）",
-      "type": "HITL",
-      "blocked_by": ["SL-09", "SL-10", "SL-11"],
-      "parent_story": "REQ-V2a-08",
-      "layer": "test-utils + fixtures",
-      "files": ["testkit/evil-relay.ts（新，需求 §4.2 定值路径）", "tests/fixtures/threats/（13 对手扩展）", "tests/fixtures/false-positives.json（扩展）", "tests/integration/relay-detection.test.ts", "docs/licenses.md（G-RELAY 结论）"],
-      "what_it_delivers": "单一 TS 模块子进程 loopback 模拟器（与 mock-upstream 同族语义、零 Python 零 docker）+ 13 对手逐条行为模板与 fixture + 检出/误报双矩阵 v2a 扩展（TEST §3 回退公式）",
-      "acceptance_criteria": ["AC-V2a-09：13 对手每条 ≥1 fixture 且 expected.verdict/action 显式，runner 可起停", "双矩阵 v2a 项全绿（检出矩阵 + 误报矩阵）", "G-RELAY 结论落 docs/licenses.md 并回填本切片 estimate.chosen"],
-      "covers_ac": ["AC-V2a-09"],
-      "estimate": {
-        "reusable": "fpverify 9 对手行为移植 + 自补 4 类 T2 对手（G-RELAY 许可通过时）",
-        "not_reusable": "按论文描述自建 13 对手，README 标注'对手集为行为复现而非上游同源'（G-RELAY 不可复用时，工作量按 §8.3 清单逐条验收）",
-        "chosen": "reusable",
-        "trigger_evidence": "docs/licenses.md#G-RELAY 结论行"
-      },
-      "effort": "L",
-      "loc_budget": 350,
-      "file_budget": 18,
-      "status": "pending"
-    },
-    {
-      "id": "SL-14",
-      "title": "双矩阵 CI 工作流（S-CI：test.yml + relay-nightly.yml）",
-      "type": "AFK",
-      "blocked_by": ["SL-01"],
-      "parent_story": "REQ-V2a-09",
-      "layer": "ci",
-      "files": [".github/workflows/test.yml（新）", ".github/workflows/relay-nightly.yml（新）"],
-      "what_it_delivers": "test.yml 每 PR（单测+集成+检出/误报矩阵）+ relay-nightly.yml（nightly 30min / 13 对手 4-way 矩阵，端口争用回退串行+45min 须同 PR 改表）；按设计 D-13 置于 tracer 之后、S-RELAY 之前独立落地",
-      "acceptance_criteria": ["AC-V2a-10：双矩阵 @v2 项进 CI 且 nightly 档位与 §8.4 定值一致", "PR 档不含 13 对手（拍板项 #4）", "首个全量 PR 前本地计时决定是否启用 suite 分片（>10min 启用）"],
-      "covers_ac": ["AC-V2a-10"],
-      "effort": "S",
-      "loc_budget": 120,
-      "file_budget": 2,
-      "status": "pending"
-    },
-    {
-      "id": "SL-15",
-      "title": "文档订正与背离登记（S-DOCS：AC-16 七处 + 拍板项同批订正）",
-      "type": "AFK",
+      "id": "RL-05",
+      "title": "README 双语全量 + 术语对照表 + parity 脚本（REQ-REL-03）",
+      "type": "docs+tools",
       "blocked_by": [],
-      "parent_story": "REQ-V2a-10 + REQ-V2a-14",
-      "layer": "docs + tests",
-      "files": ["docs/issues/2-design-v1.md", "docs/issues/4-test-validation.md", "docs/issues/5-roadmap.md", "docs/plans/2026-09-27-v2a-requirements.md（AC-V2a-17 占位名等）", "tests/unit/doc-consistency.test.ts（断言域扩展）"],
-      "what_it_delivers": "AC-V2a-16 文档订正七处（T2b 移出 v2 验收、latency 标量背离加注、T4a 无原值加注、T2c 行订正等）+ 拍板项同批订正（#B 标记文件、#C 漏检登记、#D doctor 枚举、#G code-unit 加注、AC-V2a-17 头名 x-llmveto-session-id）——全部由 doc-consistency grep 型断言把守",
-      "acceptance_criteria": ["AC-V2a-16：七处订正逐条 grep 可断言", "AC-V2a-15：REQ 登记表 T2c 行加注内容显式化", "doc-consistency.test.ts 扩展覆盖 #B/#C/#D/#G 与 AC-V2a-17 头名"],
-      "covers_ac": ["AC-V2a-15", "AC-V2a-16"],
+      "parent_story": "REQ-REL-03",
+      "layer": "release",
+      "files": [
+        "README.md",
+        "README.zh-CN.md",
+        "CONTEXT.md",
+        "scripts/check-readme-parity.mjs"
+      ],
+      "what_it_delivers": "README.md=English 全量（现中文 151 行内容为基线逐章对等翻译，能力/环境变量/CLI 三表行级对齐）；README.zh-CN.md=中文全量迁入（章节标题序列 diff=0 自检留档）；两文件首行互链；CONTEXT.md 新增 Glossary 节（26 受控词英文定译 + Avoid 英文列 + vetting 注释 + evidence/action_taken 保留原名）；check-readme-parity.mjs（章节标题序列 + 三表行数比对）作为 PR 检查单机器前置项 + 复审触发约定（任一 README 结构性改动须附运行输出，R2 A-R2-MN-01/T-R2-03/F-R2-01）",
+      "acceptance_criteria": [
+        "AC-REL-03a：parity 脚本通过 + 三表行级人工核对留档 + 迁入 diff=0 自检",
+        "AC-REL-03b：Glossary 覆盖 26 词含 Avoid 列与注释"
+      ],
+      "covers_ac": [
+        "AC-REL-03a",
+        "AC-REL-03b"
+      ],
+      "effort": "L",
+      "status": "done",
+      "notes": "README.md=English 全量 + README.zh-CN.md 中文迁移（首行互链）；stale 内容随迁修正（分发承诺 bullet：private 移除/npm registry 发布/release:gate 门链口径；快速开始补 npm i -g 主路径）——标题序列不动；CONTEXT.md Glossary 26 行（25 受控词 + evidence 保留原名；vetting 行附 avoid 语义注）；check-readme-parity.mjs：中英 10 标题冻结对表逐对相等 + 5 张表行数序列相等 [5,8,9,7,6] + --check-migration 迁入自检 diff=0 PASS；能力表/环境变量表/CLI 表行级人工核对=翻译逐行对应（本切片同作业完成）"
+    },
+    {
+      "id": "RL-06",
+      "title": "SECURITY.md + CONTRIBUTING.md（REQ-REL-04）",
+      "type": "docs",
+      "blocked_by": [],
+      "parent_story": "REQ-REL-04",
+      "layer": "release",
+      "files": [
+        "SECURITY.md",
+        "CONTRIBUTING.md"
+      ],
+      "what_it_delivers": "SECURITY.md（英文）：支持版本表 0.2.x、GitHub 私密漏洞报告渠道、best-effort 无 SLA、不承诺功能请求；CONTRIBUTING.md（英文）：issues 优先、PR 须过全量测试门+覆盖率门（80%）+12 道 pre-commit 门+Gate MW 走查链、开发环境 Bun ≥1.1 + Node ≥18、scripts 实况命令、parity 触发约定；AC-REL-04a 核对基准逐条一致（核对记录留档）",
+      "acceptance_criteria": [
+        "AC-REL-04a：两文件与仓库实况逐条一致且核对记录留档"
+      ],
+      "covers_ac": [
+        "AC-REL-04a"
+      ],
       "effort": "S",
-      "loc_budget": 120,
-      "file_budget": 6,
-      "status": "pending"
+      "status": "done",
+      "notes": "SECURITY.md/CONTRIBUTING.md 英文（DD-5/DR-009/DR-010 新披露）：SECURITY=支持版本表(0.2.x)/GitHub 私密漏洞报告（无公开邮箱）/scope=in:检测绕过·阻断失效·evidence 链失真·fail-closed 契约破坏，out:已登记残余风险=契约非漏洞/best-effort 无 SLA 不承诺功能请求；CONTRIBUTING=issues 优先/PR 保守口径（CI 覆盖率 80% 门 + 本地 pre-commit 门 + 维护者侧证据绑 HEAD 走查）/Bun≥1.1+Node≥18/命令表与 package.json scripts 实况逐条一致（AC-REL-04a）/CONTEXT.md 术语冻结引用/双语 README 同 PR 规则"
+    },
+    {
+      "id": "RL-07",
+      "title": "fail-closed 边界登记核对（REQ-REL-05，零代码）",
+      "type": "docs",
+      "blocked_by": [
+        "RL-05"
+      ],
+      "parent_story": "REQ-REL-05",
+      "layer": "release",
+      "files": [
+        "README.md",
+        "README.zh-CN.md",
+        "docs/release/boundary-checklist.md（或并入 runbook）"
+      ],
+      "what_it_delivers": "双语 README fail-closed 边界段（英文定译 'No retry or failover upstream…'）；威胁模型 T0 行 + README 分发承诺段逐点核对清单留档；src/ 零改动断言（git diff <base> -- src/ 为空）",
+      "acceptance_criteria": [
+        "AC-REL-05a：双语核对清单逐点打勾留档 + src/ 零改动断言成立"
+      ],
+      "covers_ac": [
+        "AC-REL-05a"
+      ],
+      "effort": "S",
+      "status": "done",
+      "notes": "双语 fail-closed 边界 bullet 落 README 中/英分发承诺段（英文定译落地版把候选句 audit record 按术语表定为 evidence record）；docs/release/boundary-checklist.md 逐点留档（T0 行 L119 基准 + 双 bullet + src 零改动 base=bd4bb40 diff 0 行 + parity 复跑 PASS）"
+    },
+    {
+      "id": "RL-08",
+      "title": "CHANGELOG.md 收口（REQ-REL-06）",
+      "type": "docs",
+      "blocked_by": [
+        "RL-01",
+        "RL-02",
+        "RL-03",
+        "RL-04",
+        "RL-05",
+        "RL-06",
+        "RL-07"
+      ],
+      "parent_story": "REQ-REL-06",
+      "layer": "release",
+      "files": [
+        "CHANGELOG.md"
+      ],
+      "what_it_delivers": "CHANGELOG.md（英文，Keep a Changelog 轻量风）首版 [0.2.0] 节概括 v1 能力（扫描/裁决/阻断/evidence 链/CLI），不逐 commit 罗列；作为 GitHub Release 正文来源",
+      "acceptance_criteria": [
+        "AC-REL-06a：CHANGELOG [0.2.0] 节成立且与版本/tag 严格一致约束配套（Gate 0 绿）"
+      ],
+      "covers_ac": [
+        "AC-REL-06a",
+        "AC-REL-02a"
+      ],
+      "effort": "S",
+      "status": "done",
+      "notes": "CHANGELOG.md 英文 Keep a Changelog 轻量风：[0.2.0] - 2026-10-09 节概括 v1 能力（扫描面/凭据拦截/隐形字符/双向自洽/受管过闸/路径路由/evidence 链/T0 韧性/CLI 5 命令/分发门链）+ Security 节（2026-09-27 四缺陷）+ Known limitations（引用残余风险登记表，evidence 尾截断=负契约测试）；GitHub Release 正文来源（release.yml awk index 提取）；[0.2.0] 链接指向 releases/tag/v0.2.0"
     }
-  ],
-  "execution_order": ["SL-01", "SL-15", "SL-03", "SL-05", "SL-02", "SL-06", "SL-04", "SL-07", "SL-10", "SL-11", "SL-14", "SL-09", "SL-08", "SL-12", "SL-13"],
-  "dependency_graph": {
-    "SL-01": [],
-    "SL-15": [],
-    "SL-03": [],
-    "SL-05": [],
-    "SL-02": ["SL-01"],
-    "SL-06": ["SL-05"],
-    "SL-04": ["SL-03"],
-    "SL-07": ["SL-03", "SL-06"],
-    "SL-10": ["SL-02"],
-    "SL-11": ["SL-02"],
-    "SL-14": ["SL-01"],
-    "SL-09": ["SL-01", "SL-02", "SL-03"],
-    "SL-08": ["SL-05", "SL-07"],
-    "SL-12": ["SL-03", "SL-07"],
-    "SL-13": ["SL-09", "SL-10", "SL-11"]
-  },
-  "regression_gates": {
-    "per_slice": ["npx vitest run", "npx tsc --noEmit", "npx xp-gate check --all"],
-    "architecture": ["tests/unit/architecture-boundaries.test.ts（v2a 扩展：canary 层 + checkers 不 import canary + cli 写侧导出粒度）"]
-  },
-  "traceability": {
-    "uncovered_reqs": [],
-    "note": "15 REQ 全覆盖：REQ-V2a-11 拆 SL-06/SL-07，REQ-V2a-05 由 SL-05+SL-08 共同承载（SL-05 为 registry 半、SL-08 为检测半），REQ-V2a-14 并入 SL-15。27 AC 全部落片（07/18/19 跨切片分层断言：单元级与经网关级分列）。"
-  }
+  ]
 }

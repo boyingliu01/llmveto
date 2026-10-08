@@ -23,6 +23,10 @@ var/*
 # Sprint worktrees (isolated dev branches)
 .worktrees/
 
+# Retired-sprint state backups + archlinter local cache (07b 公开面核查项，publication-runbook §2)
+.sprint-history/
+.archlint-cache/
+
 # xp-gate hook artifacts (local quality-gate reports/history, not project state)
 .xp-gate/
 .quality-history.jsonl

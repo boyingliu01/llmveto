@@ -1,151 +1,153 @@
+English | [简体中文](README.zh-CN.md)
+
 # llmveto
 
-本地 LLM 流量安全网关 daemon — 让 agent 与 LLM API 之间**经由已支持接入路径重定向的**流量可验证、可阻断、可审计。
+A local LLM traffic security gateway daemon — making traffic between agents and LLM APIs **rerouted through supported onboarding paths** verifiable, blockable, and auditable.
 
-> 背景：第三方中转站对 coding agent 构成系统性威胁（UCSB 实测 428 个中转站中 9 个向 tool-call 注入恶意代码；CISPA 实测 45.83% 端点模型指纹不过关）。
-> 现有工具两极分化：观测型代理不验证不阻断，agent 执行防火墙看不见 LLM 流量。
-> **llmveto 填补的空白 = LLM 流量层的确定性验证 + fail-closed 阻断。**
+> Background: third-party LLM relays pose a systemic threat to coding agents (UCSB measured 9 out of 428 relays injecting malicious code into tool calls; CISPA measured 45.83% of endpoints failing model-fingerprint checks).
+> Existing tools are polarized: observational proxies neither verify nor block, while agent execution firewalls cannot see LLM traffic.
+> **The gap llmveto fills = deterministic verification at the LLM traffic layer + fail-closed blocking.**
 
-## v1 能做什么、不能做什么（必读）
+## What v1 does and does not do (read this first)
 
-| | v1（当前） |
+| | v1 (current) |
 |---|---|
-| **提供** | 出站凭据拦截（T1b，`block`）· 隐形字符检测（T2c，非流式阻断 / 流式终止）· 模型**字段一致性**告警（T3a 子集）· 受管路径过闸 · 上游故障 fail-closed（502 + 留痕，daemon 存活）· 全量 evidence 留痕 + `llmveto verify` |
-| **不提供** | 数据外泄检测（T1a，金丝雀属 v2）· tool-call **结构**判定（T2a，RCE 级，v2；注：tool-call **载荷**已进扫描面，见下）· 响应注入防护（T2b，v2）· 模型**真实性**证明（v2 指纹）· usage 对账（T4x，v2）· 旁路发现（v3）· TLS 拦截（v3） |
-| **阻断粒度** | 流式响应已开始转发的字节**不可撤回**；v1 的流式阻断 = 终止流，不是吞掉字节 |
+| **Provides** | Outbound credential interception (T1b, `block`) · Invisible-character detection (T2c, response-level rejection for non-streaming / stream termination for streaming) · Model **field-consistency** warning (T3a subset) · Vetting of managed paths · Upstream-failure fail-closed (502 + evidence trail, daemon survives) · Full evidence trail + `llmveto verify` |
+| **Does not provide** | Data-exfiltration detection (T1a, canaries are v2) · Tool-call **structure** judgment (T2a, RCE-grade, v2; note: tool-call **payloads** are already in the scan surface, see below) · Response-injection protection (T2b, v2) · Model **authenticity** proof (v2 fingerprint) · Usage reconciliation (T4x, v2) · Bypass discovery (v3) · TLS interception (v3) |
+| **Blocking granularity** | Bytes of a streaming response already forwarded are **irrevocable**; v1's streaming block = stream termination, not swallowing bytes |
 
-**扫描面口径（2026-09-27 修复后）**：checker 能看到 `messages[*].content` / `system` / `tools` / 自定义 `extra_headers`，
-以及**工具调用载荷** `tool_calls[*].function.arguments`（含 legacy `function_call`，请求侧与响应侧均含）。
-每个扫描单元同时产出"原始文本"与"转义已还原文本"（`\uXXXX` / `\u{…}` / `\xXX`）两份投影，两份都扫——
-故**用转义写法书写隐形字符不再能绕过检测**；多重反斜杠（`\\uXXXX` 等）在还原时最内层 `\uXXXX` 成对塌缩，
-同样落入还原投影，不额外构成规避面。仍**不**覆盖：URL 编码（`%E2%80%8B`）、base64 等二次编码、
-NFKC 归一化后同形变体、自定义 PUA 编码、认证类头（`Authorization` 等 6 项按设计排除出扫描单元，见 REQ §T1b 行）。
-**tool-call 的"结构"判定**（参数形态 / 危险命令 / 越权工具名）属 v2，v1 对"用正常字符写出的恶意命令"不判定。
+**Scan-surface statement (after the 2026-09-27 fixes)**: checkers see `messages[*].content` / `system` / `tools` / custom `extra_headers`,
+plus **tool-call payloads** `tool_calls[*].function.arguments` (including legacy `function_call`, on both request and response sides).
+Each scan unit produces two projections — "raw text" and "unescape-restored text" (`\uXXXX` / `\u{…}` / `\xXX`) — and both are scanned, so
+**writing invisible characters with escape sequences no longer evades detection**; multiple backslashes (`\\uXXXX` etc.) collapse to the innermost `\uXXXX` pair during restoration and
+fall into the restored projection as well, adding no evasion surface. Still **not** covered: URL encoding (`%E2%80%8B`), base64 and other second-layer encodings,
+NFKC-normalized homoglyph variants, custom PUA encodings, and authentication headers (`Authorization` and 5 more are excluded from scan units by design, see REQ §T1b row).
+**Tool-call "structure" judgment** (argument shape / dangerous commands / unauthorized tool names) belongs to v2; v1 does not judge "malicious commands written in ordinary characters".
 
-完整口径见 [REQ §v1 残余风险登记表](docs/issues/1-req-threat-model.md)。**装上网关 ≠ 已被保护**：未接入客户端的流量在 v1 完全不受管。
+For the full statement see [REQ §v1 residual-risk register](docs/issues/1-req-threat-model.md). **Installing the gateway ≠ being protected**: traffic from clients that are not onboarded is entirely unmanaged in v1.
 
-## 文档
+## Documentation
 
-| 文件 | 内容 |
+| File | Contents |
 |---|---|
-| [docs/issues/1-req-threat-model.md](docs/issues/1-req-threat-model.md) | 原始需求与威胁模型（T1–T4 / P1–P2）+ **§裁决与动作语义**（verdict/action 术语、行为矩阵、evidence 信任边界）+ **§v1 残余风险登记表** |
-| [docs/issues/2-design-v1.md](docs/issues/2-design-v1.md) | 架构设计 v1 — 反代核 + checker 注册表 + fail-closed 策略 + 扫描单元 + 三台性能门 |
-| [docs/issues/3-reuse-list.md](docs/issues/3-reuse-list.md) | 复用与集成清单（含许可核实状态与运行时依赖） |
-| [docs/issues/4-test-validation.md](docs/issues/4-test-validation.md) | 验证方案 — 可测试性契约 + 五件套（逐项 `@v1/@v2/@v3`）+ evidence 字段表 |
-| [docs/issues/5-roadmap.md](docs/issues/5-roadmap.md) | v1/v2/v3 分期路线；**v1 验收条目的唯一权威清单** |
-| [docs/delphi-panel.md](docs/delphi-panel.md) | 评审专家团配置（opencode + example-provider 三模型） |
+| [docs/issues/1-req-threat-model.md](docs/issues/1-req-threat-model.md) | Original requirements and threat model (T1–T4 / P1–P2) + **§Verdict and action semantics** (verdict/action terminology, behavior matrix, evidence trust boundary) + **§v1 residual-risk register** |
+| [docs/issues/2-design-v1.md](docs/issues/2-design-v1.md) | Architecture design v1 — reverse-proxy core + checker registry + fail-closed policy + scan units + three performance gates |
+| [docs/issues/3-reuse-list.md](docs/issues/3-reuse-list.md) | Reuse and integration list (incl. license verification status and runtime dependencies) |
+| [docs/issues/4-test-validation.md](docs/issues/4-test-validation.md) | Validation plan — testability contracts + the five-piece suite (item-by-item `@v1/@v2/@v3`) + evidence field table |
+| [docs/issues/5-roadmap.md](docs/issues/5-roadmap.md) | v1/v2/v3 phasing roadmap; **the sole authoritative list of v1 acceptance items** |
+| [docs/delphi-panel.md](docs/delphi-panel.md) | Review panel configuration (opencode + three example-provider models) |
 
-## 架构（v1）
+## Architecture (v1)
 
 ```
-OpenCode / Delphi(XP-Gate)          ── v1 接入（baseURL / .delphi-config 覆写）
-Claude Code / Codex / promptfoo     ── v2 接入
-无法覆写 baseURL 的工具              ── v3 接入（HTTPS_PROXY + NODE_EXTRA_CA_CERTS TLS 拦截）
+OpenCode / Delphi(XP-Gate)          ── v1 onboarding (baseURL / .delphi-config override)
+Claude Code / Codex / promptfoo     ── v2 onboarding
+Tools that cannot override baseURL  ── v3 onboarding (HTTPS_PROXY + NODE_EXTRA_CA_CERTS TLS interception)
         │
-        ▼  仅 v1/v2：loopback baseURL 反向代理（v1 不实现 TLS 拦截）
-   [反代核] ──SSE tee 零缓冲──▶ 客户端
+        ▼  v1/v2 only: loopback baseURL reverse proxy (v1 does not implement TLS interception)
+   [Proxy core] ──SSE tee, zero buffering──▶ client
         │        ▲
-        │        └── 流式命中违规 = 注入 error 事件 + 终止流（已转发字节不撤回）
+        │        └── streaming hit = inject error event + stream termination (forwarded bytes are not recalled)
         ▼
-   [checker 注册表 verdict] → [策略引擎 action: allow/warn/block（redact 属 v3）] → upstream（TLS）
+   [checker registry verdict] → [policy engine action: allow/warn/block (redact is v3)] → upstream (TLS)
         │                                                                              │
-        │                                        上游故障（ECONNRESET/超时/DNS）◀─────┘
-        │                                        → 502 + 留痕，daemon 存活（fail-closed）
+        │                                        upstream failure (ECONNRESET/timeout/DNS) ◀─────┘
+        │                                        → 502 + evidence trail, daemon survives (fail-closed)
         ▼
-   evidence store（append-only JSONL + SHA-256 链；链只防意外损坏与廉价篡改，
-   不抵抗本机同权限对手整链重写；**尾部截断亦不在检测范围内**——删末 N 条后剩余
-   前缀本身即自洽短链，判红需外部锚定，未排期）  ← llmveto verify 校验
+   evidence store (append-only JSONL + SHA-256 chain; the chain defends against accidental corruption and cheap tampering,
+   not against a same-privilege local adversary rewriting the whole chain; **tail truncation is also out of detection scope** —
+   after deleting the last N records the remaining prefix is itself a self-consistent short chain; judging red requires external anchoring, unscheduled)  ← verified by llmveto verify
 ```
 
-## 分发与 runtime 承诺（两个不同的承诺，勿混用）
+## Distribution and runtime promises (two different promises — do not conflate)
 
-- **npm/CLI 分发（已交付；本地 link，不经 npm registry）**：`bun run build` 用 `tsc` 产出纯 ESM 的 `dist/`，`package.json` `bin.llmveto` 指向 `dist/cli/index.js`；本地 clone 后 `npm link` 得 `llmveto` 命令，用**自带 Node ≥ 18** 即可运行（详见 [ADR-0001](docs/adr/0001-node-runtime-distribution.md)）。
-  `package.json` 保持 `"private": true` 是**有意设置**：v1 不发布到 npm registry（`npm publish` 被 npm 阻断属预期），`npm link` 与本地使用不受影响；转为公开发布前须补齐发布流程与构建门（ADR-0001）。
-- **源码运行（开发态）**：`bun run src/cli/index.ts …` 直接跑 `.ts`（Bun 原生）。运行时代码**仅使用 Node 标准库 API**（`node:http` / `node:crypto` / Web Streams），**禁用 Bun-only API**；CI 在 vitest（Node）上执行正是为机器化保证这一约束。
-- **单二进制分发（未交付，不在 v1 承诺内）**：`bun build --compile` 打包为免 runtime 的单文件分属 v2 路线候选，v1 不提供该产物、不承诺命令名。
+- **npm/CLI distribution (published since v0.2.0)**: `bun run build` uses `tsc` to produce a pure-ESM `dist/`, and `package.json` `bin.llmveto` points to `dist/cli/index.js`; `npm i -g llmveto` runs with **the bundled Node ≥ 18** (see [ADR-0001](docs/adr/0001-node-runtime-distribution.md)).
+  Since v0.2.0 the `"private"` flag has been removed — the promotion path reserved by ADR-0001 is fulfilled: the release process = an explicit gate chain in the release workflow (`npm run release:gate`, including a pure-Node smoke test); see [docs/release/publishing.md](docs/release/publishing.md).
+- **Running from source (development mode)**: `bun run src/cli/index.ts …` executes `.ts` directly (Bun-native). Runtime code **uses only Node standard-library APIs** (`node:http` / `node:crypto` / Web Streams) and **no Bun-only APIs**; CI runs on vitest (Node) precisely to machine-enforce this constraint.
+- **Single-binary distribution (not delivered, outside v1 promises)**: `bun build --compile` into a runtime-free single file is a v2 roadmap candidate; v1 does not provide that artifact and makes no command-name promise.
+- **Upstream fault-tolerance boundary (explicit in v1)**: **No retry and no failover upstream.** An upstream failure is answered fail-closed per request (502 + an `llmveto:upstream-error` evidence record) and the daemon survives; upstream resilience is a v2 operations concern. See the [threat-model T0 row](docs/issues/1-req-threat-model.md).
 
-> ⚠️ `.ts` 源码不是 Node 可直接运行的分发物（`.ts` 说明符 / 参数属性 / `import.meta.main` 三处不兼容）——分发必须走 `dist/`，见 ADR-0001。
+> ⚠️ `.ts` sources are not a Node-runnable distribution artifact (`.ts` specifiers / parameter properties / `import.meta.main` — three incompatibilities); distribution must go through `dist/`, see ADR-0001.
 
-## 快速开始（安装 · 部署 · 试用）
+## Quick start (install · deploy · try)
 
 ```bash
-# 1) 构建分发物并链接出 llmveto 命令（也可直接用 bun 跑源码，见下）
-bun install
-bun run build && npm link        # 之后可直接 `llmveto <cmd>`；开发态亦可用 `bun run llmveto <cmd>`
+# 0) Install: npm i -g llmveto (after release); from source: bun install && bun run build && npm link
+#    Then `llmveto <cmd>` works directly; in development mode also `bun run llmveto <cmd>`
 
-# 2) 配置上游 + 启动后台守护进程（loopback-only，默认 127.0.0.1:8787）
-export LLMVETO_UPSTREAM_BASE_URL=https://api.openai.com   # catch-all；或用 LLMVETO_UPSTREAMS 走路由表
-llmveto start                    # 派生后台 daemon，立即返回；pid/url/evidence 落在 state 目录
+# 1) Configure the upstream + start the background daemon (loopback-only, default 127.0.0.1:8787)
+export LLMVETO_UPSTREAM_BASE_URL=https://api.openai.com   # catch-all; or use LLMVETO_UPSTREAMS for a routing table
+llmveto start                    # spawns a background daemon and returns immediately; pid/url/evidence live in the state dir
 
-# 3) 让受管客户端的流量经网关（写真实配置文件 baseURL → 网关路由路径）
-llmveto doctor --write-managed-config   # 把 OpenCode/Delphi 的受管项指向 http://127.0.0.1:8787/<client>/<provider>
-llmveto status                          # running pid=… url=…（真实探活，僵尸 pid 文件会被识别为 not running）
+# 2) Route managed clients through the gateway (writes real config-file baseURLs → gateway routing paths)
+llmveto doctor --write-managed-config   # points OpenCode/Delphi managed entries at http://127.0.0.1:8787/<client>/<provider>
+llmveto status                          # running pid=… url=… (real liveness probe; stale pid files are reported as not running)
 
-# 4) 试用后审计留痕 + 停止
-llmveto verify                          # 校验 evidence SHA-256 链完整性
+# 3) Audit the trail after trying it + stop
+llmveto verify                          # verifies the integrity of the evidence SHA-256 chain
 llmveto stop
 ```
 
-**路径路由约定**：客户端打 `POST /<client>/<provider>/v1/chat/completions`，网关据此推导 `client`+`provider_id` 身份，再按 `LLMVETO_UPSTREAMS`（JSON 表，键 `"client/provider"` 或 `"client/*"`）解析目标 upstream；未命中回落 `LLMVETO_UPSTREAM_BASE_URL`（catch-all）；皆无则 **fail-closed 返回 502 `llmveto:no-upstream-route`**，不转发。
+**Path-routing convention**: the client sends `POST /<client>/<provider>/v1/chat/completions`; the gateway derives the `client`+`provider_id` identity from the path, then resolves the target upstream via `LLMVETO_UPSTREAMS` (a JSON table keyed by `"client/provider"` or `"client/*"`); on miss it falls back to `LLMVETO_UPSTREAM_BASE_URL` (catch-all); if neither exists it **fails closed with 502 `llmveto:no-upstream-route`** and does not forward.
 
-**环境变量**：
+**Environment variables**:
 
-| 变量 | 作用 |
+| Variable | Purpose |
 |---|---|
-| `LLMVETO_PORT` | 监听端口，默认 `8787`；设 `0` 抢占 ephemeral 端口（实际地址写入 `gateway.url`） |
-| `LLMVETO_STATE_DIR` | pid/url/evidence 目录，默认 `~/.llmveto` |
-| `LLMVETO_UPSTREAM_BASE_URL` | catch-all 上游 base URL |
-| `LLMVETO_UPSTREAMS` | 路径路由表（JSON 对象）；解析失败 → 启动即 fail-fast |
-| `LLMVETO_MODELS_SNAPSHOT` | OpenCode 模型目录快照文件；设置后 `GET /opencode/models` 本地伺服（锁定 models URL，P1 缓解） |
-| `LLMVETO_GATEWAY_URL` | `doctor` 探活/漂移基准地址，默认 `http://127.0.0.1:8787` |
-| `LLMVETO_OPENCODE_CONFIG` / `LLMVETO_DELPHI_CONFIG` | 覆写受管配置文件位置（默认落各客户端真实路径） |
+| `LLMVETO_PORT` | Listen port, default `8787`; set `0` to grab an ephemeral port (the actual address is written to `gateway.url`) |
+| `LLMVETO_STATE_DIR` | Directory for pid/url/evidence, default `~/.llmveto` |
+| `LLMVETO_UPSTREAM_BASE_URL` | Catch-all upstream base URL |
+| `LLMVETO_UPSTREAMS` | Path routing table (JSON object); parse failure → fail-fast at startup |
+| `LLMVETO_MODELS_SNAPSHOT` | OpenCode model-catalog snapshot file; when set, `GET /opencode/models` is served locally (models URL locked, P1 mitigation) |
+| `LLMVETO_GATEWAY_URL` | Base URL for `doctor` liveness/drift checks, default `http://127.0.0.1:8787` |
+| `LLMVETO_OPENCODE_CONFIG` / `LLMVETO_DELPHI_CONFIG` | Override the managed config file locations (default: each client's real path) |
 
-## 开发环境
+## Development environment
 
-要求：**Bun ≥ 1.1**（包管理 + 测试/编译驱动）、**Node ≥ 18**（测试运行环境 + 分发物运行）。
+Requirements: **Bun ≥ 1.1** (package management + test/build driver) and **Node ≥ 18** (test runtime + running the distribution artifact).
 
-| 命令 | 用途 |
+| Command | Purpose |
 |---|---|
-| `bun install` | 安装依赖 |
-| `bun run test` | 全量测试（vitest on Node） |
-| `bun run test:coverage` | 测试 + 覆盖率门禁（阈值 80%，CI 与 pre-commit 钩子使用） |
+| `bun install` | Install dependencies |
+| `bun run test` | Full test suite (vitest on Node) |
+| `bun run test:coverage` | Tests + coverage gate (threshold 80%; used by CI and the pre-commit hook) |
 | `bun run typecheck` | `tsc --noEmit` |
 | `bun run lint` | oxlint |
 
-> **测试跑 vitest，不跑 `bun test`**：全局 xp-gate pre-commit 钩子对 TypeScript 项目固定执行
-> `npx vitest run --coverage <changed tests>`，并要求 `coverage/coverage-summary.json`。
-> 统一用 vitest 可避免本地绿、提交红的分裂，同时顺带验证运行时的 Node 兼容性。
+> **Tests run vitest, not `bun test`**: the global xp-gate pre-commit hook always runs
+> `npx vitest run --coverage <changed tests>` for TypeScript projects and requires `coverage/coverage-summary.json`.
+> Standardizing on vitest avoids local-green/commit-red splits and additionally verifies Node compatibility of the runtime.
 
 ## CLI
 
-v1 冻结为 5 个命令（未实现的命令不留 stub）。分发物为 `dist/cli/index.js`（`llmveto`）；开发态用 `bun run llmveto <cmd>` 或 `bun run src/cli/index.ts <cmd>`：
+v1 is frozen at 5 commands (no stubs for unimplemented commands). The distribution artifact is `dist/cli/index.js` (`llmveto`); in development mode use `bun run llmveto <cmd>` or `bun run src/cli/index.ts <cmd>`:
 
 ```bash
-llmveto start      # 启动网关（loopback-only，后台 daemon；开发态：bun run src/cli/index.ts start）
-llmveto status     # 查看状态（真实探活，僵尸 pid 文件识别为 not running）
-llmveto stop       # 停止后台 daemon
-llmveto doctor     # 受管配置枚举的覆写/漂移断言 + 端口连通 + evidence 链；--write-managed-config 写真实配置
-llmveto verify     # evidence 链完整性 + schema 断言
+llmveto start      # start the gateway (loopback-only, background daemon; dev mode: bun run src/cli/index.ts start)
+llmveto status     # status (real liveness probe; stale pid files are reported as not running)
+llmveto stop       # stop the background daemon
+llmveto doctor     # managed-config enumeration override/drift assertions + port reachability + evidence chain; --write-managed-config writes real configs
+llmveto verify     # evidence chain integrity + schema assertions
 ```
 
-`report`（计费对账）与 `canary rotate`（金丝雀轮换）属 v2。`doctor` 的 v1 检查项为**封闭枚举**（受管配置覆写/漂移断言 + 端口连通 + `--write-managed-config` + evidence 链可验证），权威清单见 DESIGN §组件 5；TLS/CA 信任检查项随 TLS 拦截能力（v3）才引入，**v1 不注册该检查项**（不放恒空的检查项）。
+`report` (billing reconciliation) and `canary rotate` (canary rotation) belong to v2. v1's `doctor` check items are a **closed enumeration** (managed-config override/drift assertions + port reachability + `--write-managed-config` + evidence-chain verification); the authoritative list is in DESIGN §component 5. TLS/CA trust checks arrive only with TLS interception (v3); **v1 does not register that check item** (no permanently-empty check items).
 
-## 状态
+## Status
 
-v1 产品外壳已补齐（M1–M3）：真实路径路由、adapters 真实读写配置 + doctor 真漂移、可移植 dist 分发（ADR-0001）、后台 daemon 生命周期、CLI 黑盒冒烟 + daemon 生命周期 E2E。安全内核（反代核 / checker / fail-closed / evidence 链）自 v0.1 即真实。版本 `0.2.0`。详见 [ROADMAP](docs/issues/5-roadmap.md)。
+The v1 product shell is complete (M1–M3): real path routing, adapters that truly read/write configs + real doctor drift, portable dist distribution (ADR-0001), background daemon lifecycle, CLI black-box smoke + daemon lifecycle E2E. The security core (proxy core / checkers / fail-closed / evidence chain) has been real since v0.1. Version `0.2.0`. See the [ROADMAP](docs/issues/5-roadmap.md).
 
-**evidence 信任声明（原样引自 [REQ](docs/issues/1-req-threat-model.md)）**：evidence 链的对抗对象是"意外损坏与廉价篡改"，不是"能读写你磁盘的进程"。声称"防篡改"即为过度承诺。
+**Evidence trust statement (quoted verbatim from the [REQ](docs/issues/1-req-threat-model.md))**: the evidence chain's adversary is "accidental corruption and cheap tampering", not "a process that can read and write your disk". Claiming "tamper-proof" would be an over-promise.
 
-### 2026-09-27 安全修复（DeepSeek harness 接管审计发现）
+### 2026-09-27 security fixes (found by the DeepSeek-harness takeover audit)
 
-对安全内核做对抗性审计时确认并修复了 4 处缺陷，每处均附可复现的回归测试：
+An adversarial audit of the security core confirmed and fixed 4 defects, each with a reproducible regression test:
 
-| # | 缺陷 | 影响 | 回归测试 |
+| # | Defect | Impact | Regression test |
 |---|---|---|---|
-| 1 | `dispatch` 未捕获异常 | 上游连接重置（ECONNRESET 等）抛出未处理拒绝 → **整个 daemon 进程被杀**：客户端无响应、该次交互零留痕、此后全部流量失去保护 | `tests/e2e/upstream-failure-resilience.test.ts` |
-| 2 | `verify` 完整性边界过宽 | 链被**整体清空**时原实现报 `ok`；记录被重新编号不报错 | `tests/unit/evidence/verify.test.ts` |
-| 3 | 扫描单元丢失 tool-call 载荷 | `tool_calls[*].function.arguments`（`content` 为 null 时）完全不进扫描单元 → 响应侧 checker 全部落空 | `tests/unit/gateway/scan-unit.test.ts` |
-| 4 | 转义序列绕过检测 | 用 `\u200b` **转义写法**书写隐形字符即判 `clean`（JSON 是唯一传输编码，这是最省事的注入方式）；多重反斜杠变体经最内层塌缩同样被还原投影捕获 | `tests/unit/gateway/scan-unit.test.ts` |
+| 1 | Uncaught exception in `dispatch` | An upstream connection reset (ECONNRESET etc.) threw an unhandled rejection → **the entire daemon process died**: no client response, zero evidence trail for that interaction, and all subsequent traffic lost protection | `tests/e2e/upstream-failure-resilience.test.ts` |
+| 2 | `verify` integrity boundary too loose | The original implementation reported `ok` when the chain was **emptied entirely**; renumbered records went undetected | `tests/unit/evidence/verify.test.ts` |
+| 3 | Scan unit dropped tool-call payloads | `tool_calls[*].function.arguments` (when `content` is null) never entered the scan unit → response-side checkers all missed | `tests/unit/gateway/scan-unit.test.ts` |
+| 4 | Escape-sequence detection bypass | Writing an invisible character with the `\u200b` **escape syntax** was judged `clean` (JSON is the sole transport encoding — the laziest injection route); multi-backslash variants collapse via the innermost pair and are likewise caught by the restored projection | `tests/unit/gateway/scan-unit.test.ts` |
 
-**未修复并已登记的残余风险**（详见 REQ §证据信任边界）：evidence 链的**尾部截断**在本机无外部锚定的前提下原理上不可检测，
-故不修复、只把它写成显式的 negative-contract 测试，防止日后被误读为已覆盖。
+**Unfixed, registered residual risk** (see REQ §evidence trust boundary): **tail truncation** of the evidence chain is undetectable in principle on a machine without external anchoring,
+so it is not fixed — it is written as an explicit negative-contract test to prevent it from later being misread as covered.

@@ -1,0 +1,98 @@
+name: release
+
+# AC-REL-01b（D-02）：tag push（vX.Y.Z 严格三段数字）+ workflow_dispatch 手动补建入口。
+# 失败语义：任一步红 → job 红 → 不 publish 不 Release（步骤顺序天然保证）。
+# 同 tag 重跑语义：① 同 SHA tag 重复 push = GitHub 静默 no-op 不触发（预期行为，非拒绝）；
+# ② workflow_dispatch = 补建 Release 的合法入口（publish 步显式 tag-only 跳过——dispatch 侧
+# GITHUB_REF_TYPE=branch，若仅靠 E404 幂等前置，未发布版本可从任意分支触发 publish，
+# 构成绕过 tag 校验的发布后门，REL-CW R1 ARCH-C-01 处置）；③ publish 成功而 Release 失败
+# → docs/release/publishing.md 决策树；publish 自身命中 EPUBLISHCONFLICT = 并发竞态，
+# registry 已有该版本 → 按已发布兜底跳过（publishing.md §2 情形⑤），非失败。
+# 本文件属公开面（07d 扫描覆盖）：不得含内部端点/人名/凭据字面量。
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - uses: oven-sh/setup-bun@v2
+        # 与 test.yml 同版本钉死（bun 1.3.14）：绿灯构成"同一执行面"证据。
+        with: { bun-version: "1.3.14" }
+
+      - name: Install
+        run: bun install --frozen-lockfile
+      - name: Build
+        run: bun run build
+      - name: Test
+        run: bun run test
+
+      - name: Release gate (authoritative: pack / install-tarball / smoke with Bun-stripped PATH / publish-dry-run)
+        run: npm run release:gate
+
+      - name: Version consistency (tag vs package.json, AC-REL-06a)
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v${VERSION}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} != v${VERSION} (package.json) — AC-REL-06a"
+            exit 1
+          fi
+
+      - name: Publish to npm (tag-only; idempotent precheck; EPUBLISHCONFLICT = already-published fallback)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+            echo "workflow_dispatch run -> publish skipped (tag-push only; dispatch = Release rebuild entry)"
+            exit 0
+          fi
+          if npm view "llmveto@${VERSION}" version 2>/tmp/npm-view.err; then
+            echo "llmveto@${VERSION} already on registry -> skip publish (idempotent)"
+          elif grep -q "E404" /tmp/npm-view.err; then
+            # 权威门已由上一步显式执行；--ignore-scripts 避免 prepublishOnly 重复整链（D-01 防跳过定位）
+            if npm publish --ignore-scripts 2>/tmp/npm-publish.err; then
+              echo "published llmveto@${VERSION}"
+            elif grep -q "EPUBLISHCONFLICT" /tmp/npm-publish.err; then
+              echo "EPUBLISHCONFLICT -> registry already has this version (publish race) -> treat as already-published, skip"
+            else
+              echo "::error::npm publish failed (non-conflict) -> fail-closed"
+              cat /tmp/npm-publish.err
+              exit 1
+            fi
+          else
+            echo "::error::registry query failed (non-E404) -> fail-closed"
+            cat /tmp/npm-view.err
+            exit 1
+          fi
+
+      - name: GitHub Release (body = CHANGELOG section of this version)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BODY="$(awk -v sec="## [${VERSION}]" '
+            index($0, sec) == 1 {flag=1; next}
+            flag && /^## /{exit}
+            flag {print}
+          ' CHANGELOG.md)"
+          if [ -z "$(printf '%s' "${BODY}" | tr -d '[:space:]')" ]; then
+            echo "::error::CHANGELOG.md has no section '## [${VERSION}]' -> fail-closed"
+            exit 1
+          fi
+          TAG="v${VERSION}"
+          if gh release view "${TAG}" > /dev/null 2>&1; then
+            echo "release ${TAG} already exists -> skip create (idempotent)"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            gh release create "${TAG}" --title "llmveto ${TAG}" --notes "${BODY}"
+          else
+            gh release create "${TAG}" --target "${GITHUB_SHA}" --title "llmveto ${TAG}" --notes "${BODY}"
+          fi

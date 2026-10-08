@@ -1,0 +1,72 @@
+{
+  "_schema_version": 1,
+  "artifact": "code-walkthrough-reviewed",
+  "mode": "code-walkthrough",
+  "sprint_id": "sprint-20261008-26",
+  "phase": 4,
+  "gate": "Phase 4 VERIFY delphi code-walkthrough (release-surface executable artifacts)",
+  "review_scope": "scripts/release-gate.mjs / .github/workflows/release.yml / scripts/check-readme-parity.mjs / package.json / CHANGELOG.md（src/ 零改动属 AC-REL-05a 冻结断言，不在走查面）",
+  "verdict": "APPROVED",
+  "timestamp": "2026-10-09T01:55:00+08:00",
+  "consensus_ratio": 1.0,
+  "consensus_percent": 100,
+  "threshold_percent": 90,
+  "rounds_used": 3,
+  "round_budget": 5,
+  "commit": "2d27c0ce3e3df979c816ef847b0056d5c354a734",
+  "commit_note": "走查对象在 2d27c0c 树冻结（R2 处置落点）；其后仅追加文档提交不回灌评审基线",
+  "panel": {
+    "executor": "node var/delphi-r11/delphi-experts.cjs（main 仓 var/ 未跟踪 scratch）",
+    "config": "var/delphi-r11/.delphi-config.json (profile example-provider-flash)",
+    "experts": [
+      { "id": "A", "role": "architecture", "requested_model": "g-qwen3.8-flash", "executed_echo": "qwen3.8-flash" },
+      { "id": "B", "role": "technical", "requested_model": "g-deepseek-flash", "executed_echo": "deepseek-flash" },
+      { "id": "C", "role": "feasibility", "requested_model": "local-qwen3.8-27b", "executed_echo": "Qwen3_8-27B" }
+    ],
+    "checks_final_round": {
+      "all_experts_succeeded": true,
+      "requested_models_distinct": true,
+      "executed_models_distinct": true,
+      "executed_models_match_expected_echo": true
+    }
+  },
+  "rounds": [
+    {
+      "round": 1,
+      "verdicts": { "architecture": "REQUEST_CHANGES", "technical": "FAILED(no json block)", "feasibility": "REQUEST_CHANGES" },
+      "issues_by_severity": { "critical": 2, "major": 3, "minor": 4 },
+      "outcome": "not_passed_expert_failure",
+      "disposition": ".sprint-state/review/rel-cw-r1-disposition.md（2C 修复 / 2M 反驳 / 3m 采纳）",
+      "fix_commit": "a5e0057",
+      "evidence": "var/delphi-r11/rel-cw-experts-r1.json",
+      "model_note": "B 角协议故障（回复无可解析 JSON 裁决块）→ 按纪律全员重跑，无单角补跑"
+    },
+    {
+      "round": 2,
+      "verdicts": { "architecture": "APPROVED", "technical": "REQUEST_CHANGES", "feasibility": "APPROVED" },
+      "consensus_percent": 66.7,
+      "issues_by_severity": { "critical": 0, "major": 2, "minor": 4 },
+      "prior_round_issues_resolved": "9/9（B 角 disposition_assessment 对 R1 全部处置接受）",
+      "outcome": "not_passed",
+      "disposition": ".sprint-state/review/rel-cw-r2-disposition.md（T-R2-01 修复 / T-R2-02 反驳+诊断注 / 2m 采纳）",
+      "fix_commit": "2d27c0c",
+      "evidence": "var/delphi-r11/rel-cw-experts-r2.json"
+    },
+    {
+      "round": 3,
+      "verdicts": { "architecture": "APPROVED", "technical": "APPROVED", "feasibility": "APPROVED" },
+      "confidence": { "architecture": 9, "technical": 9, "feasibility": 9 },
+      "consensus_percent": 100,
+      "issues_by_severity": { "critical": 0, "major": 0, "minor": 2 },
+      "outcome": "passed",
+      "evidence": "var/delphi-r11/rel-cw-experts-r3.json"
+    }
+  ],
+  "residuals_after_consensus": {
+    "critical": 0,
+    "major": 0,
+    "minor": 2,
+    "note": "ARCH-N-02（Release 步错误定位，现有空节 fail-closed 守卫已覆盖静默成功面）；T-R3-N-01（副本↔detectDrift 无构建期校验，src/ 解冻后前移——后续项）。两条均专家自评不阻断"
+  },
+  "report": ".sprint-state/review/rel-cw-consensus.md"
+}

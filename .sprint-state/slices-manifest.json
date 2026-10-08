@@ -221,7 +221,8 @@
         "AC-REL-02a"
       ],
       "effort": "S",
-      "status": "pending"
+      "status": "done",
+      "notes": "CHANGELOG.md 英文 Keep a Changelog 轻量风：[0.2.0] - 2026-10-09 节概括 v1 能力（扫描面/凭据拦截/隐形字符/双向自洽/受管过闸/路径路由/evidence 链/T0 韧性/CLI 5 命令/分发门链）+ Security 节（2026-09-27 四缺陷）+ Known limitations（引用残余风险登记表，evidence 尾截断=负契约测试）；GitHub Release 正文来源（release.yml awk index 提取）；[0.2.0] 链接指向 releases/tag/v0.2.0"
     }
   ]
 }

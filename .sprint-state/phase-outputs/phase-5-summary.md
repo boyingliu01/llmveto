@@ -1,61 +1,21 @@
-# Phase 5/6: SHIP — Phase Summary
+# Phase 5/6: SHIP — Phase Summary（sprint-20261008-26）
 
-- **Sprint**: sprint-20260914-49
-- **Branch**: main (renamed from sprint/2026-09-14-01)
-- **Completed at**: 2026-09-15
-- **Release**: v0.1.0
+## SHIP 执行记录
 
-## Gate 通过状态
-
-| 门禁 | 状态 | 证据 |
+| 步 | 结果 | 证据 |
 |---|---|---|
-| VERSION-GATE | ✅ PASS — VERSION=0.1.0 == package.json.version | `VERSION` + commit `336f73d` |
-| #367 EVIDENCE-GATE | ✅ PASS — alignment_score 96.0% · spec_hash · head_commit | Phase 4 已验证 |
-| feedback-log GATE | ✅ PASS — 6 findings 全部闭合 | Phase 4 已验证 |
+| VERSION-GATE | VERSION 0.2.0 == package.json 0.2.0（Gate 0 每 commit 强制） | pre-commit 输出 |
+| Gate MW 走查链 | PASS —— .code-walkthrough-result.json 绑 push HEAD 4a21cc3 + branch + 1h 有效期；provenance 声明评审树 2d27c0c → HEAD 的 reviewed 工件零字节变化 | push 输出 "GATE MW: CODE WALKTHROUGH VERIFIED" |
+| push | sprint/2026-10-08-01 → origin（pre-push 全门过，无 --no-verify） | origin/sprint/2026-10-08-01 |
+| PR | [#9](https://github.com/boyingliu01/llmveto/pull/9)（含 Summary / Verification / Test plan） | PR URL |
+| CI | test PASS 40s + bench PASS 47s + record skipping（非 tag 预期） | run 37818446604 / 37818446686 |
+| merge | **MERGED 2026-10-08T17:43:27Z**（gh pr merge --merge，merge commit 76b3053） | 本地 main 已 ff 同步 |
 
-## 发布决策
+## 判定语义声明
 
-| 决策点 | 选项 | 用户选择 | 理由 |
-|---|---|---|---|
-| 分支完成方式 | 创建 PR / 直推 main / keep worktree / discard | **直推 main** | 远端为空仓库，无既有代码保护需求；快速初始化 |
+- release.yml 的 publish/Release 语义仍未真触发（首次 tag v0.2.0 push 时验证）——PR 描述与 Test plan 已如实标注为用户触发点，不宣称"已验证"。
 
-## 发布步骤
-
-1. `git branch -m sprint/2026-09-14-01 main` — 重命名工作分支为 main
-2. `git push -u origin main` — 推送全部 19 commits 至远端
-3. GitHub 自动设定 `main` 为默认分支（空仓库首次推送行为）
-
-## 远端验证
-
-```
-git ls-remote --heads origin
-→ refs/heads/main = 336f73d...
-
-gh repo view --json defaultBranchRef
-→ "main"
-```
-
-## Commit 历史（远端 main）
-
-| # | SHA | Message |
-|---|---|---|
-| 1 | `336f73d` | chore(ship): add VERSION file for VERSION-GATE (0.1.0) |
-| 2 | `2e5abb0` | chore(phase-4): mark VERIFY completed + test-alignment PASS + feedback-log |
-| 3 | `5947e8b` | chore(verify): delete dead symbols surfaced by Phase 4 arch review |
-| 4 | `3d30dbb` | chore(phase-3): mark BUILD completed + phase-3-summary.md |
-| 5 | `5c558f1` | test(sl-11,sl-09): extend branch coverage |
-| 6-19 | ... | SL-01 through SL-14 feature commits + phase-1/2 commits |
-
-## status
-
-```
 status: completed
-outputs:
-  - GitHub repo: https://github.com/boyingliu01/llmveto (main branch, v0.1.0)
-  - VERSION file: 0.1.0
-decisions:
-  - 直推 main（远端空仓库初始化，无 PR 必要）
-next_phase_context:
-  - Phase 6 CLOSE: merge 已等效完成（main = 唯一分支 = 全部工作）
-  - 备份 .sprint-state/ → 人工 UAT → emergent issues → 清理
-```
+outputs: [PR #9 merged, main@76b3053, Gate MW 证据 .code-walkthrough-result.json（未入库，push 时点有效）]
+decisions: [Gate MW 证据绑 HEAD 时以 provenance 字段声明 reviewed 树与 push HEAD 的 docs-only delta（评审工件零变化）]
+next_phase_context: [CLOSE：backup .sprint-state → #369 返工指标 → USER ACCEPTANCE（手动，强制）→ emergent issues → worktree 清理；用户触发点三项（前置检查执行 / visibility 翻转 / NPM_TOKEN + tag push）均待用户确认]

@@ -1,86 +1,32 @@
-# Phase 6/6: CLOSE — Phase Summary
+# Phase 6/6: CLOSE — 收尾记录（sprint-20261008-26）
 
-- **Sprint**: sprint-20260914-49
-- **Branch**: main (v0.1.0)
-- **Remote**: https://github.com/boyingliu01/llmveto
-- **Closed at**: 2026-09-15
+## Sprint-state 备份声明
 
-## SHIP→CLOSE GATE
+`.sprint-state/` 本迭代即为**仓库内已跟踪路径**（随 PR #9 / CLOSE PR 入 main@…）——worktree 清理不会丢失任何 sprint 证据；var/delphi-r11/* 执行原始输出（main 仓未跟踪 scratch）按惯例不入库，共识记录已内联关键执行事实（checks / 裁决 / 模型 ID）。
 
-| 条件 | 状态 |
-|---|---|
-| PR merged / 代码在 main | ✅ 直推 main（19 commits） |
-| Release 完成 | ✅ v0.1.0（VERSION + package.json） |
+## #369 返工指标（rework metrics）
 
-## .sprint-state 备份
-
-`.sprint-state/` 已随全部 19 commits 提交至 `origin/main`。
-无独立 worktree（sprint 在主仓库内以分支隔离），无需额外备份路径。
-
-## #369 返工指标
-
-| 指标 | 数值 | 说明 |
+| 返工源 | 数量 | 说明 |
 |---|---|---|
-| 设计评审轮次 | 3 | R1 REQUEST_CHANGES → R2 REQUEST_CHANGES → R3 APPROVED (100%) |
-| 构建 fix cycles | 1 | FB-001 async generator 时序 bug (SL-14) |
-| 覆盖率补强 | 1 次 | branch 75.85% → 83.46% (+17 tests) |
-| BLOCKED REQs | 0 | 全部 14 slice 一次或二次通过 |
-| 总 commits | 19 | 14 功能 + 5 chore/phase |
-| 返工率 | 2/3 rounds (design) = 66.7% | 3 轮评审中前 2 轮有修订 |
+| Delphi 走查轮次 | 3 轮（预算 5） | R1: 2C+3M+4m（含 B 角协议失败全员重跑 1 次）；R2: 2M+4m；R3: 收敛 |
+| 走查驱动修复提交 | 2 | a5e0057（R1 处置）、2d27c0c（R2 处置） |
+| BUILD 期返工 | 1 类 | DD-5 README.zh-CN.md 随包不可排除（npm 11 工具链现实），白名单修订 b7b7ac4 |
+| DESIGN 期残留 Minor 落点 | 3 | 内嵌对应切片验收（slices-manifest notes） |
 
-## USER ACCEPTANCE (UAT)
+## Emergent issues（迭代中发现的新事项）
 
-| 字段 | 值 |
-|---|---|
-| 决策 | **DEFER — 稍后验收** |
-| 时间 | 2026-09-15 |
-| 操作者 | 用户 |
-| 备注 | 代码已推送至 origin/main；用户确认后续手动验证功能后再关闭 |
+1. **EI-01**：npm 11 自动收录 README* 变体（files 白名单/.npmignore/取反均不可排除）→ 工具链现实已写入 release-gate 注释 + DD-5 修订；npm 大版本升级须复核。
+2. **EI-02**：xp-gate sprint-audit 读取 `.sprint-state/phase-outputs/test-alignment-report.json`（非顶层副本）→ 本迭代两副本同步更新；后续 sprint 应只维护 phase-outputs 副本或让审计读顶层。
+3. **EI-03**：Gate MW 证据文件绑 push HEAD + 1h 有效期 → 走查后如有任何提交（含纯文档）需以 provenance 字段声明 reviewed 树→HEAD 的 delta（本迭代做法，已在 phase-5 summary 记录）。
+4. **EI-04（后续技术债）**：T-R3-N-01 —— src/ 解冻后由适配器导出受管字段常量供 release-gate 导入，把 smoke row 6 的运行时校验前移为构建期校验。
 
-## Emergent Issues 登记
+## 用户触发点（CLOSE 后仍开放，均待用户确认执行）
 
-本次 Sprint 未发现需要新增需求/设计的 emergent issues。
-已登记的残余技术债务（来自 Phase 4 feedback-log）：
+1. 07a-07d 公开化前置检查（merge 后、flip 前；runbook = docs/release/publication-runbook.md）
+2. repo visibility 翻转 public + DD-4 tag ruleset 配置
+3. NPM_TOKEN 入 GitHub secret → tag `v0.2.0` push（release.yml 全链真触发）
 
-| ID | 类别 | 描述 | 优先级 | 建议处理 |
-|---|---|---|---|---|
-| EM-001 | tech-debt | Gate 3/7/8/9 本地 SKIP（Windows 缺 bash adapter） | Low | CI (Linux) 环境已覆盖；本地无需修复 |
-| EM-002 | tech-debt | yaml-subset 不支持同缩进 list / anchor / multi-doc | Low | v0.2 评估是否引入成熟 YAML parser 依赖 |
-| EM-003 | improvement | cmdStart 无独立单测（依赖 E2E 覆盖） | Low | 后续可用 `--port 0` + ephemeral 测试 |
+## USER ACCEPTANCE
 
-## Cleanup
-
-| 操作 | 状态 |
-|---|---|
-| worktree 删除 | N/A（无 worktree） |
-| 旧分支清理 | ✅ `sprint/2026-09-14-01` 已 rename → `main`，无残留 |
-| 远端同步 | ✅ `origin/main` = `HEAD` |
-| .sprint-state/ 保留 | ✅ 已提交，供后续回顾 |
-
-## Sprint 总结
-
-```
-项目名称: llmveto — 本地 LLM 流量安全网关
-版本: v0.1.0
-交付时间: 2026-09-14 11:24 → 2026-09-15 15:35 (≈28h)
-Phase 耗时: PREP 1m → DESIGN 14m → BUILD 7h24m → VERIFY 9m → SHIP 56m → CLOSE -
-需求: 14 REQ · 59 AC
-代码: 24 test files · 146 tests · src/ ~15 modules
-质量: tsc clean · vitest green · coverage ≥80% · arch smells 全为 FP/设计内
-发布: GitHub main (boyingliu01/llmveto)
-```
-
-## status
-
-```
-status: paused (UAT deferred)
-outputs:
-  - .sprint-state/phase-outputs/phase-6-summary.md (本文件)
-  - GitHub: https://github.com/boyingliu01/llmveto main@v0.1.0
-decisions:
-  - UAT: DEFER — 用户稍后手动验收
-  - 返工指标: design 3 rounds / build 1 fix cycle / 0 blocked
-next_phase_context:
-  - 用户 UAT 通过后执行: npx xp-gate phase-transition 6 completed --render
-  - 若 UAT 发现新问题 → 归类为 bugfix / enhancement 开新分支
-```
+- 状态：**待用户手动验收**（禁止自动化代办）
+- 验收材料：本文件 + phase-1..5 summaries + [rel-cw-consensus.md](review/rel-cw-consensus.md) + PR #9

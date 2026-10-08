@@ -3,11 +3,11 @@
   "phase": "2",
   "score": 95.5,
   "sprint_id": "sprint-20260914-49",
-  "head_commit": "2ddff28a95a7800c5fac0f823ca3c7d6029cc8c3",
+  "head_commit": "44453745687a9513e10848503e0dee2d4c3f9e75",
   "specification_sha256": "7c50d41ec17288d89bbaff3002da9de9b2891334ffabfbc9c2daaa7432f620ba",
   "spec_hash": "7c50d41ec17288d89bbaff3002da9de9b2891334ffabfbc9c2daaa7432f620ba",
-  "generated_at": "2026-09-27T09:30:00Z",
-  "note_vs_previous_run": "本报告取代 2026-09-15 版（HEAD 5947e8b / spec a51d2504）。期间 specification.yaml 因 AC-VETO-013-04 回退分位数由 p95 改 p50（ADR-0002 补遗三）而变更 hash；测试面由 25 文件/146 用例增至 34 文件/280 用例。",
+  "generated_at": "2026-10-08T06:56:44Z",
+  "note_vs_previous_run": "本报告为 2026-09-27 版（HEAD 2ddff28 / spec 7c50d41e）的 HEAD 对齐刷新：specification.yaml 期间零提交，hash 不变；测试面由 34 文件/280 用例增至 36 文件/327 用例（326 过 + 1 条件 skip），新增面 = e2e/upstream-failure-resilience（上游连接层失败 fail-closed 回归，@test REQ-VETO-002）与 unit/checkers/scan-texts-contract（PWR1-A-M1 处置的 scanTexts 契约机械守卫）；覆盖率四项 86.87/80.03/91.89/90.22 → 89.7/84.16/93.54/92.75。",
   "summary": {
     "total_requirements": 14,
     "requirements_requiring_tests": 13,
@@ -17,10 +17,10 @@
     "acceptance_criteria_requiring_tests": 56,
     "acceptance_criteria_covered": 56,
     "acceptance_criteria_coverage_pct": 100.0,
-    "test_files": 34,
-    "test_cases": 280,
-    "test_cases_passing": 277,
-    "test_cases_skipped_conditional": 3
+    "test_files": 36,
+    "test_cases": 327,
+    "test_cases_passing": 326,
+    "test_cases_skipped_conditional": 1
   },
   "dimension_scores": [
     {
@@ -42,14 +42,14 @@
       "score_pct": 92.5,
       "weight_pct": 20,
       "weighted": 18.5,
-      "note": "2 个后增文件无 @intent 文件头（tests/unit/backlog-integrity.test.ts、tests/unit/toolchain-smoke.test.ts）；两者不在任何 REQ 映射内，属守卫/工具面，不构成规格缺口"
+      "note": "3 个后增文件无 @intent 文件头（tests/unit/backlog-integrity.test.ts、tests/unit/toolchain-smoke.test.ts、tests/unit/checkers/scan-texts-contract.test.ts）；前两者不在任何 REQ 映射内，第三者为 PWR1-A-M1 处置落地的契约机械守卫、头部 JSDoc 写明意图但未带 @intent 标记；三者均属守卫/工具面，不构成规格缺口"
     },
     {
       "dimension": "Edge Case Coverage",
       "score_pct": 90.0,
       "weight_pct": 15,
       "weighted": 13.5,
-      "note": "跨 chunk UTF-8 切分 / malformed SSE / 空链 / 篡改 seq / 非回环 host / 认证头 benign 集 / >512KB 回退 — 全部在册"
+      "note": "跨 chunk UTF-8 切分 / malformed SSE / 空链 / 篡改 seq / 非回环 host / 认证头 benign 集 / >512KB 回退 / 上游连接层失败（ECONNRESET / 超时 / DNS，fail-closed 断言见 e2e/upstream-failure-resilience）— 全部在册"
     },
     {
       "dimension": "Test Data Validity",
@@ -69,7 +69,7 @@
   ],
   "anti_pattern_detected": false,
   "anti_pattern_notes": [
-    "3 个 skip 全部为环境条件门（cli-smoke 的 CAN_BUN/DIST_READY 套、daemon-lifecycle 的 runtime driver 探测、bench out-path-guard 的 runIf(win32)），非掩盖失败；本次 dist 构建后重跑 tests/e2e 相应套件已实跑全绿",
+    "1 个 skip = bench/out-path-guard 符号链接用例（it.skipIf(!canSymlink)：win32 无特权建链失败即条件跳过），非掩盖失败；上一版报告所列的 cli-smoke CAN_BUN/DIST_READY 套与 daemon-lifecycle runtime driver 探测两条条件门，在本次复测中均已实跑（bun 1.3.14 pin + dist 在位），无硬 skip、无空 expect",
     "无 test.skip/xit 硬跳过，无空 expect"
   ],
   "errors": [],
@@ -77,14 +77,14 @@
     "status": "PASS",
     "test_command": "COVERAGE_ALL=1 bunx vitest run --coverage",
     "exit_code": 0,
-    "tests_passed": 277,
-    "tests_skipped": 3,
+    "tests_passed": 326,
+    "tests_skipped": 1,
     "tests_failed": 0,
     "coverage": {
-      "statements_pct": 86.87,
-      "branches_pct": 80.03,
-      "functions_pct": 91.89,
-      "lines_pct": 90.22,
+      "statements_pct": 89.7,
+      "branches_pct": 84.16,
+      "functions_pct": 93.54,
+      "lines_pct": 92.75,
       "threshold_pct": 80,
       "all_above_threshold": true
     },
@@ -93,12 +93,12 @@
       "pre_phase2_locked": true,
       "violations_during_phase2": 0,
       "post_phase2_unlocked": true,
-      "note": "Phase 2 期间零 tests/** 文件修改（工作区 git status 核验）"
+      "note": "冻结语义属原 Phase 2 会话（2026-09-27, 2ddff28）：期间零 tests/** 修改（当时工作区核验）。本次为 HEAD 对齐复测，非冻结窗口执行，tests/** 的演进（73e28fa 安全修复伴随用例、7bb0420 覆盖率补测、PWR 走查处置新增面）均有提交可溯"
     }
   },
   "gate_367_verdict": {
     "status": "PASS",
-    "reason": "alignment_score 95.5% >= 80%; REQ/AC 硬映射完整（tests+bench 合并面）; 277/280 通过 + 3 条件 skip; 覆盖率四项 >= 80%"
+    "reason": "alignment_score 95.5% >= 80%; REQ/AC 硬映射完整（tests+bench 合并面）; 326/327 通过 + 1 条件 skip; 覆盖率四项 >= 80%"
   },
   "v1_deployment_acceptance": {
     "date": "2026-09-27",

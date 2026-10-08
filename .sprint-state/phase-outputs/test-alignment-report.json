@@ -1,117 +1,130 @@
 {
   "alignment_status": "PASS",
-  "phase": "2",
-  "score": 95.5,
-  "sprint_id": "sprint-20260914-49",
-  "head_commit": "2ddff28a95a7800c5fac0f823ca3c7d6029cc8c3",
-  "specification_sha256": "7c50d41ec17288d89bbaff3002da9de9b2891334ffabfbc9c2daaa7432f620ba",
-  "spec_hash": "7c50d41ec17288d89bbaff3002da9de9b2891334ffabfbc9c2daaa7432f620ba",
-  "generated_at": "2026-09-27T09:30:00Z",
-  "note_vs_previous_run": "本报告取代 2026-09-15 版（HEAD 5947e8b / spec a51d2504）。期间 specification.yaml 因 AC-VETO-013-04 回退分位数由 p95 改 p50（ADR-0002 补遗三）而变更 hash；测试面由 25 文件/146 用例增至 34 文件/280 用例。",
+  "phase": "4",
+  "score": 98.5,
+  "sprint_id": "sprint-20261008-26",
+  "head_commit": "4726e705d5e772dea4cfebe674df6071ad4ee17a",
+  "specification_sha256": "1d2397d147e4bdf2a4056674fe115d0bab3c41928356d9df8c82a876093d4e87",
+  "spec_hash": "1d2397d147e4bdf2a4056674fe115d0bab3c41928356d9df8c82a876093d4e87",
+  "generated_at": "2026-10-09T02:00:00+08:00",
+  "hash_note": "spec_hash = specification.yaml 工作副本字节（本检出现 CRLF：1d2397d1…；LF 规范形 = 78699f14…，与 xp-gate computeFileHash 的 utf8 文件读取口径一致）",
+  "note_vs_previous_run": "本报告取代 2026-10-08 版（HEAD 4445374，SPEC-V2A-001，score 95.5）。本迭代 DESIGN（10d431b）将 specification.yaml 整体改写为 SPEC-REL-001（GitHub 开源发布，7 REQ/13 AC）——hash 变更为规格换代的预期结果而非漂移；测试面（tests/ + bench/ = 43 文件 / 327 用例）自 4445374 起零变更（src/ 冻结迭代，无新增用例），基线 326 passed | 1 skipped 不变。SPEC-REL-001 的验证形态按规格头部声明 = 脚本/runbook/清单留档（发布面交付，src/ 零改动），vitest 面仅承担回归下界。",
+  "head_commit_semantics": "head_commit = phase-transition 时点的 HEAD（4726e70，审计强制绑定）；被测对象（tests/ + bench/ + src/ + specification.yaml）自 2d27c0c 起零字节变化（4726e70 仅追加 .sprint-state 文档），全量 release:gate 重跑绑定 2d27c0c 树；head_commit ≠ 报告引入提交属设计语义",
   "summary": {
-    "total_requirements": 14,
-    "requirements_requiring_tests": 13,
-    "requirements_covered": 13,
-    "requirement_coverage_pct": 100.0,
-    "total_acceptance_criteria": 59,
-    "acceptance_criteria_requiring_tests": 56,
-    "acceptance_criteria_covered": 56,
-    "acceptance_criteria_coverage_pct": 100.0,
-    "test_files": 34,
-    "test_cases": 280,
-    "test_cases_passing": 277,
-    "test_cases_skipped_conditional": 3
+    "total_requirements": 7,
+    "requirements_requiring_tests": 1,
+    "requirements_covered": 1,
+    "requirement_coverage_pct": 100,
+    "total_acceptance_criteria": 13,
+    "acceptance_criteria_requiring_tests": 0,
+    "acceptance_criteria_with_verification_form": 13,
+    "acceptance_criteria_coverage_pct": 100,
+    "test_files": 43,
+    "test_cases": 327,
+    "test_cases_passing": 326,
+    "test_cases_skipped_conditional": 1,
+    "note": "requirements_requiring_tests=1 指 test_coverage_requirements 非全 false 的 REQ（仅 REQ-REL-01 integration:true）；13 AC 全部有非 vitest 形态的验证落点（脚本/runbook/清单/CI 语义），vitest 面按规格声明仅承担回归下界",
+    "test_cases_note": "326 passed | 1 skipped 与 4445374 版报告持平；43 文件 = tests/ 31 + bench/ 12"
   },
   "dimension_scores": [
     {
       "dimension": "Requirement Coverage",
-      "score_pct": 100.0,
+      "score_pct": 100,
       "weight_pct": 30,
-      "weighted": 30.0,
-      "note": "tests/ 面 12/13 REQ 有 @test；REQ-VETO-013 的 @test/@covers 全量落在 bench/（AC-013-01..05 逐条在标注），合并后 13/13；REQ-VETO-001 按 test_coverage_requirements 全 false 豁免"
+      "weighted": 30,
+      "note": "REQ-REL-01（唯一 test_coverage_requirements 非全 false：integration=true）由 scripts/release-gate.mjs 10 步集成门链承载（pack→install-tarball→smoke 8 行判据→publish-dry-run），本机全量重跑 PASS ×2（BUILD 期 + REL-CW R2 处置后 2d27c0c 树）；其余 6 REQ 全 false 豁免（SPEC-REL-001 头部声明：发布面交付，验证形态以脚本/runbook/清单留档为主）"
     },
     {
       "dimension": "Acceptance Criteria Coverage",
-      "score_pct": 100.0,
+      "score_pct": 100,
       "weight_pct": 25,
-      "weighted": 25.0,
-      "note": "51/56 AC 在 tests/ 有 @covers，AC-VETO-013-01..05 在 bench/ 标注补齐；AC-VETO-001-01..03 豁免（文档+工具门禁）"
+      "weighted": 25,
+      "note": "13/13 AC 验证落点：01a=release-gate 冒烟 8 行（PASS ×2）；01b=release.yml publish 三分支语义（静态评审 3 轮 + Gate 12 YAML 门；真验证=用户 tag push 触发点）；01c=publishing.md §3 凭据口径（用户侧执行）；02a=release.yml Release 步 + dispatch 补建（同 01b）；03a=check-readme-parity PASS（10 标题逐对 + 5 表行数 [5,8,9,7,6]）+ 行级人工核对留档；03b=CONTEXT.md Glossary 26 行冻结；04a=S6 切片核对记录（scripts 实况 13 条 + 12 门名）；05a=docs/release/boundary-checklist.md 5 点记录（含 git diff bd4bb40..HEAD -- src/ 为空实测）；06a=Gate 0 VERSION==package.json + CHANGELOG [0.2.0] 节；07a-d=docs/release/publication-runbook.md §1-§5（执行时点=merge 后 flip 前，用户触发点，超出本迭代验收窗口）"
     },
     {
       "dimension": "Test Intent Correctness",
-      "score_pct": 92.5,
+      "score_pct": 100,
       "weight_pct": 20,
-      "weighted": 18.5,
-      "note": "2 个后增文件无 @intent 文件头（tests/unit/backlog-integrity.test.ts、tests/unit/toolchain-smoke.test.ts）；两者不在任何 REQ 映射内，属守卫/工具面，不构成规格缺口"
+      "weighted": 20,
+      "note": "本迭代零新增 vitest 用例（src/ 冻结 + 无 tests/** 变更，可 git log 复核），回归面 intent 完整性继承 4445374 版报告结论（36 用例文件 + bench 标注面）；无新增未标注测试面"
     },
     {
       "dimension": "Edge Case Coverage",
-      "score_pct": 90.0,
+      "score_pct": 93,
       "weight_pct": 15,
-      "weighted": 13.5,
-      "note": "跨 chunk UTF-8 切分 / malformed SSE / 空链 / 篡改 seq / 非回环 host / 认证头 benign 集 / >512KB 回退 — 全部在册"
+      "weighted": 14,
+      "note": "冒烟 8 行覆盖失败路径（无参 exit 2 / 启动前 status exit 1 / teardown 复核 exit 1）+ gate try/finally 残留清理 + seed 请求 30s 超时兜底（REL-CW R2 T-R2-01 处置）；扣分 = 07c filter-repo 三段式仅有 runbook 演练口径、无机器演练（真执行在用户触发点，时序上位于本迭代验收窗口之外，属规格冻结的刻意安排而非遗漏）"
     },
     {
       "dimension": "Test Data Validity",
-      "score_pct": 85.0,
+      "score_pct": 100,
       "weight_pct": 10,
-      "weighted": 8.5,
-      "note": "威胁 fixture（T1b/T2c/T3a）+ benign ≥50 + 跨 chunk 对抗样本在册；bench/baseline.json 为实测"
+      "weighted": 10,
+      "note": "基线 326 passed | 1 skipped ≥ 冻结下界 296（release-gate.mjs TEST_BASELINE_MIN_PASSED）；1 skip = bench/out-path-guard 符号链接条件跳过（win32 无特权建链），非掩盖失败（继承上版报告核实结论）"
     }
   ],
   "misaligned_tests": [],
   "exempt_requirements": [
     {
-      "id": "REQ-VETO-001",
-      "reason": "specification.yaml.test_coverage_requirements = { unit: false, integration: false, e2e: false }; 前置决策门 G-LIC/G-FP/G-BENCH 为文档+工具门禁",
-      "evidence": "docs/licenses.md + bench/baseline.json"
+      "id": "REQ-REL-02",
+      "reason": "test_coverage_requirements 全 false；Release 通道验证 = release.yml 静态语义 + 首次 tag push 真触发（用户触发点）"
+    },
+    {
+      "id": "REQ-REL-03",
+      "reason": "全 false；验证 = parity 脚本（机器面）+ 行级人工核对留档（机器面之外按 DD-2 口径不进 CI）"
+    },
+    {
+      "id": "REQ-REL-04",
+      "reason": "全 false；验证 = S6 核对记录（文中性命令与仓库实况逐条一致）"
+    },
+    {
+      "id": "REQ-REL-05",
+      "reason": "全 false；验证 = boundary-checklist（git diff src/ 为空 + 双语边界句核对），零代码 REQ"
+    },
+    {
+      "id": "REQ-REL-06",
+      "reason": "全 false；验证 = Gate 0 + CHANGELOG 结构核对"
+    },
+    {
+      "id": "REQ-REL-07",
+      "reason": "全 false；07a-d 为 merge 后执行的用户触发操作，交付物 = runbook 工具化指令，执行留档属 CLOSE 后公开化 checklist"
     }
   ],
   "anti_pattern_detected": false,
   "anti_pattern_notes": [
-    "3 个 skip 全部为环境条件门（cli-smoke 的 CAN_BUN/DIST_READY 套、daemon-lifecycle 的 runtime driver 探测、bench out-path-guard 的 runIf(win32)），非掩盖失败；本次 dist 构建后重跑 tests/e2e 相应套件已实跑全绿",
-    "无 test.skip/xit 硬跳过，无空 expect"
+    "1 个 skip = bench/out-path-guard 符号链接用例（it.skipIf 条件跳过），非掩盖失败（继承 4445374 版核实结论，本迭代未触碰该文件）",
+    "无 test.skip/xit 硬跳过新增面，无空 expect 新增面（本迭代零 tests/** 变更）"
   ],
   "errors": [],
   "phase2_execution": {
     "status": "PASS",
-    "test_command": "COVERAGE_ALL=1 bunx vitest run --coverage",
+    "test_command": "npm run release:gate（内含 bun run test 全量；另有 CI test.yml 与 pre-commit Gate 5 覆盖率门双执行面）",
     "exit_code": 0,
-    "tests_passed": 277,
-    "tests_skipped": 3,
+    "tests_passed": 326,
+    "tests_skipped": 1,
     "tests_failed": 0,
     "coverage": {
-      "statements_pct": 86.87,
-      "branches_pct": 80.03,
-      "functions_pct": 91.89,
-      "lines_pct": 90.22,
+      "statements_pct": 89.7,
+      "branches_pct": 84.16,
+      "functions_pct": 93.54,
+      "lines_pct": 92.75,
       "threshold_pct": 80,
-      "all_above_threshold": true
+      "all_above_threshold": true,
+      "note": "src/ 本迭代零改动 → 覆盖率数继承 4445374 版实测（COVERAGE_ALL=1 本机实跑，绑定 4445374），本轮不重测（无 src 变更，重测无信息增量）；CI test job（517dcf9 起）在 linux 面独立执行同门"
     },
-    "typecheck": { "command": "bun run typecheck && bun run typecheck:dist", "exit_code": 0 },
+    "typecheck": {
+      "command": "bun run typecheck && bun run typecheck:dist（release-gate 步 05/06，2d27c0c 树 PASS）",
+      "exit_code": 0
+    },
     "freeze_status": {
       "pre_phase2_locked": true,
       "violations_during_phase2": 0,
       "post_phase2_unlocked": true,
-      "note": "Phase 2 期间零 tests/** 文件修改（工作区 git status 核验）"
+      "note": "src/ 冻结 = SPEC-REL-001 constraints.runtime_freeze（AC-REL-05a 以 git diff bd4bb40..HEAD -- src/ 为空断言，boundary-checklist 已留档实测）；tests/** 本迭代零变更，非冻结豁免而是规格使然"
     }
   },
   "gate_367_verdict": {
     "status": "PASS",
-    "reason": "alignment_score 95.5% >= 80%; REQ/AC 硬映射完整（tests+bench 合并面）; 277/280 通过 + 3 条件 skip; 覆盖率四项 >= 80%"
-  },
-  "v1_deployment_acceptance": {
-    "date": "2026-09-27",
-    "artifact": "dist/cli/index.js（bun run build 于 2ddff28）",
-    "items": {
-      "accept-1-managed-paths": "PASS — doctor 遍历 MANAGED_CONFIG_IDS 无漂移 + e2e 探测过闸断言（AC-014-01/02）实跑绿",
-      "accept-2-delphi-path": "PASS — e2e client=\"delphi\" 用例绿",
-      "accept-3-checker-effectiveness": "PASS — fixture 回归全绿（检出 100%、阻断类 FP=0 断言在册）",
-      "accept-4-fail-closed-e2e": "PASS — 本机黑盒：含凭据探测 → 502 llmveto:rejected + evidence action_taken=blocked_before_forward（上游 59999 不可达仍阻断 = 零出境）；流式 veto-mid-stream e2e 绿",
-      "accept-5-evidence-verifiable": "PASS — 本机黑盒：verify ok(rc0) → 篡改 action_taken 后 first_bad_seq=0 (record_hash_mismatch) rc1；daemon 重启纯追加",
-      "accept-6-perf-gates": "PASS — CI run 36308227620（2ddff28, linux）G1/G2/G3 + 回归对比步全绿，46s"
-    },
-    "cli_5frozen_no_stub": "PASS — 未知命令拒绝并枚举 start/stop/status/doctor/verify",
-    "daemon_lifecycle": "PASS — start/status/stop 真后台进程，隔离 LLMVETO_STATE_DIR=var/acceptance-state，未触碰用户真实配置"
+    "reason": "alignment_score 98.5% >= 80%; 7 REQ 硬映射完整（1 integration 覆盖 + 6 豁免有据）; 13/13 AC 有验证落点; 326/327 通过 + 1 条件 skip; 覆盖率四项 >= 80%（继承实测）"
   }
 }

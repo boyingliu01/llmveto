@@ -3,22 +3,22 @@
   "phase": "4",
   "score": 98.5,
   "sprint_id": "sprint-20261008-26",
-  "head_commit": "2d27c0ce3e3df979c816ef847b0056d5c354a734",
-  "specification_sha256": "78699f14a531a57afb7c2ed81d4ef50d7f5199172dd4c8906300de9d487f4471",
-  "spec_hash": "78699f14a531a57afb7c2ed81d4ef50d7f5199172dd4c8906300de9d487f4471",
+  "head_commit": "4726e705d5e772dea4cfebe674df6071ad4ee17a",
+  "specification_sha256": "1d2397d147e4bdf2a4056674fe115d0bab3c41928356d9df8c82a876093d4e87",
+  "spec_hash": "1d2397d147e4bdf2a4056674fe115d0bab3c41928356d9df8c82a876093d4e87",
   "generated_at": "2026-10-09T02:00:00+08:00",
-  "hash_note": "spec_hash 取 git show HEAD:specification.yaml 的规范字节（LF）——Windows 检出的 CRLF 工作副本哈希为 1d2397d1…，同一内容两种行尾；跨平台核对请用 LF 规范形",
+  "hash_note": "spec_hash = specification.yaml 工作副本字节（本检出现 CRLF：1d2397d1…；LF 规范形 = 78699f14…，与 xp-gate computeFileHash 的 utf8 文件读取口径一致）",
   "note_vs_previous_run": "本报告取代 2026-10-08 版（HEAD 4445374，SPEC-V2A-001，score 95.5）。本迭代 DESIGN（10d431b）将 specification.yaml 整体改写为 SPEC-REL-001（GitHub 开源发布，7 REQ/13 AC）——hash 变更为规格换代的预期结果而非漂移；测试面（tests/ + bench/ = 43 文件 / 327 用例）自 4445374 起零变更（src/ 冻结迭代，无新增用例），基线 326 passed | 1 skipped 不变。SPEC-REL-001 的验证形态按规格头部声明 = 脚本/runbook/清单留档（发布面交付，src/ 零改动），vitest 面仅承担回归下界。",
-  "head_commit_semantics": "head_commit 指测量对象提交（2d27c0c，最后一次全量 release:gate 重跑所在树：10/10 步 + smoke 8 行 + 基线 326）；本报告由其后一提交引入，其后对齐类提交可再修订本文，故 head_commit ≠ 报告引入提交，属设计语义而非错位",
+  "head_commit_semantics": "head_commit = phase-transition 时点的 HEAD（4726e70，审计强制绑定）；被测对象（tests/ + bench/ + src/ + specification.yaml）自 2d27c0c 起零字节变化（4726e70 仅追加 .sprint-state 文档），全量 release:gate 重跑绑定 2d27c0c 树；head_commit ≠ 报告引入提交属设计语义",
   "summary": {
     "total_requirements": 7,
     "requirements_requiring_tests": 1,
     "requirements_covered": 1,
-    "requirement_coverage_pct": 100.0,
+    "requirement_coverage_pct": 100,
     "total_acceptance_criteria": 13,
     "acceptance_criteria_requiring_tests": 0,
     "acceptance_criteria_with_verification_form": 13,
-    "acceptance_criteria_coverage_pct": 100.0,
+    "acceptance_criteria_coverage_pct": 100,
     "test_files": 43,
     "test_cases": 327,
     "test_cases_passing": 326,
@@ -29,48 +29,66 @@
   "dimension_scores": [
     {
       "dimension": "Requirement Coverage",
-      "score_pct": 100.0,
+      "score_pct": 100,
       "weight_pct": 30,
-      "weighted": 30.0,
+      "weighted": 30,
       "note": "REQ-REL-01（唯一 test_coverage_requirements 非全 false：integration=true）由 scripts/release-gate.mjs 10 步集成门链承载（pack→install-tarball→smoke 8 行判据→publish-dry-run），本机全量重跑 PASS ×2（BUILD 期 + REL-CW R2 处置后 2d27c0c 树）；其余 6 REQ 全 false 豁免（SPEC-REL-001 头部声明：发布面交付，验证形态以脚本/runbook/清单留档为主）"
     },
     {
       "dimension": "Acceptance Criteria Coverage",
-      "score_pct": 100.0,
+      "score_pct": 100,
       "weight_pct": 25,
-      "weighted": 25.0,
+      "weighted": 25,
       "note": "13/13 AC 验证落点：01a=release-gate 冒烟 8 行（PASS ×2）；01b=release.yml publish 三分支语义（静态评审 3 轮 + Gate 12 YAML 门；真验证=用户 tag push 触发点）；01c=publishing.md §3 凭据口径（用户侧执行）；02a=release.yml Release 步 + dispatch 补建（同 01b）；03a=check-readme-parity PASS（10 标题逐对 + 5 表行数 [5,8,9,7,6]）+ 行级人工核对留档；03b=CONTEXT.md Glossary 26 行冻结；04a=S6 切片核对记录（scripts 实况 13 条 + 12 门名）；05a=docs/release/boundary-checklist.md 5 点记录（含 git diff bd4bb40..HEAD -- src/ 为空实测）；06a=Gate 0 VERSION==package.json + CHANGELOG [0.2.0] 节；07a-d=docs/release/publication-runbook.md §1-§5（执行时点=merge 后 flip 前，用户触发点，超出本迭代验收窗口）"
     },
     {
       "dimension": "Test Intent Correctness",
-      "score_pct": 100.0,
+      "score_pct": 100,
       "weight_pct": 20,
-      "weighted": 20.0,
+      "weighted": 20,
       "note": "本迭代零新增 vitest 用例（src/ 冻结 + 无 tests/** 变更，可 git log 复核），回归面 intent 完整性继承 4445374 版报告结论（36 用例文件 + bench 标注面）；无新增未标注测试面"
     },
     {
       "dimension": "Edge Case Coverage",
-      "score_pct": 93.0,
+      "score_pct": 93,
       "weight_pct": 15,
-      "weighted": 14.0,
+      "weighted": 14,
       "note": "冒烟 8 行覆盖失败路径（无参 exit 2 / 启动前 status exit 1 / teardown 复核 exit 1）+ gate try/finally 残留清理 + seed 请求 30s 超时兜底（REL-CW R2 T-R2-01 处置）；扣分 = 07c filter-repo 三段式仅有 runbook 演练口径、无机器演练（真执行在用户触发点，时序上位于本迭代验收窗口之外，属规格冻结的刻意安排而非遗漏）"
     },
     {
       "dimension": "Test Data Validity",
-      "score_pct": 100.0,
+      "score_pct": 100,
       "weight_pct": 10,
-      "weighted": 10.0,
+      "weighted": 10,
       "note": "基线 326 passed | 1 skipped ≥ 冻结下界 296（release-gate.mjs TEST_BASELINE_MIN_PASSED）；1 skip = bench/out-path-guard 符号链接条件跳过（win32 无特权建链），非掩盖失败（继承上版报告核实结论）"
     }
   ],
   "misaligned_tests": [],
   "exempt_requirements": [
-    { "id": "REQ-REL-02", "reason": "test_coverage_requirements 全 false；Release 通道验证 = release.yml 静态语义 + 首次 tag push 真触发（用户触发点）" },
-    { "id": "REQ-REL-03", "reason": "全 false；验证 = parity 脚本（机器面）+ 行级人工核对留档（机器面之外按 DD-2 口径不进 CI）" },
-    { "id": "REQ-REL-04", "reason": "全 false；验证 = S6 核对记录（文中性命令与仓库实况逐条一致）" },
-    { "id": "REQ-REL-05", "reason": "全 false；验证 = boundary-checklist（git diff src/ 为空 + 双语边界句核对），零代码 REQ" },
-    { "id": "REQ-REL-06", "reason": "全 false；验证 = Gate 0 + CHANGELOG 结构核对" },
-    { "id": "REQ-REL-07", "reason": "全 false；07a-d 为 merge 后执行的用户触发操作，交付物 = runbook 工具化指令，执行留档属 CLOSE 后公开化 checklist" }
+    {
+      "id": "REQ-REL-02",
+      "reason": "test_coverage_requirements 全 false；Release 通道验证 = release.yml 静态语义 + 首次 tag push 真触发（用户触发点）"
+    },
+    {
+      "id": "REQ-REL-03",
+      "reason": "全 false；验证 = parity 脚本（机器面）+ 行级人工核对留档（机器面之外按 DD-2 口径不进 CI）"
+    },
+    {
+      "id": "REQ-REL-04",
+      "reason": "全 false；验证 = S6 核对记录（文中性命令与仓库实况逐条一致）"
+    },
+    {
+      "id": "REQ-REL-05",
+      "reason": "全 false；验证 = boundary-checklist（git diff src/ 为空 + 双语边界句核对），零代码 REQ"
+    },
+    {
+      "id": "REQ-REL-06",
+      "reason": "全 false；验证 = Gate 0 + CHANGELOG 结构核对"
+    },
+    {
+      "id": "REQ-REL-07",
+      "reason": "全 false；07a-d 为 merge 后执行的用户触发操作，交付物 = runbook 工具化指令，执行留档属 CLOSE 后公开化 checklist"
+    }
   ],
   "anti_pattern_detected": false,
   "anti_pattern_notes": [

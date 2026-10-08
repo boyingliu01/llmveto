@@ -3,7 +3,7 @@
   "evidence_schema_version": 2,
   "id": "sprint-20261008-26",
   "task_description": "GitHub 开源发布：v1 大模型投毒安全守门员开源自用发布 —— 打包分发/文档/上游容错/安装部署易用性 + 开源卫生（LICENSE/SECURITY/发布工作流）",
-  "phase": 2,
+  "phase": 3,
   "status": "in_progress",
   "started_at": "2026-10-08T12:20:11.618Z",
   "phase_history": [
@@ -20,6 +20,14 @@
       "phase_name": "DESIGN",
       "status": "completed",
       "completed_at": "2026-10-08T16:25:13.225Z"
+    },
+    {
+      "phase": 3,
+      "phase_name": "BUILD",
+      "status": "completed",
+      "started_at": "2026-10-08T16:27:16.334Z",
+      "completed_at": "2026-10-08T17:07:13.017Z",
+      "duration_seconds": 2397
     }
   ],
   "isolation": {
@@ -33,7 +41,10 @@
     "requirements_reviewed": ".sprint-state/phase-outputs/requirements-reviewed.json",
     "design_reviewed": ".sprint-state/delphi-reviewed.json",
     "design_consensus": ".sprint-state/review/rel-design-r2-consensus.md",
-    "decisions": "DR-001..DR-011"
+    "decisions": "DR-001..DR-011",
+    "release_gate": "PASS 10-step chain, smoke 8 rows, baseline 326|1",
+    "slices": "8/8 done",
+    "commits": "3becce3..b7b7ac4"
   },
   "metrics": {}
 }

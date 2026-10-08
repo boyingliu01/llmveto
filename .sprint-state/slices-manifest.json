@@ -117,7 +117,8 @@
         "AC-REL-01c"
       ],
       "effort": "S",
-      "status": "pending"
+      "status": "done",
+      "notes": "publishing.md 落地：AC-REL-01c 四要素（granular token 仅 Packages publish 权限限 llmveto / 2FA / NPM_TOKEN 仅 GitHub secret=本地绕过面关闭 / 90 天轮换）+ 同 tag 情形表（①no-op ②dispatch 补建 ③publish成功Release失败 ④非E404 fail-closed（T-R2-02） ⑤EPUBLISHCONFLICT 兜底）+ 真装烟测失败决策树（F-MAJ-01：安全缺陷 deprecate+72h unpublish+公告 / 非安全 deprecate+0.2.1）+ DD-4 ruleset 口径 + 发布日 checklist 与演练/真发关系（R-3/R-4）"
     },
     {
       "id": "RL-05",

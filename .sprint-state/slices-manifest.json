@@ -96,7 +96,8 @@
         "AC-REL-02a"
       ],
       "effort": "S",
-      "status": "pending"
+      "status": "done",
+      "notes": "release.yml 落地 D-02：tag 触发 ^vd+.d+.d+ + workflow_dispatch 补建入口；显式 npm run release:gate 权威门步；tag↔package.json 版本一致性（AC-REL-06a CI 面）；publish 幂等前置（E404→publish、已存在→skip、非 E404 查询失败→fail-closed）+ --ignore-scripts（避免 prepublishOnly 重复整链，权威门=显式步）；Release 正文 awk index() 提取 CHANGELOG 节（方括号避开正则元字符）、节缺失 fail-closed、release 已存在幂等跳过、workflow_dispatch 走 --target GITHUB_SHA。本地静态核对（yaml 结构 + shell 块走查）；真跑验证留待用户打 tag（R-3 演练面=门链本机 PASS）"
     },
     {
       "id": "RL-04",

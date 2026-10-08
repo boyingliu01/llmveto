@@ -10,9 +10,17 @@
 
 | | v1（当前） |
 |---|---|
-| **提供** | 出站凭据拦截（T1b，`block`）· 隐形字符检测（T2c，非流式阻断 / 流式终止）· 模型**字段一致性**告警（T3a 子集）· 受管路径过闸 · 全量 evidence 留痕 + `llmveto verify` |
-| **不提供** | 数据外泄检测（T1a，金丝雀属 v2）· tool-call 注入防护（T2a，RCE 级，v2）· 响应注入防护（T2b，v2）· 模型**真实性**证明（v2 指纹）· usage 对账（T4x，v2）· 旁路发现（v3）· TLS 拦截（v3） |
+| **提供** | 出站凭据拦截（T1b，`block`）· 隐形字符检测（T2c，非流式阻断 / 流式终止）· 模型**字段一致性**告警（T3a 子集）· 受管路径过闸 · 上游故障 fail-closed（502 + 留痕，daemon 存活）· 全量 evidence 留痕 + `llmveto verify` |
+| **不提供** | 数据外泄检测（T1a，金丝雀属 v2）· tool-call **结构**判定（T2a，RCE 级，v2；注：tool-call **载荷**已进扫描面，见下）· 响应注入防护（T2b，v2）· 模型**真实性**证明（v2 指纹）· usage 对账（T4x，v2）· 旁路发现（v3）· TLS 拦截（v3） |
 | **阻断粒度** | 流式响应已开始转发的字节**不可撤回**；v1 的流式阻断 = 终止流，不是吞掉字节 |
+
+**扫描面口径（2026-09-27 修复后）**：checker 能看到 `messages[*].content` / `system` / `tools` / 自定义 `extra_headers`，
+以及**工具调用载荷** `tool_calls[*].function.arguments`（含 legacy `function_call`，请求侧与响应侧均含）。
+每个扫描单元同时产出"原始文本"与"转义已还原文本"（`\uXXXX` / `\u{…}` / `\xXX`）两份投影，两份都扫——
+故**用转义写法书写隐形字符不再能绕过检测**；多重反斜杠（`\\uXXXX` 等）在还原时最内层 `\uXXXX` 成对塌缩，
+同样落入还原投影，不额外构成规避面。仍**不**覆盖：URL 编码（`%E2%80%8B`）、base64 等二次编码、
+NFKC 归一化后同形变体、自定义 PUA 编码、认证类头（`Authorization` 等 6 项按设计排除出扫描单元，见 REQ §T1b 行）。
+**tool-call 的"结构"判定**（参数形态 / 危险命令 / 越权工具名）属 v2，v1 对"用正常字符写出的恶意命令"不判定。
 
 完整口径见 [REQ §v1 残余风险登记表](docs/issues/1-req-threat-model.md)。**装上网关 ≠ 已被保护**：未接入客户端的流量在 v1 完全不受管。
 
@@ -40,10 +48,13 @@ Claude Code / Codex / promptfoo     ── v2 接入
         │        └── 流式命中违规 = 注入 error 事件 + 终止流（已转发字节不撤回）
         ▼
    [checker 注册表 verdict] → [策略引擎 action: allow/warn/block（redact 属 v3）] → upstream（TLS）
-        │
+        │                                                                              │
+        │                                        上游故障（ECONNRESET/超时/DNS）◀─────┘
+        │                                        → 502 + 留痕，daemon 存活（fail-closed）
         ▼
    evidence store（append-only JSONL + SHA-256 链；链只防意外损坏与廉价篡改，
-   不抵抗本机同权限对手整链重写）  ← llmveto verify 校验
+   不抵抗本机同权限对手整链重写；**尾部截断亦不在检测范围内**——删末 N 条后剩余
+   前缀本身即自洽短链，判红需外部锚定，未排期）  ← llmveto verify 校验
 ```
 
 ## 分发与 runtime 承诺（两个不同的承诺，勿混用）
@@ -122,3 +133,19 @@ llmveto verify     # evidence 链完整性 + schema 断言
 ## 状态
 
 v1 产品外壳已补齐（M1–M3）：真实路径路由、adapters 真实读写配置 + doctor 真漂移、可移植 dist 分发（ADR-0001）、后台 daemon 生命周期、CLI 黑盒冒烟 + daemon 生命周期 E2E。安全内核（反代核 / checker / fail-closed / evidence 链）自 v0.1 即真实。版本 `0.2.0`。详见 [ROADMAP](docs/issues/5-roadmap.md)。
+
+**evidence 信任声明（原样引自 [REQ](docs/issues/1-req-threat-model.md)）**：evidence 链的对抗对象是"意外损坏与廉价篡改"，不是"能读写你磁盘的进程"。声称"防篡改"即为过度承诺。
+
+### 2026-09-27 安全修复（DeepSeek harness 接管审计发现）
+
+对安全内核做对抗性审计时确认并修复了 4 处缺陷，每处均附可复现的回归测试：
+
+| # | 缺陷 | 影响 | 回归测试 |
+|---|---|---|---|
+| 1 | `dispatch` 未捕获异常 | 上游连接重置（ECONNRESET 等）抛出未处理拒绝 → **整个 daemon 进程被杀**：客户端无响应、该次交互零留痕、此后全部流量失去保护 | `tests/e2e/upstream-failure-resilience.test.ts` |
+| 2 | `verify` 完整性边界过宽 | 链被**整体清空**时原实现报 `ok`；记录被重新编号不报错 | `tests/unit/evidence/verify.test.ts` |
+| 3 | 扫描单元丢失 tool-call 载荷 | `tool_calls[*].function.arguments`（`content` 为 null 时）完全不进扫描单元 → 响应侧 checker 全部落空 | `tests/unit/gateway/scan-unit.test.ts` |
+| 4 | 转义序列绕过检测 | 用 `\u200b` **转义写法**书写隐形字符即判 `clean`（JSON 是唯一传输编码，这是最省事的注入方式）；多重反斜杠变体经最内层塌缩同样被还原投影捕获 | `tests/unit/gateway/scan-unit.test.ts` |
+
+**未修复并已登记的残余风险**（详见 REQ §证据信任边界）：evidence 链的**尾部截断**在本机无外部锚定的前提下原理上不可检测，
+故不修复、只把它写成显式的 negative-contract 测试，防止日后被误读为已覆盖。

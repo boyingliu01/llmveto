@@ -181,4 +181,59 @@ describe("SL-11 CLI (REQ-VETO-008)", () => {
     expect(existsSync(join(d, "gateway.pid"))).toBe(false);
     rmSync(d, { recursive: true, force: true });
   });
+
+  it("status/stop：pid 文件内容非法（非整数）→ 按僵尸处理，不投递信号", async () => {
+    const d = mkdtempSync(join(tmpdir(), "llmveto-badpid-"));
+    writeFileSync(join(d, "gateway.pid"), "not-a-pid", "utf8");
+    const s = await runCli("status", { stateDir: d });
+    expect(s.exitCode).toBe(1);
+    expect(s.stdout).toContain("stale pid file");
+    const t = await runCli("stop", { stateDir: d });
+    expect(t.exitCode).toBe(1);
+    expect(t.stderr).toContain("not found");
+    expect(existsSync(join(d, "gateway.pid"))).toBe(false); // 仍须清理
+    rmSync(d, { recursive: true, force: true });
+  });
+
+  it("start(daemon 子)：LLMVETO_UPSTREAMS 为 JSON 数组 → fail-fast 拒绝，不静默降级", async () => {
+    const d = mkdtempSync(join(tmpdir(), "llmveto-uparr-"));
+    const r = await runCli("start", { stateDir: d, env: { LLMVETO_DAEMON_CHILD: "1", LLMVETO_UPSTREAMS: "[1,2]" } });
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain("invalid LLMVETO_UPSTREAMS");
+    expect(r.stderr).toContain("must be a JSON object");
+    rmSync(d, { recursive: true, force: true });
+  });
+
+  it("start(daemon 子)：LLMVETO_UPSTREAMS 非法 JSON → 解析异常同样 fail-fast", async () => {
+    const d = mkdtempSync(join(tmpdir(), "llmveto-upbad-"));
+    const r = await runCli("start", { stateDir: d, env: { LLMVETO_DAEMON_CHILD: "1", LLMVETO_UPSTREAMS: "{oops" } });
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain("invalid LLMVETO_UPSTREAMS");
+    rmSync(d, { recursive: true, force: true });
+  });
+
+  it("doctor --write-managed-config：适配器写盘失败 → 该项仍 PASS 但消息带 WARN 失败计数（AC-VETO-008-03）", async () => {
+    const d = mkdtempSync(join(tmpdir(), "llmveto-doctor-warn-"));
+    const blocker = join(d, "blocker");
+    writeFileSync(blocker, "x", "utf8"); // 文件冒充目录 → 写配置必失败
+    const r = await runCli("doctor", {
+      stateDir: d,
+      args: ["--write-managed-config"],
+      env: { LLMVETO_OPENCODE_CONFIG: join(blocker, "nested", "opencode.json"), LLMVETO_DELPHI_CONFIG: join(blocker, "nested", ".delphi-config.json") },
+    });
+    const line = r.stdout.split("\n").find((l) => l.includes("doctor.write-managed-config"))!;
+    expect(line).toContain("[PASS]");
+    expect(line).toContain("[WARN: 2/2 write failed");
+    rmSync(d, { recursive: true, force: true });
+  });
+
+  it("doctor：evidence 链损坏 → evidence-chain 项 FAIL 且非零退出（检查项④的真实拒绝面）", async () => {
+    const d = mkdtempSync(join(tmpdir(), "llmveto-doctor-ev-"));
+    writeFileSync(join(d, "evidence.jsonl"), "{ broken\n", "utf8");
+    const r = await runCli("doctor", { stateDir: d });
+    const line = r.stdout.split("\n").find((l) => l.includes("doctor.evidence-chain"))!;
+    expect(line).toContain("[FAIL]");
+    expect(r.exitCode).toBe(1);
+    rmSync(d, { recursive: true, force: true });
+  });
 });

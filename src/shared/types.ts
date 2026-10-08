@@ -23,6 +23,12 @@ export type Direction = "request" | "response";
  * - `text` 为唯一被扫描内容；字节级未决多字节由 ScanWindow.pendingBytes 承载。
  * - `meta` 由反代核解析后携带（结构性字段：model / usage / finish_reason / ...）。
  * - `malformed=true` 表示 data 字段 JSON 解析失败（SSE 事件级降级）。
+ * - `decoded`：**转义还原后的文本投影**（编码层对抗日）。
+ *   JSON 是唯一传输编码，同一个字符有两种写法：字面字符，或 `\uXXXX` 转义序列。
+ *   只在 `text` 上匹配会被"用转义写法书写"整类绕过（最省事的注入方式）。
+ *   故扫描单元额外投影一份把 `\uXXXX` / `\xXX` / `\u{...}` 还原为真实字符的文本；
+ *   checker 用 `scanTexts(unit)` 同时取两份，命中任一即 finding。
+ *   `decoded` 仅在"原始文本确实含转义序列"时存在，避免无谓的重复扫描。
  */
 export interface ScanUnit {
   readonly direction: Direction;
@@ -30,6 +36,22 @@ export interface ScanUnit {
   readonly text: string;
   readonly meta: Readonly<Record<string, unknown>>;
   readonly malformed?: boolean;
+  readonly decoded?: string;
+}
+
+/**
+ * checker 消费入口：返回该扫描单元的全部待扫文本（去重、保序）。
+ * 契约：不含转义序列时返回 `[text]`（与历史行为逐字一致，零额外开销）；
+ * 含转义序列时返回 `[text, decoded]`——**两份都要扫**，任一命中即为 finding。
+ * checker 不得直接读 `unit.text` 做安全判定（否则编码层回归会静默复现）。
+ * 该契约由 tests/unit/checkers/scan-texts-contract.test.ts 机械强制：
+ * 除其中逐字登记理由的豁免（如流式 cursor 只取 `chunk.text.length`、meta-only
+ * checker 不触碰 text）外，任何 src/checkers/*.ts 触碰 text 字段即测试红。
+ */
+export function scanTexts(unit: ScanUnit): readonly string[] {
+  return unit.decoded !== undefined && unit.decoded !== unit.text
+    ? [unit.text, unit.decoded]
+    : [unit.text];
 }
 
 /**

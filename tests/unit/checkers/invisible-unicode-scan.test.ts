@@ -85,6 +85,29 @@ describe("SL-03 invisible-unicode-scan (REQ-VETO-004)", () => {
     expect(r.evidence[0]?.offsets).toEqual([1, 3, 5]);
   });
 
+  // 多投影扫描（编码层对抗，73e28fa 修复面；offsets 剔除为 PWR1-B-M1 处置）
+  it("多投影：原始文本无字面隐形字符但转义还原投影命中 → escaped finding 不报 offsets", () => {
+    const r = invisibleUnicodeScanNonStream(unit("hello \\u200Bworld", { decoded: "hello \u200Bworld" }));
+    expect(r.verdict).toBe("finding");
+    expect(r.evidence).toHaveLength(1);
+    expect(r.evidence[0]?.rule_id).toBe("invisible-unicode-escaped");
+    // 用例标题声称"不报 offsets"，就必须把这条断言钉住（还原文本坐标不得冒充原始坐标）
+    expect(r.evidence[0]?.offsets).toBeUndefined();
+    expect("offsets" in (r.evidence[0] ?? {})).toBe(false);
+  });
+
+  it("多投影：原始投影已命中时以原始 offsets 为准（转义投影不降级为 escaped）", () => {
+    const r = invisibleUnicodeScanNonStream(unit("a\u200Bb", { decoded: "a\u200Bb \\u2066x" }));
+    expect(r.verdict).toBe("finding");
+    expect(r.evidence[0]?.rule_id).toBe("invisible-unicode");
+    expect(r.evidence[0]?.offsets).toEqual([1]);
+  });
+
+  it("多投影：decoded 与 text 相同 → 视作单投影，不重复报", () => {
+    const r = invisibleUnicodeScanNonStream(unit("clean text", { decoded: "clean text" }));
+    expect(r.verdict).toBe("clean");
+  });
+
   // Spec 声明完整性（供 policy 注册表使用）
   it("INVISIBLE_UNICODE_SCAN_SPEC 元数据：response-side / synchronous / safetyClass=true", () => {
     expect(INVISIBLE_UNICODE_SCAN_SPEC.id).toBe("invisible-unicode-scan");

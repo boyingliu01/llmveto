@@ -95,8 +95,10 @@ GitHub 同类项目两极分化（2026-09 调研，详见 [REUSE] issue）：
 
 | 属性 | v1 保证 | v1 **不**保证 |
 |---|---|---|
-| 单条记录被改写 / 中间记录被删除 | ✅ SHA-256 链可检测（`llmveto verify` 报 first_bad_seq） | — |
-| 整链删除或重置（本机同权限对手） | ❌ | ✅ 不提供任何保证（无外部锚定、无签名时间戳，且均未排期） |
+| 单条记录被改写 | ✅ SHA-256 链可检测（`llmveto verify` 报 first_bad_seq） | — |
+| **中间**记录被删除 | ✅ prev_hash 断链可检测（`first_bad_seq`） | — |
+| 记录被重新编号 / 链被整体清空 | ✅ seq 与行号不符、空文件 → `chain_broken`（2026-09-27 补） | — |
+| **尾部**截断（删末 N 条）/ 整链删除或重置 | ❌ | ✅ 不提供任何保证。删掉末尾 N 条后，**剩余前缀本身就是一条自洽的短链**（prev_hash 两两匹配、seq 自 0 连续），任何纯本地校验都无法把它与"这条链本来就短"区分——判红需要链长/链尾的**外部锚定**。该负面契约由 `tests/unit/evidence/verify.test.ts` 的 negative-contract 用例显式钉住，防止日后被误读为已覆盖 |
 | 崩溃 / 并发写 | 单写者模型（daemon 内唯一追加协程）；每批追加后 `fsync` best-effort；崩溃残留只可能是**末行半行**，读取方按"末行解析失败即丢弃"处理 | 不承诺多进程并发追加安全；不承诺断电零丢失 |
 | 外部锚定（远程 witness / RFC3161） | ❌ 未排期 | 若需要走新 issue 立项 |
 
@@ -111,9 +113,10 @@ GitHub 同类项目两极分化（2026-09 调研，详见 [REUSE] issue）：
 |---|---|---|---|---|---|
 | T1a prompt/上下文被记录转售 | **未缓解** | 无（金丝雀在 v2） | 金丝雀引擎排 v2；v1 无任何阳性检测手段 | v2 | `request_body_sha256`（仅证明发过该字节序列；默认 `metadata_only` 无原文不可读，亦无法证明"对方是否留存"） |
 | T1b 凭据窃取 | 部分 | `egress-secret-scan`（**G-LIC 决议后** v1 采**自建 top-5 高置信凭据模式**：OpenAI `sk-…` / Anthropic `sk-ant-…` / GitHub `ghp_…` / AWS `AKIA…` / PEM 私钥块；阻断。gitleaks BUSL 许可不通过 → 覆盖面缩小至上述 5 类，见 `docs/licenses.md`） | 仅覆盖**模式化**5 类凭据；自写 token / 内网 URL / 客户数据 / 变形 base64-hex 一律漏检。**另：为达致阻断类 FP=0，标准认证头（`Authorization`/`x-api-key`/`api-key`/`x-goog-api-key`/`Proxy-Authorization`/`Cookie`）被排除出扫描单元（DESIGN §扫描单元定义）→ 夹带/伪装在这些头里的额外凭据或追踪水印亦成 v1 扫描盲区（header 路径与 body 路径为两个独立缺口）。自定义头仍进扫描单元，凭据藏自定义头仍会被扫** | v2（+自定义模式库 + 归一化） | 命中/放行事件落 evidence（`findings[].rule_id` + `action_taken`；命中处明文受 `body_capture` 约束） |
-| T2a tool-call 篡改/恶意代码注入 | **未缓解** | 无（`tool-call-shape` 排 v2） | v1 不解析 tool-call 结构；流式已转发字节不可撤回 → 即便 v2 检出也无法阻止 agent 执行已收到的半截调用 | v2 | `response_body_sha256`（明文留存仅当 `body_capture≠metadata_only`，默认无明文，事后不可读回内容） |
+| T2a tool-call 篡改/恶意代码注入 | **未缓解**（但载荷已进扫描面） | 无专用 `tool-call-shape` checker（排 v2）。**2026-09-27 修复载体丢失**：`tool_calls[*].function.arguments` 与 legacy `function_call.arguments`（请求侧与响应侧均含）现已进入扫描单元，故 T2c（隐形字符）与 T1b（凭据）规则**对 tool-call 载荷同样生效**——修复前该载荷根本不进扫描单元（`content` 为 null 时 text 投影为空串），属"载体丢失"而非"能力未排期" | v1 无 tool-call **结构**判定（参数形态、危险命令、越权工具名），故"用正常字符写出的恶意命令"仍不被判定；流式已转发字节不可撤回 → 即便 v2 检出也无法阻止 agent 执行已收到的半截调用 | v2 | `response_body_sha256`（明文留存仅当 `body_capture≠metadata_only`，默认无明文，事后不可读回内容）；命中时 `findings[].rule_id` + `offsets` 指向 arguments 内位置 |
 | T2b 响应夹带 prompt 注入 | **未缓解** | 无 | v1 拒绝引入无 FP 门槛的文本规则（大面积误报会摧毁"告警可信"） | v2 | 同上（`response_body_sha256`，默认无明文） |
-| T2c 隐形字符水印 | 部分 | `invisible-unicode-scan`（跨 chunk 滚动窗口；非流式 block / 流式终止流） | 归一化（NFKC 后同形）与自定义 PUA 编码变体不覆盖 | v2 扩展码点集 | `findings[].offsets`（命中偏移，码点为偏移处字节的派生值）；命中处样本明文受 `body_capture` 约束 |
+| T2c 隐形字符水印 | 部分 | `invisible-unicode-scan`（跨 chunk 滚动窗口；非流式 block / 流式终止流）。**2026-09-27 修复编码层绕过**：扫描单元现额外投影一份"转义已还原"文本（`\uXXXX` / `\u{…}` / `\xXX`），checker 对原始与还原两份都扫 → 此前用**转义写法**书写同一字符可整类绕过（`"hello\u200bworld"` 判 clean） | 归一化（NFKC 后同形）与自定义 PUA 编码变体不覆盖；base64 等二次编码仍不还原（需解码链，属 v2） | v2 扩展码点集 | `findings[].offsets`（命中偏移，码点为偏移处字节的派生值）；转义投影命中时报 `rule_id: invisible-unicode-escaped` 且不报 offsets（两份文本长度口径不同） |
+| T0 上游不可达 / 连接重置 | 已缓解（fail-closed） | **2026-09-27 修复**：`dispatch` 的未捕获异常现由 `handleDispatchFailure` 收敛为单请求 502（`llmveto:upstream-error`）+ evidence 留痕（`rule_id: upstream-unreachable: …`）。修复前上游 `ECONNRESET` 会冒泡成 unhandledRejection **杀死整个 daemon**：客户端无响应、该次交互零留痕、此后全部流量失去保护 | v1 不重试、不切换到备用 upstream（无上游健康管理，属 v2 运营面）；不区分"上游故障"与"上游拒绝"以外的成因分类 | — | 每次故障落一条 evidence（`action_taken: blocked_before_forward` + `findings[].rule_id` 带成因摘要 ≤160 字符） |
 | T2d 条件投递（潜伏触发） | **未缓解** | 无 | v1 checker 全部为单请求作用域，无跨请求状态 | v2+（会话级统计） | 按 session 聚合的请求计数在 evidence 中 |
 | T3a 模型偷换 | **部分（弱）** | `model-label-consistency`：仅比对响应 `model` 字段与请求是否一致 | **只抓"忘改字段"的低级对手**；实证背景（`model_mapping` 静默替换且响应字段无回写校验）恰说明真替换会返回一致字段 → 本 checker 对定向替换无效 | v2 指纹巡检（`fingerprint-probe`） | 字段值 + 不一致事件 |
 | T3b 量化降级 | 未缓解 | 无 | 需指纹/探针，不在 v1 | v2 | 无 |

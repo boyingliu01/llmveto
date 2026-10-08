@@ -3,7 +3,7 @@
   "evidence_schema_version": 2,
   "id": "sprint-20261008-26",
   "task_description": "GitHub 开源发布：v1 大模型投毒安全守门员开源自用发布 —— 打包分发/文档/上游容错/安装部署易用性 + 开源卫生（LICENSE/SECURITY/发布工作流）",
-  "phase": 4,
+  "phase": 5,
   "status": "in_progress",
   "started_at": "2026-10-08T12:20:11.618Z",
   "phase_history": [
@@ -34,6 +34,12 @@
       "phase_name": "VERIFY",
       "status": "completed",
       "completed_at": "2026-10-08T17:38:01.865Z"
+    },
+    {
+      "phase": 5,
+      "phase_name": "SHIP",
+      "status": "completed",
+      "completed_at": "2026-10-08T17:44:02.776Z"
     }
   ],
   "isolation": {
@@ -54,7 +60,11 @@
     "code_walkthrough": "3/3 APPROVED consensus 1.0 (3 rounds)",
     "alignment_367": "PASS score 98.5 (SPEC-REL-001)",
     "gate_rerun": "release:gate PASS x2 post-disposition",
-    "xp_gate_check": "10/10"
+    "xp_gate_check": "10/10",
+    "pr": "#9 merged 2026-10-08T17:43:27Z",
+    "ci": "test PASS + bench PASS",
+    "gate_mw": "PASS bound 4a21cc3",
+    "main": "76b3053"
   },
   "metrics": {}
 }

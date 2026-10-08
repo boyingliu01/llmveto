@@ -99,6 +99,38 @@ describe("SL-11 CLI (REQ-VETO-008)", () => {
     expect(r.stderr).toContain("first_bad_seq=1");
   });
 
+  // PWR1-A-m2：verify 新增的 empty_chain / seq_position_mismatch 两个 reason 须有 CLI 呈现面的
+  // 直接断言（改前 cmdVerify 的 chain_broken 分支只被 first_bad_seq 用例间接覆盖，新串无测试钉住）。
+  it("verify：空文件 → chain_broken (empty_chain)；行序错位 → chain_broken (seq_position_mismatch)", async () => {
+    const empty = join(dir, "empty.jsonl");
+    writeFileSync(empty, "", "utf8");
+    const rEmpty = await runCli("verify", { stateDir: dir, args: ["-f", empty] });
+    expect(rEmpty.exitCode).toBe(1);
+    expect(rEmpty.stderr).toContain("first_bad_seq=0 (empty_chain)");
+
+    const p = join(dir, "swapped.jsonl");
+    const w = new EvidenceWriter(p);
+    const sample = {
+      session_id: "s", turn_id: "t",
+      client: "opencode", provider_id: "openai", endpoint_host: "x",
+      model_requested: "a", model_responded: "a",
+      transport: "non-stream" as const, request_bytes: 1, response_bytes: 1, chunk_count: 1, latency: 1,
+      findings: [], action_taken: "allowed" as const,
+      response_delivered: { partial: false, delivered_chunks: 1 },
+      request_body_sha256: "a".repeat(64), response_body_sha256: "b".repeat(64),
+      body_capture: "metadata_only" as const,
+    };
+    w.append({ ...sample, request_id: "r1" });
+    w.append({ ...sample, request_id: "r2" });
+    const { readFileSync } = await import("node:fs");
+    const lines = readFileSync(p, "utf8").split("\n").filter(Boolean);
+    // 整行对调：行 0 变成 seq=1 的记录 ⇒ seq !== 行号 先于 hash 校验触发，两串呈现路径各自可达
+    writeFileSync(p, [lines[1], lines[0]].join("\n") + "\n", "utf8");
+    const rSwap = await runCli("verify", { stateDir: dir, args: ["-f", p] });
+    expect(rSwap.exitCode).toBe(1);
+    expect(rSwap.stderr).toContain("(seq_position_mismatch)");
+  });
+
   it("verify：evidence_version ≠ 1 → unsupported_version 分支", async () => {
     const p = join(dir, "badver.jsonl");
     writeFileSync(p, JSON.stringify({ evidence_version: 2 }) + "\n", "utf8");

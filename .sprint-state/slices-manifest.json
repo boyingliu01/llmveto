@@ -31,10 +31,23 @@
       "blocked_by": [],
       "parent_story": "REQ-REL-07",
       "layer": "release",
-      "files": ["docs/release/publication-runbook.md", "docs/release/sha-mapping-template.md（或并入 runbook）"],
+      "files": [
+        "docs/release/publication-runbook.md",
+        "docs/release/sha-mapping-template.md（或并入 runbook）"
+      ],
       "what_it_delivers": "07a gitleaks 指令清单（全历史+工作区，工具不入仓）；07b git ls-files 核查清单（含 .sprint-state/ 保留为公开审计面的处置声明）；07c filter-repo 三段式 runbook（bundle 备份 / mirror clone 预演人工审查 / force-push + 07a/07b/07d 三重复扫）+ 全历史 grep 前置确认 + --replace-message 追加轮 + SHA 映射表模板 + Windows（WSL/Git-Bash）执行路径；07d 提交信息扫描指令（对象含 commit 与 tag message）",
-      "acceptance_criteria": ["AC-REL-07a：指令清单可执行且判据=高置信 0", "AC-REL-07b：核查清单含全部排除项与 .sprint-state/ 处置声明", "AC-REL-07c：三段式完整、回滚锚点（bundle）+ 预演审查 + 三重复扫判据 + 映射表模板齐备", "AC-REL-07d：扫描口径含 message 侧与追加轮指令"],
-      "covers_ac": ["AC-REL-07a", "AC-REL-07b", "AC-REL-07c", "AC-REL-07d"],
+      "acceptance_criteria": [
+        "AC-REL-07a：指令清单可执行且判据=高置信 0",
+        "AC-REL-07b：核查清单含全部排除项与 .sprint-state/ 处置声明",
+        "AC-REL-07c：三段式完整、回滚锚点（bundle）+ 预演审查 + 三重复扫判据 + 映射表模板齐备",
+        "AC-REL-07d：扫描口径含 message 侧与追加轮指令"
+      ],
+      "covers_ac": [
+        "AC-REL-07a",
+        "AC-REL-07b",
+        "AC-REL-07c",
+        "AC-REL-07d"
+      ],
       "effort": "M",
       "status": "pending"
     },
@@ -45,24 +58,43 @@
       "blocked_by": [],
       "parent_story": "REQ-REL-01",
       "layer": "release",
-      "files": ["scripts/release-gate.mjs", "package.json", "VERSION"],
+      "files": [
+        "scripts/release-gate.mjs",
+        "package.json",
+        "VERSION"
+      ],
       "what_it_delivers": "release-gate.mjs 十步链（clean→install→build→test→typecheck→typecheck:dist→pack→install-tarball→smoke→publish-dry-run）；8 行冒烟判据表以结构化断言常量内置；受控 PATH 剥离 Bun + bun 不可达断言 + node ≥18 断言；try/finally teardown（stop daemon + npm rm -g + 临时目录）；doctor 前置受管配置副本生成（最小字段集冻结留档，R2 T-R2-01）；prepublishOnly 接线；package.json 元数据转正（private 移除 + repository/homepage/bugs/keywords，files/license/engines 不动）与 VERSION 终版核对同批提交；scripts/ 门禁负担核对留档（oxlint/tsconfig 均不含 scripts/）",
-      "acceptance_criteria": ["AC-REL-01a：门链全链本机跑通，8 行判据全过，失败路径无残留", "AC-REL-06a（同批提交部分）：元数据与 VERSION 同批提交且 Gate 0 绿"],
-      "covers_ac": ["AC-REL-01a"],
+      "acceptance_criteria": [
+        "AC-REL-01a：门链全链本机跑通，8 行判据全过，失败路径无残留",
+        "AC-REL-06a（同批提交部分）：元数据与 VERSION 同批提交且 Gate 0 绿"
+      ],
+      "covers_ac": [
+        "AC-REL-01a"
+      ],
       "effort": "M",
-      "status": "pending"
+      "status": "done",
+      "notes": "G-PUBLISH 本机全链 PASS：10 步 + smoke 8 行判据全过（含 seed 502 留痕），teardown 无残留（全局包/临时目录核查）；链序修正：install → clean（fresh checkout 下 rimraf 未装，D-01 原序不可行；clean-rebuild 语义不变，dist 先删后建）；修复 clean 脚本坏依赖：rimraf 补入 devDependencies ^6.1.3（原脚本引用未声明依赖，全仓 bun run clean 皆不可用）；smoke 解析两坑：ANSI 剥离（[32m326 破坏 \b）+ Tests 行锚定（避开 Test Files 行）；tar 检查 cwd=ws 裸文件名（GNU tar 把 C: 盘符当远程主机）；基线实况 326 passed | 1 skipped ≥ 冻结下界 296 passed；门禁负担核对（R1 T-13）：scripts/ 不在 oxlint(src tests)/typecheck(两 tsconfig)/vitest include(tests+bench)/coverage include(src) 任一门范围；AC-REL-06a 同批提交部分：package.json 元数据改动与 VERSION(0.2.0, 未动) 同批，Gate 0 镜像核对内置 preflight"
     },
     {
       "id": "RL-03",
       "title": "release.yml 工作流（REQ-REL-01b）",
       "type": "ci",
-      "blocked_by": ["RL-02"],
+      "blocked_by": [
+        "RL-02"
+      ],
       "parent_story": "REQ-REL-01",
       "layer": "release",
-      "files": [".github/workflows/release.yml"],
+      "files": [
+        ".github/workflows/release.yml"
+      ],
       "what_it_delivers": "tag ^v[0-9]+\\.[0-9]+\\.[0-9]+$ + workflow_dispatch 触发；ubuntu-latest + permissions contents:write；步骤链含显式 npm run release:gate 门链步（单一真源）与 runner 冒烟（PATH 剥离 Bun）；npm publish 幂等前置（npm view 已存在则跳过；查询失败 fail-closed 阻断，R2 T-R2-02）；gh release create 取 CHANGELOG 对应节；同 tag 三情形语义成立",
-      "acceptance_criteria": ["AC-REL-01b：触发条件/失败语义/幂等/三情形/runbook 情形表全部成立，workflow 文件无内部信息字面量"],
-      "covers_ac": ["AC-REL-01b", "AC-REL-02a"],
+      "acceptance_criteria": [
+        "AC-REL-01b：触发条件/失败语义/幂等/三情形/runbook 情形表全部成立，workflow 文件无内部信息字面量"
+      ],
+      "covers_ac": [
+        "AC-REL-01b",
+        "AC-REL-02a"
+      ],
       "effort": "S",
       "status": "pending"
     },
@@ -73,10 +105,16 @@
       "blocked_by": [],
       "parent_story": "REQ-REL-01",
       "layer": "release",
-      "files": ["docs/release/publishing.md"],
+      "files": [
+        "docs/release/publishing.md"
+      ],
       "what_it_delivers": "granular token 最小权限 + 2FA 确认 + NPM_TOKEN 入 secret（本地不持有=绕过面关闭口径）+ 轮换口径；情形表：publish 成功 Release 失败 → dispatch 补建；同 tag 三情形判读；发布后真装烟测失败决策树（安全缺陷 deprecate+72h unpublish+公告 / 非安全 deprecate+0.2.1，R2 F-MAJ-01）；DD-4 ruleset 配置口径（公开化 checklist 项）；npm view 失败重试口径（R2 T-R2-02）",
-      "acceptance_criteria": ["AC-REL-01c：四要素（token 权限/2FA/secret/轮换）+ 情形表 + 决策树齐备且与 AC-REL-01b 语义一致"],
-      "covers_ac": ["AC-REL-01c"],
+      "acceptance_criteria": [
+        "AC-REL-01c：四要素（token 权限/2FA/secret/轮换）+ 情形表 + 决策树齐备且与 AC-REL-01b 语义一致"
+      ],
+      "covers_ac": [
+        "AC-REL-01c"
+      ],
       "effort": "S",
       "status": "pending"
     },
@@ -87,10 +125,21 @@
       "blocked_by": [],
       "parent_story": "REQ-REL-03",
       "layer": "release",
-      "files": ["README.md", "README.zh-CN.md", "CONTEXT.md", "scripts/check-readme-parity.mjs"],
+      "files": [
+        "README.md",
+        "README.zh-CN.md",
+        "CONTEXT.md",
+        "scripts/check-readme-parity.mjs"
+      ],
       "what_it_delivers": "README.md=English 全量（现中文 151 行内容为基线逐章对等翻译，能力/环境变量/CLI 三表行级对齐）；README.zh-CN.md=中文全量迁入（章节标题序列 diff=0 自检留档）；两文件首行互链；CONTEXT.md 新增 Glossary 节（26 受控词英文定译 + Avoid 英文列 + vetting 注释 + evidence/action_taken 保留原名）；check-readme-parity.mjs（章节标题序列 + 三表行数比对）作为 PR 检查单机器前置项 + 复审触发约定（任一 README 结构性改动须附运行输出，R2 A-R2-MN-01/T-R2-03/F-R2-01）",
-      "acceptance_criteria": ["AC-REL-03a：parity 脚本通过 + 三表行级人工核对留档 + 迁入 diff=0 自检", "AC-REL-03b：Glossary 覆盖 26 词含 Avoid 列与注释"],
-      "covers_ac": ["AC-REL-03a", "AC-REL-03b"],
+      "acceptance_criteria": [
+        "AC-REL-03a：parity 脚本通过 + 三表行级人工核对留档 + 迁入 diff=0 自检",
+        "AC-REL-03b：Glossary 覆盖 26 词含 Avoid 列与注释"
+      ],
+      "covers_ac": [
+        "AC-REL-03a",
+        "AC-REL-03b"
+      ],
       "effort": "L",
       "status": "pending"
     },
@@ -101,10 +150,17 @@
       "blocked_by": [],
       "parent_story": "REQ-REL-04",
       "layer": "release",
-      "files": ["SECURITY.md", "CONTRIBUTING.md"],
+      "files": [
+        "SECURITY.md",
+        "CONTRIBUTING.md"
+      ],
       "what_it_delivers": "SECURITY.md（英文）：支持版本表 0.2.x、GitHub 私密漏洞报告渠道、best-effort 无 SLA、不承诺功能请求；CONTRIBUTING.md（英文）：issues 优先、PR 须过全量测试门+覆盖率门（80%）+12 道 pre-commit 门+Gate MW 走查链、开发环境 Bun ≥1.1 + Node ≥18、scripts 实况命令、parity 触发约定；AC-REL-04a 核对基准逐条一致（核对记录留档）",
-      "acceptance_criteria": ["AC-REL-04a：两文件与仓库实况逐条一致且核对记录留档"],
-      "covers_ac": ["AC-REL-04a"],
+      "acceptance_criteria": [
+        "AC-REL-04a：两文件与仓库实况逐条一致且核对记录留档"
+      ],
+      "covers_ac": [
+        "AC-REL-04a"
+      ],
       "effort": "S",
       "status": "pending"
     },
@@ -112,13 +168,23 @@
       "id": "RL-07",
       "title": "fail-closed 边界登记核对（REQ-REL-05，零代码）",
       "type": "docs",
-      "blocked_by": ["RL-05"],
+      "blocked_by": [
+        "RL-05"
+      ],
       "parent_story": "REQ-REL-05",
       "layer": "release",
-      "files": ["README.md", "README.zh-CN.md", "docs/release/boundary-checklist.md（或并入 runbook）"],
+      "files": [
+        "README.md",
+        "README.zh-CN.md",
+        "docs/release/boundary-checklist.md（或并入 runbook）"
+      ],
       "what_it_delivers": "双语 README fail-closed 边界段（英文定译 'No retry or failover upstream…'）；威胁模型 T0 行 + README 分发承诺段逐点核对清单留档；src/ 零改动断言（git diff <base> -- src/ 为空）",
-      "acceptance_criteria": ["AC-REL-05a：双语核对清单逐点打勾留档 + src/ 零改动断言成立"],
-      "covers_ac": ["AC-REL-05a"],
+      "acceptance_criteria": [
+        "AC-REL-05a：双语核对清单逐点打勾留档 + src/ 零改动断言成立"
+      ],
+      "covers_ac": [
+        "AC-REL-05a"
+      ],
       "effort": "S",
       "status": "pending"
     },
@@ -126,13 +192,28 @@
       "id": "RL-08",
       "title": "CHANGELOG.md 收口（REQ-REL-06）",
       "type": "docs",
-      "blocked_by": ["RL-01", "RL-02", "RL-03", "RL-04", "RL-05", "RL-06", "RL-07"],
+      "blocked_by": [
+        "RL-01",
+        "RL-02",
+        "RL-03",
+        "RL-04",
+        "RL-05",
+        "RL-06",
+        "RL-07"
+      ],
       "parent_story": "REQ-REL-06",
       "layer": "release",
-      "files": ["CHANGELOG.md"],
+      "files": [
+        "CHANGELOG.md"
+      ],
       "what_it_delivers": "CHANGELOG.md（英文，Keep a Changelog 轻量风）首版 [0.2.0] 节概括 v1 能力（扫描/裁决/阻断/evidence 链/CLI），不逐 commit 罗列；作为 GitHub Release 正文来源",
-      "acceptance_criteria": ["AC-REL-06a：CHANGELOG [0.2.0] 节成立且与版本/tag 严格一致约束配套（Gate 0 绿）"],
-      "covers_ac": ["AC-REL-06a", "AC-REL-02a"],
+      "acceptance_criteria": [
+        "AC-REL-06a：CHANGELOG [0.2.0] 节成立且与版本/tag 严格一致约束配套（Gate 0 绿）"
+      ],
+      "covers_ac": [
+        "AC-REL-06a",
+        "AC-REL-02a"
+      ],
       "effort": "S",
       "status": "pending"
     }

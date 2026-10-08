@@ -4,7 +4,23 @@
   "description": "Local security gateway that vetoes malicious LLM relay traffic — deterministic verification, fail-closed blocking, tamper-evident audit trail.",
   "type": "module",
   "license": "MIT",
-  "private": true,
+  "homepage": "https://github.com/boyingliu01/llmveto#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/boyingliu01/llmveto.git"
+  },
+  "bugs": {
+    "url": "https://github.com/boyingliu01/llmveto/issues"
+  },
+  "keywords": [
+    "llm",
+    "security",
+    "gateway",
+    "proxy",
+    "prompt-injection",
+    "ai-safety",
+    "audit"
+  ],
   "engines": {
     "node": ">=18",
     "bun": ">=1.1"
@@ -31,6 +47,8 @@
     "typecheck:dist": "tsc -p tsconfig.build.json --noEmit",
     "lint": "oxlint src tests",
     "bench:record": "bun run bench/record-baseline.ts",
+    "release:gate": "node scripts/release-gate.mjs",
+    "prepublishOnly": "npm run release:gate",
     "clean": "rimraf dist coverage"
   },
   "devDependencies": {
@@ -39,6 +57,7 @@
     "@types/node": "latest",
     "@vitest/coverage-v8": "latest",
     "oxlint": "latest",
+    "rimraf": "^6.1.3",
     "typescript": "latest",
     "vitest": "latest"
   }

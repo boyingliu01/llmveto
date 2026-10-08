@@ -74,7 +74,7 @@
       ],
       "effort": "M",
       "status": "done",
-      "notes": "G-PUBLISH 本机全链 PASS：10 步 + smoke 8 行判据全过（含 seed 502 留痕），teardown 无残留（全局包/临时目录核查）；链序修正：install → clean（fresh checkout 下 rimraf 未装，D-01 原序不可行；clean-rebuild 语义不变，dist 先删后建）；修复 clean 脚本坏依赖：rimraf 补入 devDependencies ^6.1.3（原脚本引用未声明依赖，全仓 bun run clean 皆不可用）；smoke 解析两坑：ANSI 剥离（[32m326 破坏 \b）+ Tests 行锚定（避开 Test Files 行）；tar 检查 cwd=ws 裸文件名（GNU tar 把 C: 盘符当远程主机）；基线实况 326 passed | 1 skipped ≥ 冻结下界 296 passed；门禁负担核对（R1 T-13）：scripts/ 不在 oxlint(src tests)/typecheck(两 tsconfig)/vitest include(tests+bench)/coverage include(src) 任一门范围；AC-REL-06a 同批提交部分：package.json 元数据改动与 VERSION(0.2.0, 未动) 同批，Gate 0 镜像核对内置 preflight"
+      "notes": "G-PUBLISH 本机全链 PASS：10 步 + smoke 8 行判据全过（含 seed 502 留痕），teardown 无残留（全局包/临时目录核查）；链序修正：install → clean（fresh checkout 下 rimraf 未装，D-01 原序不可行；clean-rebuild 语义不变，dist 先删后建）；修复 clean 脚本坏依赖：rimraf 补入 devDependencies ^6.1.3（原脚本引用未声明依赖，全仓 bun run clean 皆不可用）；smoke 解析两坑：ANSI 剥离（[32m326 破坏 \b）+ Tests 行锚定（避开 Test Files 行）；tar 检查 cwd=ws 裸文件名（GNU tar 把 C: 盘符当远程主机）；基线实况 326 passed | 1 skipped ≥ 冻结下界 296 passed；门禁负担核对（R1 T-13）：scripts/ 不在 oxlint(src tests)/typecheck(两 tsconfig)/vitest include(tests+bench)/coverage include(src) 任一门范围；AC-REL-06a 同批提交部分：package.json 元数据改动与 VERSION(0.2.0, 未动) 同批，Gate 0 镜像核对内置 preflight；DD-5 修订注（BUILD 收口实测）：npm 默认纳入 README* 全部变体，files/.npmignore/files 取反均不可排除（npm 11 实测三连败）——tar 白名单显式接受 package/README.zh-CN.md，DD-5 意图（npm 渲染面=英文 README）不受影响"
     },
     {
       "id": "RL-03",

@@ -188,8 +188,10 @@ function packStep(ctx) {
   const tgz = join(ctx.ws, name);
   if (!existsSync(tgz)) fail(`pack: tarball ${name} not found in ${ctx.ws}`, [tail(r.stdout, 10)]);
   ctx.tgz = tgz;
-  // 内容 = files 字段（DD-5）：package.json + files 白名单 + main（若有），其余一律拒绝。
-  // cwd=ws + 裸文件名：GNU tar 会把 "C:\..." 当远程主机，不带盘符路径则两家 tar 实现通吃。
+  // 内容白名单（DD-5）：package.json + files + main + README.zh-CN.md。
+  // 修订注（2026-10-09 实测，npm 11）：npm 默认纳入 README* 全部变体，files 白名单/.npmignore/
+  // files 取反（"!x"）均无法排除——README.zh-CN.md 随包为不可消除的既成事实；DD-5 意图
+  // （npm 渲染面 = 英文 README）不受影响（npm 取 readme 时用 README.md）。
   const t = run("tar", ["-tzf", name], { cwd: ctx.ws, timeout: 60_000 });
   if (t.code !== 0) fail("pack: tar -tzf inspection failed", [tail(t.stderr, 10)]);
   const files = pkg.files ?? [];
@@ -197,12 +199,13 @@ function packStep(ctx) {
     entry === "package/" ||
     entry === "package/package.json" ||
     (pkg.main ? entry === `package/${pkg.main}` : false) ||
+    entry === "package/README.zh-CN.md" ||
     files.some((f) => {
       const prefix = `package/${f.replace(/\/+$/, "")}`;
       return entry === prefix || entry.startsWith(`${prefix}/`);
     });
   const bad = t.stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).filter((e) => !allowed(e));
-  if (bad.length) fail("pack: tarball 含 files 白名单之外的内容（DD-5 违规）", bad.slice(0, 20));
+  if (bad.length) fail("pack: tarball 含白名单之外的内容", bad.slice(0, 20));
 }
 
 function installTarballStep(ctx) {

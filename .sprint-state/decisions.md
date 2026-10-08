@@ -87,3 +87,11 @@
 - **Choice**: ① 逐条处置落设计 v2 后交换轮重评
 - **Rationale**: 零容忍纪律（Critical/Major 全部处理）；处置要点 = 冒烟判据按 CLI 实况冻结（CLI 无 --help、干净环境 doctor 必漂移两处按实况修正）、"纯 Node"判定改 PATH 剥离 Bun、门链 teardown 化、release.yml 显式单一真源 + publish 幂等、filter-repo 三段式（bundle 备份 + 预演审查）+ message 改写轮、双语加 parity 脚本；全表见设计 v2 §8 处置台账
 - **Timestamp**: 2026-10-09T00:30+08:00
+
+## Decision DR-012
+- **Phase**: 6/6 CLOSE（USER ACCEPTANCE）
+- **Question**: 「GitHub 开源发布」迭代交付是否验收通过（npm 发布转正门链 + 双语 README + 开源卫生件 + 公开化 runbook，src/ 零改动）？
+- **Options**: ① 验收通过，清理收尾 ② 验收不通过（登记返工）
+- **Choice**: ① 验收通过，清理收尾
+- **Rationale**: 用户手动确认（AskUserQuestion，2026-10-09）；验收材料 = PR #9/#10（CI 全绿）+ rel-cw 共识 3/3 APPROVED consensus 1.0 + #367 对齐 PASS 98.5 + release:gate 重跑 PASS ×2
+- **Timestamp**: 2026-10-09T01:50:00+08:00

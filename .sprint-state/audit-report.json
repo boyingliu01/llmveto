@@ -1,0 +1,19 @@
+{
+  "sprint_id": "sprint-20261008-26",
+  "branch": "sprint/2026-10-08-01",
+  "coverage": {
+    "completed": 6,
+    "total": 6,
+    "pct": 100
+  },
+  "missing_phases": [],
+  "incomplete_phases": [],
+  "warnings": [
+    "Phase 2 (DESIGN) completed but has no duration recorded",
+    "Phase 4 (VERIFY) completed but has no duration recorded",
+    "Phase 5 (SHIP) completed but has no duration recorded",
+    "Phase 6 (CLOSE) completed but has no duration recorded"
+  ],
+  "errors": [],
+  "verdict": "PASS"
+}

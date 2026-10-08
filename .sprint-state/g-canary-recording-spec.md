@@ -115,13 +115,21 @@ node var/canary-split.ts --require 10 --check      # 只校验已落盘文件；
 ```
 
 - 归组规则：真实 agent 循环上下文单调增长，"上一轮 messages 是本轮真前缀"即判同会话；等长或更短
-  的新请求另起会话（故重复单轮调用各自成一条）。取 exchanges 最多的 10 个写盘。
+  的新请求另起会话（故重复单轮调用各自成一条）。合并另要求 model 与 client 两维同时一致——client
+  判定不同的请求不并入既有会话（避免跨客户端误并）；残余边界：同 client 同 model 的两条会话交错
+  时，前缀判定仍可能把短会话并入长会话（前缀归组的固有近似，靠清单逐会话人工复核把关）。
+  取 exchanges 最多的 10 个写盘。
 - 流式响应：`data:` 帧原文进 `response.chunks`，须含带 `finish_reason`/`stop_reason` 的终止帧，
-  否则脚本报"规格问题"（判据① 无法计算分布）。
+  否则脚本报"规格问题"（判据① 无法计算分布）。终止帧识别是正则近似（匹配 `"finish_reason":"…"`
+  / `"stop_reason":"…"` 字面形态）：非标准 JSON 帧或正文恰好含该字面形态时可能误报/漏报；chunks
+  原文全量保留，判据① 复核以帧原文为准。
 - 清单直接给出三门判据输入：`finish_reason 分布（基线臂）`①、`provider 拒绝样本 非2xx/总数`②、
   逐会话 `client/model/exchanges/status/body` 摘要供③ 人工复核。
-- `client` 依 path 前缀与 UA 自动判（`/opencode/`→opencode，node/undici→delphi）；判成 `unknown`
-  时脚本会点名，用 `--client opencode|delphi` 强制标注后重跑。
+- `client` 判定顺序：`--client` 强制 > path 含 `/opencode/` > UA（含 opencode → opencode；
+  node/undici/axios → delphi）> 正文关键词（Delphi/delphi-review/专家/APPROVED → delphi）> unknown。
+  判成 `unknown` 时脚本会点名，用 `--client opencode|delphi` 强制标注后重跑。
+- 代理上游连接失败（upstream error）时对客户端回 502 且该交换不落盘——无真实 provider 响应，
+  不构成判据② 的拒绝率样本。
 
 **链路已烟测（2026-10-05）**：假上游 8799 → capture-proxy:8790 → 记录落盘 → 切分出 1 会话，
 证明 `Authorization` 在记录里为 `[STRIPPED]`、中文正文原样保留、SSE 终止帧可解析；客户端收到的

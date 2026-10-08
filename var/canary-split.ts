@@ -52,6 +52,7 @@ type Session = { key: string; model: string; client: string; exchanges: Exchange
 
 // 会话归组：真实 agent 循环的上下文单调增长，故"上一轮的 messages 是本轮的真前缀"即同会话；
 // 单轮重复请求（如 delphi 三家各一次）不构成前缀延长，各成一会话。
+// 合并另要求 model 与 client 同时一致：client 判定不同的请求不并入既有会话，避免跨客户端误并。
 function isContinuation(prev: unknown[], cur: unknown[]): boolean {
   if (cur.length <= prev.length) return false;
   for (let i = 0; i < prev.length; i++) {
@@ -69,11 +70,11 @@ function detectClient(rec: Raw, body: Record<string, unknown>): string {
   if (FORCE_CLIENT) return FORCE_CLIENT;
   const path = rec.path ?? "";
   if (path.includes("/opencode/")) return "opencode";
-  const msgs = JSON.stringify(body.messages ?? body.system ?? "");
-  if (/Delphi|delphi-review|专家|APPROVED/.test(msgs)) return "delphi";
   const ua = (rec.request_headers?.["user-agent"] ?? "").toLowerCase();
   if (/opencode/.test(ua)) return "opencode";
   if (/node|undici|axios/.test(ua)) return "delphi";
+  const msgs = JSON.stringify(body.messages ?? body.system ?? "");
+  if (/Delphi|delphi-review|专家|APPROVED/.test(msgs)) return "delphi";
   return "unknown";
 }
 
@@ -178,6 +179,7 @@ function buildSessions(raws: Raw[]): { sessions: Session[]; skipped: string[] } 
     }
     const messages = Array.isArray(body.messages) ? body.messages : [];
     const model = String(body.model ?? "unknown-model");
+    const client = detectClient(rec, body);
     const ex: Exchange = {
       request_body: body,
       response_status: rec.response_status,
@@ -185,14 +187,17 @@ function buildSessions(raws: Raw[]): { sessions: Session[]; skipped: string[] } 
     };
     const cand = [...sessions]
       .reverse()
-      .find((s) => s.model === model && isContinuation(lastMessages(s), messages));
+      .find(
+        (s) =>
+          s.client === client && s.model === model && isContinuation(lastMessages(s), messages),
+      );
     if (cand) {
       cand.exchanges.push(ex);
     } else {
       sessions.push({
         key: sha(`${model}|${sessions.length}|${rec.ts}`),
         model,
-        client: detectClient(rec, body),
+        client,
         exchanges: [ex],
       });
     }

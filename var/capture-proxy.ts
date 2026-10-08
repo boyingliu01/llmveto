@@ -73,7 +73,9 @@ createServer((req, res) => {
     const reqBody = Buffer.concat(reqChunks);
     const fwdHeaders: Record<string, string> = {};
     for (const [k, v] of Object.entries(req.headers)) {
-      if (k === "host" || k === "content-length") continue;
+      const lk = k.toLowerCase();
+      // 正文已整体缓冲、content-length 重算；客户端原 transfer-encoding 与重算 framing 冲突，不透传
+      if (lk === "host" || lk === "content-length" || lk === "transfer-encoding") continue;
       fwdHeaders[k] = Array.isArray(v) ? v.join(", ") : String(v);
     }
     if (reqBody.length > 0) fwdHeaders["content-length"] = String(reqBody.length);

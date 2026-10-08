@@ -44,7 +44,9 @@ async function startResettingUpstream(): Promise<{ server: Server; url: string }
  *  改为**事件驱动**：监听本端 socket 的 `data`（网关 fetch 在内核缓冲被对端读取时触发），
  *  累计被消费的响应字节达到两帧长度（允许网关一次 read 全吃下）即证明两帧已进入网关进程
  *  （其 `res.write` 转发在 for-await 消费链上先行发生），然后销毁。
- *  600ms 仅作防死等的兜底上界，不参与时序正确性。 */
+ *  600ms 仅作防死等的兜底上界，不参与时序正确性。
+ *  若本用例红且 evidence 的 action_taken=blocked_before_forward，说明网关在该环境下完全未消费
+ *  上游响应字节——这是真实的 fail-closed 形态而非时序 flaky，按此判读而非重跑（PWR3-A-m1）。 */
 async function startMidStreamResettingUpstream(): Promise<{ server: Server; url: string }> {
   const server = createServer((req, res) => {
     res.writeHead(200, { "content-type": "text/event-stream" });
@@ -127,6 +129,31 @@ describe("e2e: 上游失败时的 fail-closed 与进程存活 (REQ-VETO-002)", (
     expect(rec.action_taken).toBe("blocked_before_forward");
     expect(Array.isArray(rec.findings)).toBe(true);
     expect(rec.findings.length).toBeGreaterThan(0);
+  });
+
+  // PWR3-B-m1：evidence 的 transport 是**请求面**判定，不得由交付计数反推。
+  // 缺陷形态（改前 `stream: fwd.chunks > 0`）：流式请求在首帧转发前即失败 ⇒ chunks=0 ⇒
+  // transport 被误记为 "non-stream"，而该请求确实是 SSE 交互——审计面把流式失败读成非流式失败。
+  // 判红主体是本断言的 "stream" 那一支；改前的对照值为 "non-stream"。
+  it("流式请求在零帧转发前失败 → transport 仍记 stream，action_taken 记 blocked_before_forward", async () => {
+    const evPath = join(dir, "stream-blocked.jsonl");
+    const writer = new EvidenceWriter(evPath);
+    gw = await startGateway({ config: { upstreamBaseUrl: badUpstreamUrl, evidenceWriter: writer } });
+
+    const r = await fetch(gw.url + "/opencode/prov/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: chatBody(true),
+    });
+    expect(r.status).toBe(502);
+
+    const lines = readFileSync(evPath, "utf8").split("\n").filter(Boolean);
+    expect(lines.length).toBe(1);
+    const rec = JSON.parse(lines[0]!);
+    expect(rec.transport).toBe("stream");
+    expect(rec.action_taken).toBe("blocked_before_forward");
+    expect(rec.response_delivered.delivered_chunks).toBe(0);
+    expect(rec.response_delivered.partial).toBe(false);
   });
 
   it("上游失败后网关仍存活：进程可达、后续 benign 请求可被正常处理", async () => {

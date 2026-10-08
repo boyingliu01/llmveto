@@ -43,23 +43,27 @@ export function isAuthHeader(name: string): boolean {
  * 已知边界（PWR1 Round 1 成文，均在 README 扫描面口径有对应申报）：
  *   - 多重反斜杠（如 `\\u200b`）：最内层"单个反斜杠 + uXXXX"总会被还原，前置的多余
  *     反斜杠留作字面量——多层转义**不**构成绕过面（逐层实测见 decodeEscapes 单测）。
- *   - `\uD83D\uDE00` 类代理对逐元还原为两个孤立代理码元（String.fromCharCode 不解 Pair）。
- *     v1 冻结码点集全为 BMP，无现实缺陷；扩集时须先补代理对合并。
+ *   - `\uD83D\uDE00` 类代理对逐元还原为两个代理码元；两语法（`\uXXXX` / `\u{XXXXX}`）在
+ *     PWR3-B-m2 后统一走 safeFromCodePoint，孤立代理码元两式同样**保留**该码元（改前 `\u{d800}`
+ *     会被 fromCodePoint 拒绝而丢字，是 `\uXXXX` 式没有的绕过面）。v1 冻结码点集全为 BMP。
  *   - URL 编码（`%E2%80%8B`）、base64 等**二次编码不还原**（排场外语，非疏漏）。
  */
 export function decodeEscapes(s: string): string {
   if (!s.includes("\\")) return s;
   return s
     .replace(/\\u\{([0-9a-fA-F]{1,6})\}/g, (_m, h: string) => safeFromCodePoint(parseInt(h, 16)))
-    .replace(/\\u([0-9a-fA-F]{4})/g, (_m, h: string) => String.fromCharCode(parseInt(h, 16)))
-    .replace(/\\x([0-9a-fA-F]{2})/g, (_m, h: string) => String.fromCharCode(parseInt(h, 16)));
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_m, h: string) => safeFromCodePoint(parseInt(h, 16)))
+    .replace(/\\x([0-9a-fA-F]{2})/g, (_m, h: string) => safeFromCodePoint(parseInt(h, 16)));
 }
 
 function safeFromCodePoint(cp: number): string {
+  if (cp < 0 || cp > 0x10ffff) return "";
   try {
-    return cp >= 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : "";
+    return String.fromCodePoint(cp);
   } catch {
-    return "";
+    // 孤立代理码元（0xD800–0xDFFF）：fromCodePoint 按规范拒绝，但解码投影要**保留**该码元
+    // 而非静默丢弃——丢弃会让 `\u{d800}` 写法从第二遍扫描里消失，反而造出绕过面（PWR3-B-m2）。
+    return String.fromCharCode(cp);
   }
 }
 

@@ -1,51 +1,25 @@
 {
   "_schema_version": 1,
   "evidence_schema_version": 2,
-  "id": "sprint-20260927-46",
-  "task_description": "llmveto v2a detection core (roadmap v2 slice 1/2): evidence schema canary-field versioning decision + 4 new checkers (thinking-signature-presence, tool-call-shape, usage-reconcile, fingerprint-probe) + canary engine with 'canary rotate' CLI + evil-relay simulator with dual-matrix CI. Deferred to v2b: periodic fingerprint patrol with provider trust score, billing reconciliation with 'report' CLI, Claude Code/Codex/promptfoo adapters",
-  "phase": 2,
+  "id": "sprint-20261008-26",
+  "task_description": "GitHub 开源发布：v1 大模型投毒安全守门员开源自用发布 —— 打包分发/文档/上游容错/安装部署易用性 + 开源卫生（LICENSE/SECURITY/发布工作流）",
+  "phase": 1,
   "status": "in_progress",
-  "started_at": "2026-09-27T09:45:00.552Z",
+  "started_at": "2026-10-08T12:20:11.618Z",
   "phase_history": [
     {
       "phase": 1,
       "name": "PREP",
       "status": "completed",
-      "started_at": "2026-09-27T09:45:00.552Z",
-      "completed_at": "2026-09-27T09:46:07.988Z",
-      "duration_seconds": 67
-    },
-    {
-      "phase": 2,
-      "phase_name": "DESIGN",
-      "status": "completed",
-      "started_at": "2026-09-27T09:46:22.747Z",
-      "completed_at": "2026-09-29T03:40:29.038Z",
-      "duration_seconds": 150846
+      "started_at": "2026-10-08T12:20:11.618Z",
+      "completed_at": "2026-10-08T12:20:18.863Z",
+      "duration_seconds": 7
     }
   ],
   "isolation": {
-    "worktree_path": "D:\\projects\\llmveto\\.worktrees\\sprint\\sprint-2026-09-27-01",
-    "branch": "sprint/2026-09-27-01"
+    "worktree_path": "D:\\projects\\llmveto\\.worktrees\\sprint\\sprint-2026-10-08-01",
+    "branch": "sprint/2026-10-08-01"
   },
-  "outputs": {
-    "worktree": ".worktrees/sprint/sprint-2026-09-27-01",
-    "branch": "sprint/2026-09-27-01",
-    "created_from": "main@d5b9be8",
-    "baseline_tests": "277 passed / 3 skipped / 34 files",
-    "auto_estimate": "complex",
-    "scope": "v2a detection core (4 checkers + canary + evil-relay dual-matrix CI + evidence schema decision)",
-    "deferred": "v2b ops (fingerprint patrol, billing report CLI, Claude Code/Codex/promptfoo)",
-    "decisions": [
-      "DR-011",
-      "DR-012"
-    ],
-    "risks_for_phase2": [
-      "R-PRE-1 evidence schema canary field frozen by TEST contract #4",
-      "R-PRE-2 CI gap: only bench.yml",
-      "R-PRE-3 knowledge base stale (claims src empty)",
-      "R-PRE-4 delphi walkthrough non-convergence precedent"
-    ]
-  },
+  "outputs": {},
   "metrics": {}
 }

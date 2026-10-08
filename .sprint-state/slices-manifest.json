@@ -166,7 +166,8 @@
         "AC-REL-04a"
       ],
       "effort": "S",
-      "status": "pending"
+      "status": "done",
+      "notes": "SECURITY.md/CONTRIBUTING.md 英文（DD-5/DR-009/DR-010 新披露）：SECURITY=支持版本表(0.2.x)/GitHub 私密漏洞报告（无公开邮箱）/scope=in:检测绕过·阻断失效·evidence 链失真·fail-closed 契约破坏，out:已登记残余风险=契约非漏洞/best-effort 无 SLA 不承诺功能请求；CONTRIBUTING=issues 优先/PR 保守口径（CI 覆盖率 80% 门 + 本地 pre-commit 门 + 维护者侧证据绑 HEAD 走查）/Bun≥1.1+Node≥18/命令表与 package.json scripts 实况逐条一致（AC-REL-04a）/CONTEXT.md 术语冻结引用/双语 README 同 PR 规则"
     },
     {
       "id": "RL-07",

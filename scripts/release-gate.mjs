@@ -214,7 +214,9 @@ function installTarballStep(ctx) {
 }
 
 function publishDryRunStep() {
-  // --ignore-scripts 仅作用于本 dry-run：本门自身即权威门，dry-run 内再跑 prepublishOnly 会递归；
+  // 防递归两层（REL-CW R1 ARCH-M-01 澄清）：主防线 = --ignore-scripts，本 dry-run 内
+  // prepublishOnly（即 release:gate 整链）根本不执行；RELEASE_GATE_RUNNING 是兜底断言，
+  // 覆盖主防线失效的情形（如有人删掉该 flag、或从其他 lifecycle 钩子直接调 release:gate）。
   // 真实 publish 的 hook 纵深防御仍由 package.json prepublishOnly 承担（D-01 防跳过定位）。
   const r = run("npm", ["publish", "--dry-run", "--ignore-scripts"], {
     env: { ...process.env, RELEASE_GATE_RUNNING: "1" },
@@ -246,6 +248,8 @@ function preflight() {
 
 async function main() {
   if (process.env.RELEASE_GATE_RUNNING === "1") {
+    // 兜底层：主防线是 publishDryRunStep 的 --ignore-scripts（prepublishOnly 不触发）；
+    // 能走到这里说明防线被绕开（flag 丢失/钩子直调本门），此时宁拒不跑。
     fail("递归保护触发：release-gate 正在运行中（publish-dry-run 的 hook 再次进入本门）");
   }
   preflight();
@@ -268,7 +272,7 @@ async function main() {
       if (r.code !== 0) fail("test (bun run test)", [tail(r.stdout), tail(r.stderr)]);
       const combined = (r.stdout + r.stderr).replace(/\x1b\[[0-9;]*m/g, ""); // 剥 ANSI，否则 \b 不成立（[32m326 无词边界）
       const passed = /\bTests\s+(\d+)\s+passed\b/.exec(combined);
-      if (!passed) fail("test: 无法解析 vitest passed 计数（基线核对不可能）", [tail(combined, 10)]);
+      if (!passed) fail("test: 无法解析 vitest passed 计数（基线核对不可能）——若 vitest 版本升级导致汇总行格式变更，须同步修订本脚本正则", [tail(combined, 10)]);
       if (Number(passed[1]) < TEST_BASELINE_MIN_PASSED) {
         fail(`test 基线倒退: passed=${passed[1]} < 冻结基线 ${TEST_BASELINE_MIN_PASSED}`);
       }

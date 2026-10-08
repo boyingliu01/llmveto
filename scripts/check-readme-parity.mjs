@@ -4,6 +4,12 @@
 // ② 两文件 markdown 表格按出现序逐张行数相等（能力表/环境变量表/CLI 表行级核对的机器面）；
 // ③ --check-migration：README.zh-CN.md 标题序列 vs 迁移前原 README.md（git 冻结清单）diff=0（R1 A-MN-03 迁入自检）。
 // 用法：node scripts/check-readme-parity.mjs [--check-migration]
+//
+// 维护约定（REL-CW R1 C-N-01）：ORIGINAL_HEADINGS / HEADING_PAIRS 是冻结快照，不是常驻真相源——
+// README 结构本身变更时，须同 PR 更新两表并重跑 --check-migration 以外的核对；--check-migration
+// 仅用于 RL-05 迁入时点的自检回放，迁移完成后 README 结构变更无需保持 ORIGINAL_HEADINGS 不变。
+// 解析约束（REL-CW R1 ARCH-N-01）：行级正则解析，跳过围栏代码块；不支持 HTML 标题（<h1>..）——
+// 两份 README 须保持纯 markdown ATX 标题写法，引入 HTML 标题前先升级本脚本。
 
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";

@@ -26,7 +26,15 @@ describe("SL-11 CLI (REQ-VETO-008)", () => {
   });
 
   it("AC-02 doctor 4 检查项：漂移 FAIL（枚举内条目未受管）", async () => {
-    const r = await runCli("doctor", { stateDir: dir });
+    // doctor 经 ctx.env ?? process.env 解析受管配置路径；不传 env 会读到开发机真实配置，
+    // 在"真实配置已受管 + 网关在跑"的机器上漂移为 0 → 误报。指向临时目录的缺失文件 → {} → 全漂移。
+    const r = await runCli("doctor", {
+      stateDir: dir,
+      env: {
+        LLMVETO_OPENCODE_CONFIG: join(dir, "absent-opencode.json"),
+        LLMVETO_DELPHI_CONFIG: join(dir, "absent-delphi.json"),
+      },
+    });
     expect(r.stdout).toContain("doctor.config-drift");
     expect(r.stdout).toContain("doctor.port-reachable");
     expect(r.stdout).toContain("doctor.evidence-chain");
@@ -37,7 +45,15 @@ describe("SL-11 CLI (REQ-VETO-008)", () => {
   });
 
   it("AC-03 --write-managed-config 触发第 3 检查项；写入失败仅告警", async () => {
-    const r = await runCli("doctor", { stateDir: dir, args: ["--write-managed-config"] });
+    // 同 AC-02：写路径必须落到临时目录，否则每次跑套件都会覆写开发机真实用户配置。
+    const r = await runCli("doctor", {
+      stateDir: dir,
+      args: ["--write-managed-config"],
+      env: {
+        LLMVETO_OPENCODE_CONFIG: join(dir, "absent-opencode.json"),
+        LLMVETO_DELPHI_CONFIG: join(dir, "absent-delphi.json"),
+      },
+    });
     expect(r.stdout).toContain("doctor.write-managed-config");
     // 该项永远 PASS（best-effort）
     const line = r.stdout.split("\n").find((l) => l.includes("doctor.write-managed-config"))!;

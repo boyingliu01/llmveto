@@ -9,8 +9,9 @@
 //   node var/canary-split.ts --check         # 校验已落盘的 session-NN.json 是否符合规格，不回读 jsonl
 // 选项：--in <jsonl> --out-dir <dir> --client <opencode|delphi>（强制标注全部会话）
 
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
+import { createInterface } from "node:readline";
 
 const argv = process.argv.slice(2);
 const flagOf = (f: string) => argv.includes(f);
@@ -53,10 +54,11 @@ type Session = { key: string; model: string; client: string; exchanges: Exchange
 // 会话归组：真实 agent 循环的上下文单调增长，故"上一轮的 messages 是本轮的真前缀"即同会话；
 // 单轮重复请求（如 delphi 三家各一次）不构成前缀延长，各成一会话。
 // 合并另要求 model 与 client 同时一致：client 判定不同的请求不并入既有会话，避免跨客户端误并。
-function isContinuation(prev: unknown[], cur: unknown[]): boolean {
+// 两侧先各自 stringify 成串再比较（stringify 是确定性计算，缓存不改变结果）。
+function isContinuation(prev: string[], cur: string[]): boolean {
   if (cur.length <= prev.length) return false;
   for (let i = 0; i < prev.length; i++) {
-    if (JSON.stringify(prev[i]) !== JSON.stringify(cur[i])) return false;
+    if (prev[i] !== cur[i]) return false;
   }
   return true;
 }
@@ -135,13 +137,18 @@ function sha(s: string): string {
 
 let corruptLines = 0;
 
-function loadRaw(): Raw[] {
+// 逐行流式读：录制文件已达数百 MB，readFileSync 整体成串会撞 V8 单字符串 512MB 上限（ERR_STRING_TOO_LONG）
+async function loadRaw(): Promise<Raw[]> {
   if (!existsSync(IN)) {
     console.error(`[split] 找不到 ${IN}——capture-proxy 未采集或路径不对`);
     process.exit(1);
   }
   const out: Raw[] = [];
-  for (const l of readFileSync(IN, "utf8").split(/\r?\n/)) {
+  const rl = createInterface({
+    input: createReadStream(IN, { encoding: "utf8" }),
+    crlfDelay: Infinity,
+  });
+  for await (const l of rl) {
     if (!l.trim()) continue;
     try {
       out.push(JSON.parse(l) as Raw);
@@ -156,6 +163,16 @@ function loadRaw(): Raw[] {
 function buildSessions(raws: Raw[]): { sessions: Session[]; skipped: string[] } {
   const sessions: Session[] = [];
   const skipped: string[] = [];
+  // 800+ 条交换 × MB 级 body 下逐次 stringify 是平方级开销；每会话缓存其末轮 messages 的串
+  const prevCache = new Map<Session, string[]>();
+  const strsOf = (s: Session): string[] => {
+    let c = prevCache.get(s);
+    if (!c) {
+      c = lastMessages(s).map((m) => JSON.stringify(m));
+      prevCache.set(s, c);
+    }
+    return c;
+  };
 
   const chat = raws
     .filter((r) => {
@@ -185,14 +202,16 @@ function buildSessions(raws: Raw[]): { sessions: Session[]; skipped: string[] } 
       response_status: rec.response_status,
       response: parseResponse(rec).response,
     };
+    const curStrs = messages.map((m) => JSON.stringify(m));
     const cand = [...sessions]
       .reverse()
       .find(
         (s) =>
-          s.client === client && s.model === model && isContinuation(lastMessages(s), messages),
+          s.client === client && s.model === model && isContinuation(strsOf(s), curStrs),
       );
     if (cand) {
       cand.exchanges.push(ex);
+      prevCache.delete(cand);
     } else {
       sessions.push({
         key: sha(`${model}|${sessions.length}|${rec.ts}`),
@@ -276,7 +295,7 @@ function report(sessions: Session[], skipped: string[], problems: string[]): voi
   } else console.log("规格问题: 0");
 }
 
-function main(): void {
+async function main(): Promise<void> {
   if (CHECK_ONLY) {
     const files = existsSync(OUT_DIR)
       ? readdirSync(OUT_DIR).filter((f) => /^session-\d+\.json$/.test(f)).sort()
@@ -295,7 +314,7 @@ function main(): void {
     return;
   }
 
-  const { sessions: all, skipped } = buildSessions(loadRaw());
+  const { sessions: all, skipped } = buildSessions(await loadRaw());
   const chosen = pick(all, REQUIRE);
   const named: Session[] = chosen.map((s, i) => ({ ...s, key: `session-${String(i + 1).padStart(2, "0")}` }));
   const problems = validate(named);
@@ -327,4 +346,7 @@ function main(): void {
   }
 }
 
-main();
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

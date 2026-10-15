@@ -19,6 +19,9 @@ bench/baseline.local.json
 # Evidence store may contain sensitive request metadata — never commit. Only *.ts sources are tracked.
 var/*
 !var/*.ts
+# Scratch probes (temporary linux probes, not part of src/)
+var/probe-*.ts
+var/negctl-*.sh
 
 # Sprint worktrees (isolated dev branches)
 .worktrees/

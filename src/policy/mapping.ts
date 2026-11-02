@@ -1,4 +1,4 @@
-import type { Action, CheckerSpec, Verdict } from "../shared/types.ts";
+import type { Action, ActionTaken, CheckerSpec, Verdict } from "../shared/types.ts";
 
 /**
  * @test REQ-VETO-006
@@ -22,9 +22,13 @@ interface Mapping {
 }
 
 export const V1_MAPPING: Readonly<Record<string, Mapping>> = Object.freeze({
-  "egress-secret-scan":      Object.freeze({ clean: "allow", finding: "block", error: "block" }),
-  "invisible-unicode-scan":  Object.freeze({ clean: "allow", finding: "block", error: "block" }),
-  "model-label-consistency": Object.freeze({ clean: "allow", finding: "warn",  error: "warn"  }),
+  "canary-return-scan":           Object.freeze({ clean: "allow", finding: "block", error: "block" }), // T1a 安全类
+  "egress-secret-scan":           Object.freeze({ clean: "allow", finding: "block", error: "block" }),
+  "invisible-unicode-scan":       Object.freeze({ clean: "allow", finding: "block", error: "block" }),
+  "model-label-consistency":      Object.freeze({ clean: "allow", finding: "warn",  error: "warn"  }),
+  "thinking-signature-presence":  Object.freeze({ clean: "allow", finding: "warn",  error: "warn"  }),
+  "tool-call-shape":              Object.freeze({ clean: "allow", finding: "block", error: "block" }), // T2a 安全类
+  "usage-reconcile":              Object.freeze({ clean: "allow", finding: "warn",  error: "warn"  }),
 } as const);
 
 /**
@@ -47,3 +51,48 @@ export function mapBySpec(spec: Pick<CheckerSpec, "id" | "safetyClass">, verdict
   if (verdict === "clean") return "allow";
   return spec.safetyClass ? "block" : "warn";
 }
+
+// ── D-11（SL-03/REQ-V2a-13）：action_taken 优先序 ─────────────────────────────
+// action_taken 是"本交互实际发生什么"的单值字段；多条候选并存时按本序取最前者。
+// 档位语义：blocked_* / terminated（顶层裁决）> degraded_observational（观测类 error
+// 如实降级）> warned > allowed（基线）。resolveActionTaken 的既有值结果与 v1 行为逐字
+// 一致（v1 各调用点只传单候选或 {allowed, warned}）。
+
+export const ACTION_TAKEN_PRIORITY: readonly ActionTaken[] = Object.freeze([
+  "blocked_before_forward",
+  "blocked_before_deliver",
+  "terminated_after_delivery",
+  "degraded_observational",
+  "warned",
+  "allowed",
+]);
+
+/** 候选集 → 按 ACTION_TAKEN_PRIORITY 取最前；空集回退 allowed（基线值）。 */
+export function resolveActionTaken(candidates: readonly ActionTaken[]): ActionTaken {
+  let best: ActionTaken | undefined;
+  let bestRank = Number.POSITIVE_INFINITY;
+  for (const c of candidates) {
+    const rank = ACTION_TAKEN_PRIORITY.indexOf(c);
+    if (rank >= 0 && rank < bestRank) {
+      best = c;
+      bestRank = rank;
+    }
+  }
+  return best ?? "allowed";
+}
+
+// ── D-10（SL-03/REQ-V2a-13）：checker → threat 取值表（§4.5 威胁表） ─────────
+// findings[] verdict=error 条目的 threat 由此表提供；表中查不到的 checker 视为登记
+// 缺陷，flatten 端必须显式失败（fail-closed），不得自造 threat。包含 v2a 已规划
+// 尚未落地的 checker（SL-08/09/10/11），声明面一次钉死避免后续切片再触本文件。
+
+export const CHECKER_THREAT_BY_ID: Readonly<Record<string, string>> = Object.freeze({
+  "egress-secret-scan": "T1b",
+  "invisible-unicode-scan": "T2c",
+  "model-label-consistency": "T3a",
+  "tool-call-shape": "T2a",
+  "canary-return-scan": "T1a",
+  "thinking-signature-presence": "T3a",
+  "usage-reconcile": "T4a",
+  "budget-window-stub": "T4a", // 测试桩：预算门窗口行为验证（观测类）
+});

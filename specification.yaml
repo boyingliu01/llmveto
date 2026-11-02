@@ -1,150 +1,353 @@
-# llmveto GitHub 开源发布 — Specification
-# 权威来源：docs/plans/2026-10-08-release-requirements.md v2（判定基准，R1 需求链 3/3 APPROVED）
-#           docs/plans/2026-10-08-release-design.md v2（D-01..D-08，R2 设计评审 3/3 APPROVED）
-# 状态：R1 需求评审 APPROVED（Round 2，consensus 100%）+ 设计拍板 DD-1..11 闭环（DR-006..010）
-#       + R2 设计评审 APPROVED（Round 2，consensus 100%，.sprint-state/delphi-reviewed.json）
-# 本文件是 ralph-loop / test-specification-alignment 的机读契约入口；AC 全文以需求文档为准，
-# 此处承载可判定的 given/when/then。本迭代为发布面交付（src/ 零改动），验证形态以脚本/
-# runbook/清单留档为主，test_coverage_requirements 按此实情标注。
+# llmveto v2a 检测核心 — Specification
+# 权威来源：docs/plans/2026-09-27-v2a-requirements.md（判定基准，R1 3/3 APPROVED）
+#           docs/plans/2026-09-27-v2a-design.md（D-01~D-14，Step 4 批准 + R2 3/3 APPROVED）
+# 状态：R1 需求评审 APPROVED（Round 5，consensus 100%）+ 设计 Step 4 用户批准（DR-022）
+#       + R2 设计评审 APPROVED（Round 3，consensus 100%，.sprint-state/delphi-reviewed.json）
+# 本文件是 ralph-loop / test-specification-alignment 的机读契约入口；AC 全文以需求文档为准，此处承载可判定的 given/when/then。
 
 specification:
-  id: "SPEC-REL-001"
-  name: "llmveto GitHub 开源发布（sprint-20261008-26）"
+  id: "SPEC-V2A-001"
+  name: "llmveto v2a — 检测核心（Phase 2 Step 3，验证加深）"
   version: "0.2.0"
-  sprint_ref: "sprint-20261008-26"
+  sprint_ref: "sprint-20260927-46"
   review_gate:
-    r1_requirements: ".sprint-state/phase-outputs/requirements-reviewed.json (APPROVED, Round 2, consensus 100%)"
-    r2_design: ".sprint-state/delphi-reviewed.json (design mode, APPROVED, Round 2/5, consensus 100%)"
-    panel: "example-provider-flash profile / g-qwen3.8-flash + g-deepseek-flash + local-qwen3.8-27b (var/delphi-r11/.delphi-config.json)"
+    r1_requirements: ".sprint-state/phase-outputs/requirements-reviewed.json (APPROVED, Round 5, consensus 100%)"
+    r2_design: ".sprint-state/delphi-reviewed.json (design mode, APPROVED, Round 3/5, consensus 100%)"
+    panel: "example-provider-flash profile / g-glm-5.3-flashx + g-deepseek-flash + local-qwen3.8-27b (var/delphi-v2a/.delphi-config.json)"
 
   # ─────────────────────────────────────────────────────────────────────────
-  # Requirements（7 条 REQ，全部 MUST；AC-REL-01a..07d 共 13 条为验收判定域）
+  # Requirements（15 条 REQ，全部 MUST；AC-V2a-01~27 为验收判定域）
   # ─────────────────────────────────────────────────────────────────────────
   requirements:
 
-    - id: REQ-REL-07
-      description: "仓库公开化前置检查（阻断性，时序第一）：gitleaks 全历史+工作区、git ls-files 公开面核查、内部端点 filter-repo 全量改写（DD-11，三段式）、提交信息扫描"
+    - id: "REQ-V2a-01"
+      description: "响应扫描单元补齐 tool-call 路径（v1 缺陷修复）：buildResponseScanUnit 纳入 message/delta 的 tool_calls arguments，覆盖面与 DESIGN §扫描单元定义 一致"
       priority: "MUST"
       acceptance_criteria:
-        - id: AC-REL-07a
-          given: "本迭代全部切片已 merge main，用户确认执行前置检查"
-          when: "gitleaks git（全历史）+ gitleaks dir .（工作区）本地运行（工具不入仓）"
-          then: "高置信发现 = 0；扫描输出留档；工具一次性使用与 docs/licenses.md 不捆绑决议不冲突"
-        - id: AC-REL-07b
-          given: "07a 通过"
-          when: "按核查清单核对 git ls-files"
-          then: "无 .worktrees/、无 evidence 产物、无 .delphi-config.json 本地配置、无 .sprint-history/；var/ 仅 canary-split.ts / capture-proxy.ts / mock-relay.ts 三件；.sprint-state/ 声明保留为公开审计面（须先过 07c+07a）；.gitignore 完备性清单留档"
-        - id: AC-REL-07c
-          given: "bundle 备份（git bundle create --all）与 mirror clone 预演改写报告已完成人工审查"
-          when: "git filter-repo --replace-text 将 internal-gateway.invalid/redacted 全历史 blob 改写为 https://internal-gateway.invalid/redacted 并 force-push"
-          then: "改写前全历史 grep 前置确认替换集合=已识别 4 文件且无未知文件；改写后 07a/07b/07d 三重复扫零残留（过闸判据非可选）；SHA 映射表（pre/post）留档；全量测试门复跑全绿留档；评审不重做（内容零变化）；PR/issue 旧 SHA 悬链登记接受"
-        - id: AC-REL-07d
-          given: "07c 改写完成"
-          when: "全历史 git log 扫描 commit 与 tag message（内部人名/邮箱/域名/工单号口径）"
-          then: "零处置项，或命中项经 --replace-message 追加改写轮后复扫归零"
+        - id: "AC-V2a-01"
+          given: "fixture 将 U+200B 藏于 tool_calls[0].function.arguments 且其 UTF-8 E2 80 8B 跨 chunk 切开"
+          when: "响应经网关扫描"
+          then: "invisible-unicode-scan 判 finding、action=block——v1 从不提取 tool_calls 导致的漏检面消除"
       test_coverage_requirements:
-        unit: false
-        integration: false
-        e2e: false
-
-    - id: REQ-REL-01
-      description: "npm 发布转正（ADR-0001 承诺兑现）：private 移除 + 元数据补齐 + 发布前置构建门链（scripts/release-gate.mjs 单一真源）+ release.yml + npm 凭据安全"
-      priority: "MUST"
-      acceptance_criteria:
-        - id: AC-REL-01a
-          given: "release-gate.mjs 全链（clean→install→build→test→typecheck→typecheck:dist→pack→install-tarball→smoke→publish-dry-run）执行"
-          when: "npm i -g tarball 后在受控 PATH（剥离含 bun 目录、断言 bun 不可达、node --version ≥18）下运行冻结判据表"
-          then: "8 行判据全过：无参调用 exit 2 且 stderr 含 'valid: start, stop, status, doctor, verify'；启动前 status exit 1 含 'not running'；start exit 0 含 'gateway started in background (pid='；status exit 0 含 'running pid=' 与 'url=http://127.0.0.1:'；verify exit 0 含 'ok: ' 与 'records verified'；doctor exit 0 含 '[PASS] doctor.evidence-chain: chain ok (' 与 '[PASS] doctor.port-reachable'（前置=预写 LLMVETO_OPENCODE_CONFIG/LLMVETO_DELPHI_CONFIG 受管配置副本，最小字段集随 S2 冻结留档）；stop exit 0 含 'stop: signal sent'；teardown 复核 status exit 1 含 'not running'；try/finally 保证失败路径无全局包与 daemon 残留"
-        - id: AC-REL-01b
-          given: "tag push 匹配 ^v[0-9]+\\.[0-9]+\\.[0-9]+$ 或 workflow_dispatch 触发 release.yml"
-          when: "工作流执行（checkout→setup-node 20→setup-bun→build→test→npm run release:gate 显式门链步→publish（npm view 幂等前置）→gh release create）"
-          then: "任一步红则不 publish 不 Release；同 tag 三情形语义成立（同 SHA 重 push=no-op 不触发；dispatch=补建 Release 入口且 publish 被幂等前置跳过；EPUBLISHCONFLICT 兜底）；npm view 非'已存在'类失败按 fail-closed 阻断 publish 步；publish 成功后真装烟测失败决策树（安全缺陷 deprecate+unpublish+公告 / 非安全 deprecate+0.2.1）入 runbook；workflow 文件无内部端点/人名/凭据字面量"
-        - id: AC-REL-01c
-          given: "发布凭据配置环节（用户侧，S4 runbook 指引）"
-          when: "按 runbook 执行"
-          then: "granular access token 最小权限（仅本包 publish scope）；发布账号 2FA 启用确认；NPM_TOKEN 入 GitHub secret 且本地不持有（关闭 --ignore-scripts 本地直 publish 绕过面）；token 轮换口径成文"
-      test_coverage_requirements:
-        unit: false
+        unit: true
         integration: true
         e2e: false
 
-    - id: REQ-REL-02
-      description: "GitHub Release 通道：合规 tag 自动产出 Release，正文含该版本要点（取 CHANGELOG 对应节）"
+    - id: "REQ-V2a-02"
+      description: "tool-call-shape checker（T2a，安全类）：判定『该调用未被请求声明 / 结构不合法』；流式与非流式均实现；window_overflow 为其第四值 reason"
       priority: "MUST"
       acceptance_criteria:
-        - id: AC-REL-02a
-          given: "v0.2.0 tag push 且 release.yml 门链全绿"
-          when: "gh release create 执行"
-          then: "Release 存在且正文含 CHANGELOG [0.2.0] 节要点；publish 成功而 Release 步失败时可 workflow_dispatch 补建"
+        - id: "AC-V2a-02"
+          given: "正样本 ≥9（未知工具名 / arguments 非法 JSON / 缺 required 参数，三类各 ≥3）"
+          when: "checker 执行（含流式样本）"
+          then: "检出率 100%；流式样本断言 expected.observables{terminated_after_delivery, delivered_chunks, error_event_code}"
+        - id: "AC-V2a-03"
+          given: "benign 语料（须含 ≥1 条带合法 tool_calls 的真实形态响应）"
+          when: "checker 执行"
+          then: "FP=0（阻断类门槛）；declared_tools 为空时『未知工具名/缺 required』两子规则不适用（#C 已登记漏检）"
+        - id: "AC-V2a-13"
+          given: "arguments 解析失败"
+          when: "checker 判定"
+          then: "判 finding 非 error（业务命中≠扫描器失败）：findings[].rule_id='malformed-arguments'、verdict='finding'，且序列化后 JSONL 行内无 reason 键"
+      test_coverage_requirements:
+        unit: true
+        integration: true
+        e2e: true
+
+    - id: "REQ-V2a-03"
+      description: "thinking-signature-presence checker（T3a 证伪，观测类）：请求 thinking 开关 × 响应 thinking 块的双向自洽判定"
+      priority: "MUST"
+      acceptance_criteria:
+        - id: "AC-V2a-04"
+          given: "请求带 thinking 开关而响应无 thinking 块；或响应出现未要求的 thinking 块"
+          when: "checker 执行"
+          then: "两个方向均判 finding/warn 且各有 fixture；均不得断言 block"
+      test_coverage_requirements:
+        unit: true
+        integration: true
+        e2e: false
+
+    - id: "REQ-V2a-04"
+      description: "usage-reconcile checker（T4a，观测类）：纯本地自洽性估算，按需求 §4.2 定值阈值（常量内置，checker 不持配置）"
+      priority: "MUST"
+      acceptance_criteria:
+        - id: "AC-V2a-05"
+          given: "按 §4.2 阈值构造的报值（虚高超带宽 / 带宽内 / 虚低）"
+          when: "checker 执行"
+          then: "虚高→finding/warn；带宽内→clean；虚低→clean（负样本防把 T4b 当 T4a）；边界样本『报值=估算×1.5（整数除法精确取等）』与『报值−估算=64』各断言 clean（严格不等把守）"
+      test_coverage_requirements:
+        unit: true
+        integration: true
+        e2e: false
+
+    - id: "REQ-V2a-05"
+      description: "金丝雀引擎：网关注入 + 跨会话串流检测（T1a，安全类，命中=终止流）；registry/注入/键派生由 REQ-V2a-07/11 承载"
+      priority: "MUST"
+      acceptance_criteria:
+        - id: "AC-V2a-06"
+          given: "会话 A 注入 canary_A，会话 B 响应含 canary_A"
+          when: "canary-return-scan 执行"
+          then: "finding + block（流式终止流）；同会话内复述→clean（负样本）；body_capture=metadata_only 下链中全文 grep 不到该串、findings[].rule_id 只含 canary-<id> 不含原文"
+      test_coverage_requirements:
+        unit: true
+        integration: true
+        e2e: true
+
+    - id: "REQ-V2a-06"
+      description: "llmveto canary rotate CLI 子命令（COMMANDS 5→6）：运行时经 loopback 控制通道；网关未运行时写零字节哨兵标记文件（#B 窄化 §4.3）"
+      priority: "MUST"
+      acceptance_criteria:
+        - id: "AC-V2a-08"
+          given: "rotate 执行后新建会话 B′，其响应含轮换前 canary_A"
+          when: "canary-return-scan 判定"
+          then: "clean（旧串对新 session 立即退出匹配域）；轮换后仍活跃的既有 session 下一次请求重新分配新串（canary_B≠canary_A 且 canary_A 在其后响应中判 clean）；session 键不变仅 canary 变；evidence canary 字段恒 null 不回归"
+      test_coverage_requirements:
+        unit: true
+        integration: true
+        e2e: true
+
+    - id: "REQ-V2a-07"
+      description: "canary registry 分层落地（新域 src/canary/**，落盘 stateDir/canary-registry.json）：跨会话状态不破坏 checker 纯函数约束与 architecture.yaml 单向依赖"
+      priority: "MUST"
+      acceptance_criteria:
+        - id: "AC-V2a-19③（静态侧）"
+          given: "architecture-boundaries 测试"
+          when: "import 图断言"
+          then: "canary 层 allowed_imports=[shared]；gateway 扩列 +canary；checkers 层不变且不 import canary；src/cli/** 不得 import src/canary 写侧导出（导出粒度）"
+      test_coverage_requirements:
+        unit: true
+        integration: false
+        e2e: false
+
+    - id: "REQ-V2a-08"
+      description: "evil-relay 模拟器（载体 testkit/evil-relay.ts，需求 §4.2 定值路径）：13 对手行为集（§8.3 清单），复用与否由 G-RELAY（docs/licenses.md）触发 §8.4 两分支"
+      priority: "MUST"
+      acceptance_criteria:
+        - id: "AC-V2a-09"
+          given: "§8.3 的 13 个对手"
+          when: "CI 内单一 runner 起停"
+          then: "零 Python、零 docker；每个对手 ≥1 条 fixture 且 expected.verdict/action 显式声明"
+      test_coverage_requirements:
+        unit: false
+        integration: true
+        e2e: true
+
+    - id: "REQ-V2a-09"
+      description: "双矩阵 CI 全量落地：检出 + 误报矩阵的 @v2 项进入 CI（test.yml 每 PR；relay-nightly.yml nightly 30min/4-way）"
+      priority: "MUST"
+      acceptance_criteria:
+        - id: "AC-V2a-10"
+          given: ".github/workflows 现仅 bench.yml"
+          when: "新增测试工作流"
+          then: "双矩阵在 CI 内运行并按 TEST §3 回退公式判定；13 对手仅 nightly 档；nightly 端口争用回退串行+45min 须同 PR 改表不留静默差值"
       test_coverage_requirements:
         unit: false
         integration: false
         e2e: false
 
-    - id: REQ-REL-03
-      description: "英文 README 全量双语（DR-004/DR-007）：README.md=English 全量 + README.zh-CN.md 中文全量镜像 + CONTEXT.md 术语对照表冻结 + 轻量机器核对"
+    - id: "REQ-V2a-10"
+      description: "ROADMAP 订正：T2b 移出 v2 验收（文档订正组，S-DOCS slice）"
       priority: "MUST"
       acceptance_criteria:
-        - id: AC-REL-03a
-          given: "中文版章节清单冻结（定位段/能力边界表/快速开始/路径路由约定/环境变量表/CLI 表/开发环境/分发与 runtime 承诺/ADR 索引）"
-          when: "英文 README 逐章翻译 + check-readme-parity.mjs 运行"
-          then: "章节标题序列对等（脚本核验通过）+ 能力表/环境变量表/CLI 表行级人工核对留档；README.zh-CN.md 迁入自检=迁移前后章节标题序列 diff=0；两文件首行互链"
-        - id: AC-REL-03b
-          given: "CONTEXT.md Language 节受控词全集（26 条，含 evidence）"
-          when: "新增 Glossary（受控词英文定译）节"
-          then: "覆盖全部受控词且含 Avoid 英文列；vetting 行附 avoid 语义注释（指称限制非一般禁用）；evidence/action_taken 保留原名不译"
+        - id: "AC-V2a-15"
+          given: "REQ 登记表 T2c 行"
+          when: "tests/unit/doc-consistency.test.ts grep 型断言"
+          then: "缺口理由逐字包含『tool-call 参数路径 v1 实际未覆盖，v2a 起覆盖』"
+        - id: "AC-V2a-16"
+          given: "七处文档订正（含 ⑤latency 标量背离加注 ⑥T4a 无原值加注 ⑦T2c offsets 边界加注）"
+          when: "tests/unit/doc-consistency.test.ts grep 型断言"
+          then: "七处逐条可断言、防表述漂移；拍板项同批订正（#B/#C/#D/#G、AC-V2a-17 头名 x-llmveto-session-id）一并落盘"
       test_coverage_requirements:
-        unit: false
+        unit: true
         integration: false
         e2e: false
 
-    - id: REQ-REL-04
-      description: "开源卫生件：SECURITY.md + CONTRIBUTING.md（英文，保守承诺口径 DR-009，核对基准=仓库实况）"
+    - id: "REQ-V2a-11"
+      description: "canary registry 生命周期与注入分派：session 键定义（头优先→sha256(len:text) 前 16 字符回退）、活跃/TTL 24h/LRU 64、单写者原子写与轮换传播、registry 不可用跳过与可观测告警、注入点六分支（§4.3/§4.4）"
       priority: "MUST"
       acceptance_criteria:
-        - id: AC-REL-04a
-          given: "核对基准 = package.json scripts 实况 13 条 + pre-commit 12 门名称 + Gate MW（证据绑 HEAD）+ #367 对齐报告门"
-          when: "两文件成文并逐条核对"
-          then: "文中出现的每个门名/命令与仓库实况一致（核对记录留档）；SECURITY.md 含支持版本表（0.2.x）、GitHub 私密漏洞报告渠道、best-effort 无 SLA、不承诺功能请求；CONTRIBUTING.md 含 PR 须过全量测试门+覆盖率门（80%）+12 道 pre-commit 门+Gate MW 走查链、开发环境 Bun ≥1.1 + Node ≥18、parity 脚本触发约定"
+        - id: "AC-V2a-07"
+          given: "原始请求体 B 与注入后 B′（canary 串固定 27 字符）"
+          when: "按 §4.4 六分支参数化断言"
+          then: "B′=B[0..k]+canary+B[k..] 对唯一 k 成立；分支 1/4 字符串前缀+长度差、分支 2/3 数组逐 index 相等+唯一元素差异、分支 5 注入点 message 形态判据+其后 message+顶层非 messages 字段均不变、分支 6 不注入本条不适用"
+        - id: "AC-V2a-17"
+          given: "带 x-llmveto-session-id 的两个会话 / 同会话两次请求 / 缺头回退"
+          when: "deriveSessionKey 判定"
+          then: "异会话键不同 canary 不同；同会话 canary 相同；回退键同对话恒定；拼接歧义样本 [\"ab\",\"c\"] vs [\"a\",\"bc\"] 键不同（长度前缀生效）；非 text part 负样本与逐字节相同 prompt 负样本共享 canary→clean（注释指向 §7 P4 登记漏检）"
+        - id: "AC-V2a-18"
+          given: "§4.4 六形态各 ≥1 fixture（断言对象取 §4.4 右列不变式落点）"
+          when: "分派执行"
+          then: "分支 1~5 断言该行判据 + meta.canary_injected=true；分支 6 断言 canary_injected=false + status inject_skipped 计数 +1 + 顶层 reason='inject_skipped' + findings[] 无注入条目；分支 6 对照 = 语义孪生 body 对（B_skip/B_ok 两趟 findings、action、action_taken 逐字段相等，排除集 ts/event_id/request_id/seq/latency 落 fixture 常量表）"
+        - id: "AC-V2a-19"
+          given: "registry 文件缺失/校验失败；轮换与在途请求交叠"
+          when: "网关处理"
+          then: "①顶层 reason='registry_unavailable' + status/doctor 计数非零 + findings 无注入条目 + 不得申报『已注入』；②在途请求按分配时刻快照判定，轮换后新会话必用新串；③静态侧（cli 无写能力 import 断言）+ 运行时侧（8 在途 30s、每 2s rotate 共 ≥15 次、registry 恒合法 JSON 且 session ≤64、至少一次 rotate 落在键计算后写完前的 barrier 窗口内）"
+        - id: "AC-V2a-21"
+          given: "适配器 A 会话的 canary 出现在适配器 B 会话响应"
+          when: "canary-return-scan 判定"
+          then: "finding + block（匹配域不区分客户端）"
       test_coverage_requirements:
-        unit: false
+        unit: true
+        integration: true
+        e2e: true
+
+    - id: "REQ-V2a-12"
+      description: "安全类 checker 预算可注入：GatewayConfig.checkerBudgetMs + runWithBudget 事后判定（裁决面非止损面）；默认配置三路径全接线（G3 body 三档 + G1 每 chunk 门）"
+      priority: "MUST"
+      acceptance_criteria:
+        - id: "AC-V2a-27"
+          given: "默认配置下的三条作用路径（请求体/非流式响应体/流式每 chunk）"
+          when: "断言预算接线和超时改写"
+          then: "①预算默认值常量表与 DESIGN 档位表同一来源（引用 G3_TIER_8KB/G1_PER_CHUNK 非复抄）；②判定在 checker 返回后：超预算→改写 verdict=error+reason=checker_timeout→block/终止流，无抢占假设；③注入预算只影响被点名 checker；④预算耗尽不改其它状态（窗口仍推进、evidence 仍落、action_taken 不新增格）；⑤checker_timeout 在生产代码路径有产生者（v1 仅存在于类型联合的现状消除）；改写丢弃原 result 的 evidence（超时结果不具取证资格）；改写不吞回传窗口"
+      test_coverage_requirements:
+        unit: true
+        integration: true
+        e2e: false
+
+    - id: "REQ-V2a-13"
+      description: "安全类词汇的链上可见性：(a) 实装契约 #4 可选 reason 顶层位（整键缺席语义）；(b) CheckerResult.reason 联合扩四值（+window_overflow）；(c) error 分支另产 findings[] 内 verdict=error 条目；(d) registry_unavailable/inject_skipped 只进顶层 reason 不产条目；REQUIRED_FIELDS 26 项不变。D-10 顶层单值规则（R2 订正版）= 网关描述值优先（registry_unavailable>inject_skipped）> checker error 固定序（window_overflow>checker_timeout>scanner_error>input_malformed，同序位按 REGISTRY 声明序），对应关系按同序重放选取"
+      priority: "MUST"
+      acceptance_criteria:
+        - id: "AC-V2a-12"
+          given: "tool-call-shape 与 canary-return-scan 各产生一次 verdict=error（每 reason ≥1 fixture；checker_timeout 必须经网关侧可注入预算构造，window_overflow 用 2049×128B 构造）"
+          when: "策略映射"
+          then: "action=block、流式 action_taken=terminated_after_delivery；reason 取值域 per-checker 封闭（tool-call-shape∈{checker_timeout,window_overflow}，canary-return-scan={checker_timeout}），均不得出现 allowed；reason 一律指顶层位+findings error 条目两处同时成立"
+        - id: "AC-V2a-24"
+          given: "reason 四值全集类型层（tsc）+ 运行期枚举断言；v1 既有 scanner_error/input_malformed 各 ≥1 fixture"
+          when: "error 落链"
+          then: "两值仍可达且顶层 reason 与 findings[] 内 verdict=error 条目同时出现（§5 第三处背离修复的判定面）；error 条目 threat 按 §4.5 约定表（tool-call-shape→T2a、canary-return-scan→T1a），不得为空或自造"
+        - id: "AC-V2a-23"
+          given: "writer 字段遍历测试"
+          when: "断言必填表"
+          then: "①补全等断言（期望值从 EvidenceRecord 键集派生，不硬编码 26）；②v1 旧记录集（无 reason 键）verify 下仍全过；③『不进裁决位』断言域限定为 findings[].rule_id + findings[].checker 值集——registry_unavailable/inject_skipped 出现在顶层 reason 且不出现在 findings 任何条目（同时是 §7 P4⑤ 的回归守卫）"
+      test_coverage_requirements:
+        unit: true
+        integration: true
+        e2e: true
+
+    - id: "REQ-V2a-14"
+      description: "背离登记入契约文本：TEST 契约 #4 latency 行加注（v1 标量实现，四元组未实装）、REQ 登记表 T4a 行加注（链内无上游自报原值）——grep 型断言对象（承载于 S-DOCS）"
+      priority: "MUST"
+      acceptance_criteria:
+        - id: "AC-V2a-16-⑤⑥"
+          given: "契约文本与 REQ 登记表"
+          when: "doc-consistency grep 断言"
+          then: "两处加注逐字可断言；本文与任何 v2a AC 不得声称『链内 latency 覆盖三台门』"
+      test_coverage_requirements:
+        unit: true
         integration: false
         e2e: false
 
-    - id: REQ-REL-05
-      description: "上游容错边界登记（零代码）：fail-closed 已缓解 + 无重试/备用上游边界明示，双语 README + 威胁模型 T0 行核对"
+    - id: "REQ-V2a-15"
+      description: "流式窗口归属与游标语义修复（ADR-0005 实现形态）：网关按 checkerId 持有 ScanWindow（含 extra）跨片持久；cursor 由网关以 unit.text.length 权威推进且只推进一次（checker 返回后、旧值+len），回传 cursor 忽略、extra 保留；checker 两态签名与 TEST 契约 #2 不变；offsets 钉 UTF-16 code unit index（#G）"
       priority: "MUST"
       acceptance_criteria:
-        - id: AC-REL-05a
-          given: "S5 README 双语结构冻结后（S5→S7 串行）"
-          when: "威胁模型 docs/issues/1-req-threat-model.md T0 行 + README 分发承诺段逐点核对"
-          then: "双语核对清单逐点打勾留档；英文定译含 'No retry or failover upstream'边界句；git diff <base> -- src/ 为空"
+        - id: "AC-V2a-25"
+          given: "mock-upstream 模板化多片响应（隐形字符置于已知全局偏移：首片内/末片内/跨片边界各 ≥1 例 + 非流式 1 例 + astral 字符先于命中 1 例）"
+          when: "经网关集成断言（非 checker 单测）"
+          then: "findings[].offsets 逐字等于全局偏移（UTF-16 code-unit 口径）；修复前同构造实测报 49/71（真实 22/33）故本条可失败"
+        - id: "AC-V2a-26"
+          given: "invisible-unicode-scan 与 tool-call-shape 同一连接并发运行"
+          when: "窗口隔离断言"
+          then: "①tool-call-shape 窗口 extra 累积片段下一片仍可读出，invisible-unicode-scan 的 cursor/offsets 不受其累积量影响；②任一 checker 的 extra 不出现在另一 checker 窗口输入（无交叉污染）；③status 累积量口径=tool-call-shape 路窗口累积字节（不含其它 checker 状态、不含 pendingBytes）；④architecture-boundaries 单向依赖断言不放宽"
+        - id: "AC-V2a-14"
+          given: "同一 fixture 内同时断言两量：①每个 chunk 判定后送达（不持有 >1 未判定 chunk）；②arguments 以 128B 固定片长 2049 chunk 送达"
+          when: "累积计量（判据量=含被判定本片的前缀和 Σ(len_1..len_i)，LIMIT=262144，严格大于触发）"
+          then: "i=2048（Σ=262144）收下并送达（delivered_chunks=2048）；i=2049（Σ=262272>LIMIT）→verdict=error+reason=window_overflow+action=block+terminated_after_delivery，该片字节不送达且 event:error 恰一次（AC-V2a-20）；fixture 仅存于集成测试不进 G-PERF 分档"
+        - id: "AC-V2a-20"
+          given: "流式命中后客户端事件序列"
+          when: "终止流"
+          then: "event:error 出现次数恰为 1；该事件之后再无任何 chunk（含半截）送达；重复触发不产生第二条 error（幂等）"
       test_coverage_requirements:
-        unit: false
-        integration: false
-        e2e: false
-
-    - id: REQ-REL-06
-      description: "版本与变更记录：0.2.0 直发（DR-008）+ CHANGELOG.md 设立（Keep a Changelog 轻量，英文）+ tag 严格一致"
-      priority: "MUST"
-      acceptance_criteria:
-        - id: AC-REL-06a
-          given: "S2 元数据转正提交（package.json + VERSION 终版核对同批，Gate 0 守护）与 S8 CHANGELOG 收口完成"
-          when: "核对 tag 规则与版本一致性"
-          then: "tag 格式 vX.Y.Z 与 package.json version 严格一致（v + 同值）；版本若有改动则 package.json/VERSION/CHANGELOG 同一提交；Gate 0 绿；CHANGELOG [0.2.0] 节概括 v1 能力不逐 commit 罗列"
-      test_coverage_requirements:
-        unit: false
-        integration: false
-        e2e: false
+        unit: true
+        integration: true
+        e2e: true
 
   # ─────────────────────────────────────────────────────────────────────────
-  # 迭代级约束
+  # Design decisions（D-01~D-14，设计文档 §4；Step 4 批准 + R2 三轮评审处置后定稿）
   # ─────────────────────────────────────────────────────────────────────────
-  constraints:
-    runtime_freeze: "src/ 零改动（AC-REL-05a 以 git diff 断言）"
-    user_trigger_points:
-      - "前置检查执行（filter-repo 三段式，merge 后 flip 前）"
-      - "repo visibility 翻转 public + DD-4 ruleset 配置"
-      - "NPM_TOKEN secret 配置 → tag v0.2.0 push"
-    acceptance: "AC-REL-01a..07d 全 PASS；全量测试门/覆盖率门/12 道 pre-commit 门全绿；推送走 Gate MW；真发布动作由用户确认后执行"
-    residual_minors_from_r2: ["A-R2-MN-01+T-R2-03+F-R2-01 → parity 复审触发约定（S5/S6）", "T-R2-01 → 受管配置副本最小字段集冻结（S2）", "T-R2-02 → npm view 失败 fail-closed（S3/S4）"]
+  design_decisions:
+    - id: "DD-V2A-01"
+      description: "状态归属=候选 A：网关编排 + 新域 src/canary/**（canary=[shared]、gateway 扩列、cli 组合根仅读侧导出）；checkers 层 allowed_imports 不变"
+      rationale: "checker 保持两态纯函数（TEST 契约 #2）；跨会话状态是请求生命周期概念，非扫描概念"
+      alternatives_considered: ["checker 内部模块级单例（违反契约 #2，fixture 无法复现）", "独立 registry sidecar 进程（破坏单进程 daemon 形态，v2b 重评）"]
+    - id: "DD-V2A-02"
+      description: "registry 存储：canary-registry.json tmp+renameSync 原子写、唯一写者=常驻网关、加载校验失败→registry_unavailable fail-open、惰性淘汰 TTL24h/LRU64"
+      rationale: "同卷 rename 崩溃残留只能是旧完整文件；可观测降级非静默防护"
+    - id: "DD-V2A-03"
+      description: "控制通道：POST /_llmveto/canary/rotate（路由解析前拦截、非受管路径）+ 离线零字节哨兵标记文件（#B 窄化 §4.3 直接落盘许可）；loopback 信任域不认证，靠 rotation_count + doctor 告警可观测"
+      rationale: "让 AC-V2a-19③『CLI 无写能力』静态断言在层粒度成立"
+    - id: "DD-V2A-04"
+      description: "request_body_sha256/request_bytes 记注入后体（#A）；原始体经 session_id→registry 反查有界可恢复（TTL/LRU/轮换/损坏边界已披露）"
+      rationale: "链记录 = 上游实收的外部事实；对照方案会与上游日志对不上账"
+    - id: "DD-V2A-05"
+      description: "匹配域快照 meta.canary_candidates 排除请求方自身 canary（单请求内复述判不命中）；canary-return-scan 只读快照判在途"
+      rationale: "Q3 定值 + AC-V2a-06 负样本实现面；明文不进链由 body_capture 咽喉点保证"
+    - id: "DD-V2A-06"
+      description: "两套会话键并存：deriveSessionKey（头 x-llmveto-session-id 优先→sha256(len:text) 前 16 字符回退）与 evidence session_id 派生（server.ts:135 不动）语义不同属有意为之"
+      rationale: "改 evidence session_id 会动 v1 冻结语义与既有验收"
+    - id: "DD-V2A-07"
+      description: "窗口归属：网关 per-checker 持 Map<checkerId,ScanWindow>；checker 收推进前 cursor（AC-VETO-004-02 冻结语义），返回后网关唯一推进一次（旧值+len）；回传 cursor 忽略、extra 保留"
+      rationale: "R2 A-M1：推进点在循环前 = v1 双重推进 bug 镜像；网关权威推进是 ADR-0005 的实现形态"
+    - id: "DD-V2A-08"
+      description: "offsets 计量单位钉死 UTF-16 code unit index（#G）；fixture 含 astral 字符先于命中样本防两读法漂移"
+      rationale: "与 String.indexOf 定位语义一致；v1 命中集全 BMP 内两口径等价"
+    - id: "DD-V2A-09"
+      description: "预算门 D-09：runWithBudget 事后判定（同步 JS 无法抢占纯函数）= 裁决面非止损面；超时改写 verdict=error+reason=checker_timeout 双层落链、丢弃原 result evidence、不吞窗口；回退阶梯=复测→ADR 修订档位→调档后仍误阻回用户拍板"
+      rationale: "§14.5-3 反向风险（慢但放行变阻断）须实测确认档位；禁静默放宽"
+    - id: "DD-V2A-10"
+      description: "error 双层落链 D-10：顶层 reason 单值规则=网关描述值优先>checker error 固定序（同序位按 REGISTRY 声明序）；顶层 checker 值与 findings 条目的对应关系=按同序同规则重放选取；网关值不产 findings 条目（§4.5）"
+      rationale: "R2 T-C1：§4.3/AC-V2a-19① 的 registry_unavailable 顶层承诺是无条件的；checker reason 经 findings 全额保全无信息损失"
+    - id: "DD-V2A-11"
+      description: "观测类降级 D-11：decide() 增加 degraded 标志；action_taken 优先序=blocked_*/terminated>degraded_observational>warned>allowed；全部 checker error（含观测类）双层落链无分类豁免（R2 撤销 R1 稿抑制条款）"
+      rationale: "AC-V2a-24② 的双层断言无分类限定；观测类痕迹在 action_taken 本身+findings 双位"
+    - id: "DD-V2A-12"
+      description: "declared_tools 来源 D-12：请求体提取 tools[*].function.name+parameters.required 经 meta 下传；无声明即『未知工具名/缺 required』两子规则不适用（#C 登记 §7 P4⑦ 漏检）"
+      rationale: "FP=0 在 benign 语料上不可让步（AC-V2a-03）"
+    - id: "DD-V2A-13"
+      description: "evil-relay：testkit/evil-relay.ts（需求 §4.2 定值字面路径）、子进程 loopback 与 mock-upstream 同族语义；13 对手仅 nightly（拍板 #4）；S-CI 置于 tracer 后、S-RELAY 前独立落地"
+      rationale: "零 Python 零 docker 是定值非待决项；对手来源由 G-RELAY 触发 §8.4 两分支"
+    - id: "DD-V2A-14"
+      description: "CLI 与计数面 D-14：COMMANDS 5→6、durable 计数经 aggregate.ts 从链聚合（顶层 reason 单值遮蔽语义已登记：被遮蔽值不入 durable 账，对账以事件时 status 为准）、doctor 封闭枚举 4→6（#D）、[DEGRADED] 前缀=doctor 输出单测断言"
+      rationale: "链与计数结构性一致；live 指标（窗口累积字节 p50/p95/max）只在网关内存，经 /_llmveto/metrics"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # API contracts（v2a 新增面；v1 契约全部不变并继续生效）
+  # ─────────────────────────────────────────────────────────────────────────
+  api_contracts:
+    - endpoint: "POST /_llmveto/canary/rotate"
+      description: "canary 轮换控制通道（D-03）：dispatch 在路由解析之前拦截 /_llmveto/* 前缀，不经 checker/policy、不产 evidence 记录"
+      request:
+        auth: "无（loopback 信任域，滥用面=rotation_count+doctor 告警可观测）"
+      response:
+        success: "轮换确认（rotation_count/last_rotated_at 更新）"
+        gateway_offline: "CLI 回退写零字节哨兵 stateDir/canary-rotate.request（tmp+renameSync；启动序=检查→轮换→删除，删除失败重试 3 次后 doctor 告警计数、下次启动重复轮换）"
+    - endpoint: "GET /_llmveto/metrics"
+      description: "live 指标（D-14）：活跃窗口累积字节 p50/p95/max——链上没有该量，仅网关内存"
+    - endpoint: "CLI: llmveto canary rotate"
+      description: "第 6 命令（COMMANDS 5→6）；未知动词 exit 2；assertNoV2Stubs 继续 ban report"
+    - endpoint: "evidence record（增量）"
+      description: "契约 #4 增量：顶层可选 reason（六值词汇域+整键缺席）；findings[] 新增 verdict=error 条目形态 {checker, threat, verdict:'error', rule_id:<reason>}；REQUIRED_FIELDS 26 项不变；canary 字段恒 null 不变"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Non-goals（引需求 §3 全表）
+  # ─────────────────────────────────────────────────────────────────────────
+  non_goals:
+    - "v2b report 聚合面 / 官价基准对账（usage-reconcile 仅本地估算方向性）"
+    - "v2b provider 信任分与巡检（T3a 正向身份确认）"
+    - "v3 TLS 拦截与 redact"
+    - "NFKC 同形变体 / PUA 码点（T2c 边界不变）"
+    - "半截 tool-call 已被执行的后果覆盖（REQ §场景 4 承诺不回改）"
+    - "未接入客户端（枚举外路径）的覆盖——#C 无声明 tools 漏检与 §4.3 回退键、分支 6、registry 不可用四处漏检已登记"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 残余风险登记表申报变更（v2a 结束后，镜像需求 §7）
+  # ─────────────────────────────────────────────────────────────────────────
+  residual_risks_v2a:
+    improved:
+      - "T1a：未缓解→部分（跨会话串流阳性检出；仍不能证明是否被用于训练；四处漏检已登记）"
+      - "T2a：未缓解→部分（未声明/结构非法判定；不证明调用内容恶意）"
+      - "T2c：部分→部分（覆盖面扩展至 tool-call 参数路径；NFKC/PUA 仍不覆盖；v1 实际未覆盖参数路径已承认）"
+      - "T3a：部分（弱）→部分（仍无正向确认，证伪信号）"
+      - "T4a：仅取证→部分（本地估算方向性告警；无官价基准、估算误差决定不可阻断）"
+    doc_source: "docs/plans/2026-09-27-v2a-requirements.md §7"

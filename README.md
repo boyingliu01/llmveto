@@ -13,7 +13,7 @@ A local LLM traffic security gateway daemon — making traffic between agents an
 | | v1 (current) |
 |---|---|
 | **Provides** | Outbound credential interception (T1b, `block`) · Invisible-character detection (T2c, response-level rejection for non-streaming / stream termination for streaming) · Model **field-consistency** warning (T3a subset) · Vetting of managed paths · Upstream-failure fail-closed (502 + evidence trail, daemon survives) · Full evidence trail + `llmveto verify` |
-| **Does not provide** | Data-exfiltration detection (T1a, canaries are v2) · Tool-call **structure** judgment (T2a, RCE-grade, v2; note: tool-call **payloads** are already in the scan surface, see below) · Response-injection protection (T2b, v2) · Model **authenticity** proof (v2 fingerprint) · Usage reconciliation (T4x, v2) · Bypass discovery (v3) · TLS interception (v3) |
+| **Does not provide** | Data-exfiltration detection (T1a, canaries are v2) · Tool-call **structure** judgment (T2a, RCE-grade, v2; note: tool-call **payloads** are already in the scan surface, see below) · Invisible-character coverage of the tool-call **parameter path** (T2c, covered only from v2a) · Streaming forensic offsets: streaming-hit `offsets` are not forensically usable in v1 (fixed from v2a) · Response-injection protection (T2b, v3) · Model **authenticity** proof (v2 fingerprint) · Usage reconciliation (T4x, v2) · Bypass discovery (v3) · TLS interception (v3) |
 | **Blocking granularity** | Bytes of a streaming response already forwarded are **irrevocable**; v1's streaming block = stream termination, not swallowing bytes |
 
 **Scan-surface statement (after the 2026-09-27 fixes)**: checkers see `messages[*].content` / `system` / `tools` / custom `extra_headers`,
@@ -120,7 +120,7 @@ Requirements: **Bun ≥ 1.1** (package management + test/build driver) and **Nod
 
 ## CLI
 
-v1 is frozen at 5 commands (no stubs for unimplemented commands). The distribution artifact is `dist/cli/index.js` (`llmveto`); in development mode use `bun run llmveto <cmd>` or `bun run src/cli/index.ts <cmd>`:
+v2a extends the command set 5→6 by adding `llmveto canary rotate` (v2a design D-14; no stubs for unimplemented commands). The distribution artifact is `dist/cli/index.js` (`llmveto`); in development mode use `bun run llmveto <cmd>` or `bun run src/cli/index.ts <cmd>`:
 
 ```bash
 llmveto start      # start the gateway (loopback-only, background daemon; dev mode: bun run src/cli/index.ts start)
@@ -128,9 +128,10 @@ llmveto status     # status (real liveness probe; stale pid files are reported a
 llmveto stop       # stop the background daemon
 llmveto doctor     # managed-config enumeration override/drift assertions + port reachability + evidence chain; --write-managed-config writes real configs
 llmveto verify     # evidence chain integrity + schema assertions
+llmveto canary rotate  # rotate canary secrets (v2a D-03: via the daemon's loopback control channel; offline via the canary-rotate.request marker file)
 ```
 
-`report` (billing reconciliation) and `canary rotate` (canary rotation) belong to v2. v1's `doctor` check items are a **closed enumeration** (managed-config override/drift assertions + port reachability + `--write-managed-config` + evidence-chain verification); the authoritative list is in DESIGN §component 5. TLS/CA trust checks arrive only with TLS interception (v3); **v1 does not register that check item** (no permanently-empty check items).
+`report` (billing reconciliation) belongs to v2. The `doctor` check items remain a **closed enumeration**, extended by v2a from 4 to 6 items: managed-config override/drift assertions + port reachability + `--write-managed-config` + evidence-chain verification, plus `doctor.canary-registry` and `doctor.coverage-counters`; the authoritative list is in DESIGN §component 5. TLS/CA trust checks arrive only with TLS interception (v3); **v1 does not register that check item** (no permanently-empty check items).
 
 ## Status
 

@@ -10,10 +10,15 @@ import { EVIDENCE_VERSION, validateEvidence, type EvidenceRecord } from "./schem
 
 // AppendInput = EvidenceRecord 去掉链封存字段 + ts 可选；字段表以 schema.ts 为单一事实源，
 // 防止 schema 与 writer 两处手工清单漂移（jscpd 曾报 19 行克隆）。
+// reason（D-10 可选位，SL-03）经 Omit 保留其可选性：未传时落盘记录键整体缺席。
 export type AppendInput = Omit<
   EvidenceRecord,
-  "evidence_version" | "event_id" | "seq" | "ts" | "prev_hash" | "record_hash" | "canary"
-> & { readonly ts?: string };
+  "evidence_version" | "event_id" | "seq" | "ts" | "prev_hash" | "record_hash" | "canary" | "reason"
+> & {
+  readonly ts?: string;
+  /** D-10 可选位：显式 undefined 视同缺席（writer 侧键不落盘），故类型允许 undefined。 */
+  readonly reason?: string | undefined;
+};
 
 export class EvidenceWriter {
   private seq = 0;
@@ -81,6 +86,8 @@ export class EvidenceWriter {
         latency: input.latency,
         findings: input.findings,
         action_taken: input.action_taken,
+        // D-10：reason 可选位 —— 未传时键整体缺席（§14.4-4），v1 记录形状零扰动。
+        ...(input.reason !== undefined ? { reason: input.reason } : {}),
         response_delivered: input.response_delivered,
         request_body_sha256: input.request_body_sha256,
         response_body_sha256: input.response_body_sha256,

@@ -15,6 +15,16 @@ layers:
     paths: ["src/shared/**"]
     allowed_imports: [shared]
 
+  # canary 域（v2a D-01/DD-V2A-01）：金丝雀 registry 存储与会话状态
+  #   （canary-registry.json 唯一写者 = 常驻网关，D-02 单写者模型）。
+  #   纯存储域：只 import shared —— 跨会话状态不进 checker 纯函数域（TEST 契约 #2），
+  #   由 gateway 编排消费（SL-07）；cli 仅读侧导出、无写能力（AC-V2a-19③，离线轮换经
+  #   零字节标记文件由网关代写，D-03/#B）。
+  #   注意：与 src/gateway/registry.ts（checker 注册表）无关（D-10/T-M1 命名澄清）。
+  - name: canary
+    paths: ["src/canary/**"]
+    allowed_imports: [shared]
+
   # checker 注册表：两态纯 reducer（TEST 可测试性契约 #2）
   #   非流式 (unit) → {verdict, evidence}；流式 (window, chunk) → [{verdict, evidence}, window]
   #   verdict ∈ clean|finding|error —— 不得出现 allow/warn/redact/block（那是 action 域）
@@ -50,7 +60,7 @@ layers:
   #   已解析的 upstream 端点（经 shared 类型传递），不直接 import adapters —— 故此处不含 adapters 是有意约束，非遗漏。
   - name: gateway
     paths: ["src/gateway/**"]
-    allowed_imports: [shared, checkers, policy, evidence, gateway]
+    allowed_imports: [shared, checkers, policy, evidence, canary, gateway]
 
   # CLI：组合根（composition root），可依赖全部层。
   - name: cli

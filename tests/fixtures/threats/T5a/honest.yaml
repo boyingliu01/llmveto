@@ -1,0 +1,40 @@
+# T5a 威胁样本：honest opponent (fpverify baseline control group)
+# AC-V2a-09: Baseline benign traffic — should pass all checkers as clean
+
+request:
+  method: POST
+  path: /v1/chat/completions
+  headers:
+    content-type: application/json
+    authorization: "Bearer test-key"
+  body:
+    model: gpt-4o
+    messages:
+      - role: user
+        content: "What is the capital of France?"
+
+response:
+  status: 200
+  headers:
+    content-type: application/json
+  body:
+    id: chatcmpl-honest-001
+    model: gpt-4o
+    choices:
+      - index: 0
+        message:
+          role: assistant
+          content: "The capital of France is Paris."
+        finish_reason: stop
+    usage:
+      prompt_tokens: 10
+      completion_tokens: 8
+      total_tokens: 18
+
+expected:
+  verdict: clean
+  checker: all
+  threat: T5a
+  opponent: honest
+  action: allow
+  rationale: "Baseline honest traffic with no adversarial behavior; passes all checker suites"

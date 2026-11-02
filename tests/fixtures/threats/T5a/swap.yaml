@@ -1,0 +1,70 @@
+# T5a 威胁样本：swap opponent (fpverify tool name substitution)
+# AC-V2a-09: Unauthorized tool name substitution attacks
+
+request:
+  method: POST
+  path: /v1/chat/completions
+  headers:
+    content-type: application/json
+    authorization: "Bearer test-key"
+  body:
+    model: gpt-4o
+    messages:
+      - role: user
+        content: "Get the weather and search for restaurants"
+    tools:
+      - type: function
+        function:
+          name: get_weather
+          parameters:
+            type: object
+            required: [city]
+            properties:
+              city:
+                type: string
+      - type: function
+        function:
+          name: search_restaurants
+          parameters:
+            type: object
+            required: [location]
+            properties:
+              location:
+                type: string
+
+response:
+  status: 200
+  headers:
+    content-type: application/json
+  body:
+    id: chatcmpl-swap-001
+    model: gpt-4o
+    choices:
+      - index: 0
+        message:
+          role: assistant
+          content: null
+          tool_calls:
+            - id: call_swap_001
+              type: function
+              function:
+                name: get_weather_swapped
+                arguments: '{"city": "New York"}'
+            - id: call_swap_002
+              type: function
+              function:
+                name: search_restaurants_swapped
+                arguments: '{"location": "Manhattan"}'
+    usage:
+      prompt_tokens: 30
+      completion_tokens: 25
+      total_tokens: 55
+
+expected:
+  verdict: finding
+  checker: tool-call-shape
+  threat: T5a
+  opponent: swap
+  rule_id: unknown-tool-name
+  action: block
+  rationale: "Tool names have been substituted with unauthorized variants, indicating relay manipulation"

@@ -8,6 +8,21 @@ import type { ActionTaken, BodyCapture } from "../shared/types.ts";
 
 export const EVIDENCE_VERSION = 1 as const;
 
+/**
+ * 顶层 reason 词表（REQ §4.5，SL-03/REQ-V2a-14 冻结）。
+ * 语义双层：前两个是 gateway 描述符（找不到对应 checker error 条目），后四个是 checker
+ * error 成因（对应 findings[] verdict=error 条目的 rule_id，见 policy/engine.ts 的固定序）。
+ * policy 层不得 import evidence 层，故选择常量在 engine.ts 独立声明、由测试钉死两者同源。
+ */
+export const REASON_VOCAB: readonly string[] = Object.freeze([
+  "registry_unavailable",
+  "inject_skipped",
+  "window_overflow",
+  "checker_timeout",
+  "scanner_error",
+  "input_malformed",
+]);
+
 export interface EvidenceFinding {
   readonly checker: string;
   readonly threat: string;
@@ -43,6 +58,12 @@ export interface EvidenceRecord {
   readonly latency: number; // ms
   readonly findings: readonly EvidenceFinding[];
   readonly action_taken: ActionTaken;
+  /**
+   * 顶层 reason（D-10 / REQ-V2a-13，v2a 可选位）：本次交互的**单一**异常成因。
+   * 无异常时键整体缺席（§14.4-4：不落 null）——键缺席不参与 canonical JSON 之外的
+   * 任何旧哈希，v1 旧记录（无 reason 键）verify 语义不变。
+   */
+  readonly reason?: string;
   readonly response_delivered: ResponseDelivered;
   readonly request_body_sha256: string;
   readonly response_body_sha256: string;
@@ -117,5 +138,11 @@ export function validateEvidence(rec: unknown): { ok: true } | { ok: false; erro
     if (!(f in r)) errors.push(`missing: ${f}`);
   }
   for (const check of FIELD_VALIDATORS) check(r, (m) => errors.push(m));
+  // 顶层 reason（D-10）：可选位 —— 键缺席合法；在场则必须是 §4.5 词表值（REQ-V2a-14）。
+  if ("reason" in r) {
+    if (typeof r.reason !== "string" || !REASON_VOCAB.includes(r.reason)) {
+      errors.push(`reason: must be absent or one of §4.5 values (${REASON_VOCAB.join("|")}), got ${String(r.reason)}`);
+    }
+  }
   return errors.length === 0 ? { ok: true } : { ok: false, errors };
 }

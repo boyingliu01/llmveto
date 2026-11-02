@@ -1,0 +1,53 @@
+name: Relay Nightly (13 Opponents)
+# SL-14: Nightly evil-relay — 4-way matrix, port contention fallback
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      opponent_filter:
+        description: 'Filter opponent type (empty = all 13)'
+        required: false
+        default: ''
+permissions:
+  contents: read
+jobs:
+  relay-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        opponent_category: ['prompt-injection', 'data-exfiltration']
+        scenario_variant: ['direct', 'indirect']
+        include:
+          - { opponent_category: 'model-confusion', scenario_variant: 'direct' }
+          - { opponent_category: 'model-confusion', scenario_variant: 'indirect' }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '18', cache: 'npm' }
+      - run: npm ci
+      - name: Evil-relay tests (parallel)
+        id: parallel_run
+        continue-on-error: true
+        timeout-minutes: 30
+        run: |
+          echo "Category: ${{ matrix.opponent_category }} / Variant: ${{ matrix.scenario_variant }}"
+          npx vitest run tests/integration/evil-relay.test.ts \
+            --testNamePattern="${{ matrix.opponent_category }}.*${{ matrix.scenario_variant }}" || exit $?
+      - name: Retry serial on port contention
+        if: steps.parallel_run.outcome == 'failure'
+        timeout-minutes: 45
+        run: |
+          echo "Retrying serial execution (port contention fallback)..."
+          npx vitest run tests/integration/evil-relay.test.ts \
+            --testNamePattern="${{ matrix.opponent_category }}.*${{ matrix.scenario_variant }}" \
+            --pool=forks --poolOptions.forks.singleFork=true || exit $?
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-${{ matrix.opponent_category }}-${{ matrix.scenario_variant }}
+          path: coverage/
+          if-no-files-found: warn

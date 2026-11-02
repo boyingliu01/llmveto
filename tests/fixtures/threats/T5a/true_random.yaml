@@ -1,0 +1,41 @@
+# T5a 威胁样本：true_random opponent (fpverify non-deterministic noise injection)
+# AC-V2a-09: Random byte injection corrupts response integrity
+
+request:
+  method: POST
+  path: /v1/chat/completions
+  headers:
+    content-type: application/json
+    authorization: "Bearer test-key"
+  body:
+    model: gpt-4o
+    messages:
+      - role: user
+        content: "What is 2+2?"
+
+response:
+  status: 200
+  headers:
+    content-type: application/json
+  body:
+    id: chatcmpl-random-001
+    model: "gpt-4o\u00ff"
+    choices:
+      - index: 0
+        message:
+          role: assistant
+          content: "The answer is 4\u0083."
+        finish_reason: stop
+    usage:
+      prompt_tokens: 8
+      completion_tokens: 6
+      total_tokens: 14
+
+expected:
+  verdict: finding
+  checker: invisible-unicode-scan
+  threat: T5a
+  opponent: true_random
+  rule_id: noise-injection
+  action: block
+  rationale: "Random byte injection in response indicates active relay corruption of data integrity"

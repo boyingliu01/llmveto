@@ -80,8 +80,10 @@ export interface CheckerResult {
   /**
    * checker 自身执行错误（解析异常 / 超时等）。verdict=error 时必填 reason 语义，
    * 由 policy 层按 fail-closed 规则映射为 action=block（安全类 checker）。
+   * window_overflow（REQ-V2a-13(b)/§4.5）：累积型窗口越 256KiB 硬顶（AC-V2a-14），
+   * 由累积型 checker 自身判定产出（metering = 其窗口累积字节，ADR-0003/0005）。
    */
-  readonly reason?: "scanner_error" | "checker_timeout" | "input_malformed";
+  readonly reason?: "scanner_error" | "checker_timeout" | "input_malformed" | "window_overflow";
 }
 
 // ── Checker 签名（两态） ────────────────────────────────────────

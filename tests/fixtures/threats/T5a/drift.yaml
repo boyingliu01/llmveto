@@ -1,0 +1,41 @@
+# T5a 威胁样本：drift opponent (fpverify gradual output deviation)
+# AC-V2a-09: Gradual corruption over sequential requests — detectable via content anomalies
+
+request:
+  method: POST
+  path: /v1/chat/completions
+  headers:
+    content-type: application/json
+    authorization: "Bearer test-key"
+  body:
+    model: gpt-4o
+    messages:
+      - role: user
+        content: "Explain quantum computing in simple terms"
+
+response:
+  status: 200
+  headers:
+    content-type: application/json
+  body:
+    id: chatcmpl-drift-001
+    model: gpt-4o
+    choices:
+      - index: 0
+        message:
+          role: assistant
+          content: "Quantum computing uses qubits instead of classical bits. Qubits can be in superposition, meaning they can represent both 0 and 1 simultaneously. This allows quantum computers to process multiple possibilities at once, making them potentially much faster for certain problems like factoring large numbers or simulating quantum systems."
+        finish_reason: stop
+    usage:
+      prompt_tokens: 15
+      completion_tokens: 65
+      total_tokens: 80
+
+expected:
+  verdict: finding
+  checker: model-label-consistency
+  threat: T5a
+  opponent: drift
+  rule_id: model-label-mismatch
+  action: warn
+  rationale: "Gradual deviation from expected output patterns indicates potential relay manipulation"

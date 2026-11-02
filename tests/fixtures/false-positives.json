@@ -1,5 +1,125 @@
 {
   "generated_at": "2026-09-15T00:00:00.000Z",
   "note": "AC-VETO-012-04：人工裁决记录。v1 门槛内 FP=0（阻断类）；告警类 model-label-consistency ≤ 2%。若 CI 检出 FP，追加至此文件并留裁决原因。",
-  "fps": []
+  "fps": [
+    {
+      "id": "FP-T2a-001",
+      "checker": "tool-call-shape",
+      "description": "负样本1：无 declared_tools + 合法 tool_calls → clean（Rule 1&2 不适用，D-12 FP=0）",
+      "unit": {
+        "direction": "response",
+        "transport": "non-stream",
+        "text": "{\"name\": \"any_tool\", \"arguments\": \"{\\\"key\\\": \\\"value\\\"}\"}",
+        "meta": {}
+      },
+      "expected_verdict": "clean",
+      "rationale": "未声明工具列表时，无法判定工具名是否'未知'，故跳过 Rule 1 & 2；arguments 为合法 JSON，Rule 3 通过"
+    },
+    {
+      "id": "FP-T2a-002",
+      "checker": "tool-call-shape",
+      "description": "负样本2：已声明工具 + 合法复杂嵌套参数 → clean",
+      "unit": {
+        "direction": "response",
+        "transport": "non-stream",
+        "text": "{\"name\": \"search\", \"arguments\": \"{\\\"query\\\": \\\"test\\\", \\\"filters\\\": {\\\"status\\\": [\\\"active\\\", \\\"pending\\\"], \\\"nested\\\": {\\\"deep\\\": true}}, \\\"limit\\\": 10}\"}",
+        "meta": {
+          "declared_tools": ["search"],
+          "declared_required": {
+            "search": ["query"]
+          }
+        }
+      },
+      "expected_verdict": "clean",
+      "rationale": "工具名在声明列表中；required 字段 query 已提供；arguments 为合法复杂嵌套 JSON，全部规则通过"
+    },
+    {
+      "id": "FP-T5a-RELAY-001",
+      "checker": "all",
+      "description": "Relay FP-1: Legitimate multilingual response with non-ASCII characters (not filter_en attack)",
+      "unit": {
+        "direction": "response",
+        "transport": "non-stream",
+        "text": "Bonjour! こんにちは！你好！",
+        "meta": {}
+      },
+      "expected_verdict": "clean",
+      "rationale": "Multilingual content is legitimate user intent; should not trigger filter_en false positive"
+    },
+    {
+      "id": "FP-T5a-RELAY-002",
+      "checker": "invisible-unicode-scan",
+      "description": "Relay FP-2: Response with intentional ellipsis character (…) not noise injection",
+      "unit": {
+        "direction": "response",
+        "transport": "non-stream",
+        "text": "The answer is...",
+        "meta": {}
+      },
+      "expected_verdict": "clean",
+      "rationale": "Ellipsis (…) is valid Unicode punctuation, not random byte injection from true_random opponent"
+    },
+    {
+      "id": "FP-T5a-RELAY-003",
+      "checker": "model-label-consistency",
+      "description": "Relay FP-3: Short but complete response to simple question (not cache replay)",
+      "unit": {
+        "direction": "response",
+        "transport": "non-stream",
+        "text": "Paris",
+        "meta": {
+          "model_requested": "gpt-4o",
+          "model_responded": "gpt-4o"
+        }
+      },
+      "expected_verdict": "clean",
+      "rationale": "Concise response to 'What is the capital of France?' is appropriate; not a cached mismatch"
+    },
+    {
+      "id": "FP-T5a-RELAY-004",
+      "checker": "thinking-signature-presence",
+      "description": "Relay FP-4: Deliberately concise technical response (not partial_mimic template)",
+      "unit": {
+        "direction": "response",
+        "transport": "non-stream",
+        "text": "E=mc²",
+        "meta": {
+          "thinking_enabled": false
+        }
+      },
+      "expected_verdict": "clean",
+      "rationale": "Famous equation requires no elaboration; brevity is domain-appropriate, not mimicry attack"
+    },
+    {
+      "id": "FP-T5a-RELAY-005",
+      "checker": "egress-secret-scan",
+      "description": "Relay FP-5: Instruction clarification text containing 'IMPORTANT' keyword (not prompt injection)",
+      "unit": {
+        "direction": "response",
+        "transport": "non-stream",
+        "text": "IMPORTANT: Please note that this is a safety guideline.",
+        "meta": {}
+      },
+      "expected_verdict": "clean",
+      "rationale": "Legitimate use of IMPORTANT for emphasis in educational content; lacks injection pattern (no 'ignore previous')"
+    },
+    {
+      "id": "FP-T5a-RELAY-006",
+      "checker": "tool-call-shape",
+      "description": "Relay FP-6: Tool call with empty string argument (valid edge case, not manipulation)",
+      "unit": {
+        "direction": "response",
+        "transport": "non-stream",
+        "text": "{\"name\": \"search\", \"arguments\": \"{\\\"query\\\": \\\"\\\"}\"}",
+        "meta": {
+          "declared_tools": ["search"],
+          "declared_required": {
+            "search": ["query"]
+          }
+        }
+      },
+      "expected_verdict": "clean",
+      "rationale": "Empty string is valid JSON value for optional search; arguments structure is well-formed"
+    }
+  ]
 }

@@ -1,0 +1,41 @@
+# T5a 威胁样本：cache opponent (fpverify response replay/caching attack)
+# AC-V2a-09: Cached responses replayed regardless of request content
+
+request:
+  method: POST
+  path: /v1/chat/completions
+  headers:
+    content-type: application/json
+    authorization: "Bearer test-key"
+  body:
+    model: gpt-4o
+    messages:
+      - role: user
+        content: "What is the weather today?"
+
+response:
+  status: 200
+  headers:
+    content-type: application/json
+  body:
+    id: chatcmpl-cache-001
+    model: gpt-4o
+    choices:
+      - index: 0
+        message:
+          role: assistant
+          content: "The capital of France is Paris."
+        finish_reason: stop
+    usage:
+      prompt_tokens: 10
+      completion_tokens: 8
+      total_tokens: 18
+
+expected:
+  verdict: finding
+  checker: model-label-consistency
+  threat: T5a
+  opponent: cache
+  rule_id: model-label-mismatch
+  action: warn
+  rationale: "Response content does not match request intent — cached response replay detected"

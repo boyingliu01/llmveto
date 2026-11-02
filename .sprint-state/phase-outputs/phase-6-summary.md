@@ -1,33 +1,56 @@
-# Phase 6/6: CLOSE — 收尾记录（sprint-20261008-26）
+# Sprint Summary — llmveto v2a detection core (sprint-20260927-46)
 
-## Sprint-state 备份声明
+```yaml
+Sprint ID: sprint-20260927-46
+开始日期: 2026-09-27
+结束日期: 2026-11-02
+MVP 版本: v0.3.1 (v2a detection core)
+最终状态: completed
+```
 
-`.sprint-state/` 本迭代即为**仓库内已跟踪路径**（随 PR #9 / CLOSE PR 入 main@…）——worktree 清理不会丢失任何 sprint 证据；var/delphi-r11/* 执行原始输出（main 仓未跟踪 scratch）按惯例不入库，共识记录已内联关键执行事实（checks / 裁决 / 模型 ID）。
+## 阶段执行统计
 
-## #369 返工指标（rework metrics）
+| Phase | 状态 | 备注 |
+|-------|------|------|
+| 1/6 PREP | ✅ | worktree + 规模评估（complex） |
+| 2/6 DESIGN | ✅ | 设计文档 + R1 requirements Round 5（100% 共识）+ R2 design Round 3（100% 共识）+ 15 切片 |
+| 3/6 BUILD | ✅ | ralph-loop TDD，15/15 切片，666 tests，coverage ≥80% |
+| 4/6 VERIFY | ✅ | code-walkthrough 5 轮收敛（最终 3/3 APPROVED）+ 测试-规格对齐 96 分 + xp-gate 10/10 |
+| 5/6 SHIP | ✅ | PR #13（v2a→main）→ v0.3.0；PR #14（0.3.1 CLI 修复）→ v0.3.1 |
+| 6/6 CLOSE | ✅ | 人工 UAT 通过（emergent issues = 0）+ 状态备份 + worktree 清理 |
 
-| 返工源 | 数量 | 说明 |
-|---|---|---|
-| Delphi 走查轮次 | 3 轮（预算 5） | R1: 2C+3M+4m（含 B 角协议失败全员重跑 1 次）；R2: 2M+4m；R3: 收敛 |
-| 走查驱动修复提交 | 2 | a5e0057（R1 处置）、2d27c0c（R2 处置） |
-| BUILD 期返工 | 1 类 | DD-5 README.zh-CN.md 随包不可排除（npm 11 工具链现实），白名单修订 b7b7ac4 |
-| DESIGN 期残留 Minor 落点 | 3 | 内嵌对应切片验收（slices-manifest notes） |
+## 交付物
 
-## Emergent issues（迭代中发现的新事项）
+- **v2a 检测核心**：4 个新 checker（canary-return-scan / tool-call-shape 为阻断类；
+  thinking-signature-presence / usage-reconcile 为观察类）、canary 引擎与轮换、
+  流式窗口与预算、evil-relay testkit、门禁与文档。
+- **发布**：v0.3.0（v2a 主体）+ v0.3.1（Linux 已安装 bin 符号链接修复）。
+- **仓库状态**：main@d4e1632，PR #13 与 #14 均已合并，工作区干净。
 
-1. **EI-01**：npm 11 自动收录 README* 变体（files 白名单/.npmignore/取反均不可排除）→ 工具链现实已写入 release-gate 注释 + DD-5 修订；npm 大版本升级须复核。
-2. **EI-02**：xp-gate sprint-audit 读取 `.sprint-state/phase-outputs/test-alignment-report.json`（非顶层副本）→ 本迭代两副本同步更新；后续 sprint 应只维护 phase-outputs 副本或让审计读顶层。
-3. **EI-03**：Gate MW 证据文件绑 push HEAD + 1h 有效期 → 走查后如有任何提交（含纯文档）需以 provenance 字段声明 reviewed 树→HEAD 的 delta（本迭代做法，已在 phase-5 summary 记录）。
-4. **EI-04（后续技术债）**：T-R3-N-01 —— src/ 解冻后由适配器导出受管字段常量供 release-gate 导入，把 smoke row 6 的运行时校验前移为构建期校验。
+## 关键指标
 
-## 用户触发点（CLOSE 后仍开放，均待用户确认执行）
+| 指标 | 值 |
+|---|---|
+| 切片 | 15/15 |
+| 测试 | 642 passed / 51 conditional skipped（59 files） |
+| 覆盖率 | statements 91.11% · branches 88.13% · functions 91.74% · lines 92.94% |
+| 对齐评分 | 96（15/15 REQ，25/25 AC） |
+| Gate MW | 3/3 APPROVED（v2a 主体 5 轮收敛；0.3.1 增量一轮 3/3） |
+| release gate | 10/10（本地 + Linux CI） |
+| main CI | Tests success；bench success（一次噪声门重跑后） |
 
-1. 07a-07d 公开化前置检查（merge 后、flip 前；runbook = docs/release/publication-runbook.md）
-2. repo visibility 翻转 public + DD-4 tag ruleset 配置
-3. NPM_TOKEN 入 GitHub secret → tag `v0.2.0` push（release.yml 全链真触发）
+## 发布面遗留（用户触发）
 
-## USER ACCEPTANCE
+1. **npm publish 未完成**：仓库未配置 `NPM_TOKEN` secret，release workflow 在 publish 步
+   fail-closed（release gate 与版本一致性均已通过）。配置 token 后重跑 tag workflow 或手动
+   `npm publish` 即可；GitHub Release v0.3.1 已手工创建。
+2. **v0.3.0 的 tag workflow 失败**：原因即 0.3.1 修复的 Linux bin 符号链接缺陷；v0.3.0
+   Release 仍存在，0.3.1 为推荐版本。
+3. **G-CANARY 判据①②③**：原始录制已被覆盖，重放登记为接受残差（见 `docs/KNOWN-ISSUES.md`）。
 
-- 状态：**验收通过**（用户手动确认，AskUserQuestion 2026-10-09，登记 DR-012）
-- 验收材料：本文件 + phase-1..5 summaries + [rel-cw-consensus.md](review/rel-cw-consensus.md) + PR #9/#10（main@a422551，CI 全绿）
-- 用户选择：① 验收通过，清理收尾（worktree + 分支清理随本 PR 后执行）
+## 经验
+
+- 安装形态（npm bin symlink）必须纳入 smoke：源码直跑与安装后运行是两条执行路径。
+- 发布 workflow 的 YAML 需要在推送前用 actionlint 校验，否则 0-job 失败会伪装成"CI 静默"。
+- 相对性能门（min-of-10, 1.2×）在共享 runner 上有噪声；PR 与 main 同代码结论不一致时应重跑，
+  并以绝对门 + 多次复跑为准，不静默放宽阈值。

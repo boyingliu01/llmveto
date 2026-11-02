@@ -3,8 +3,8 @@
   "evidence_schema_version": 2,
   "id": "sprint-20260927-46",
   "task_description": "llmveto v2a detection core (roadmap v2 slice 1/2): evidence schema canary-field versioning decision + 4 new checkers (thinking-signature-presence, tool-call-shape, usage-reconcile, fingerprint-probe) + canary engine with 'canary rotate' CLI + evil-relay simulator with dual-matrix CI. Deferred to v2b: periodic fingerprint patrol with provider trust score, billing reconciliation with 'report' CLI, Claude Code/Codex/promptfoo adapters",
-  "phase": 5,
-  "status": "in_progress",
+  "phase": 6,
+  "status": "completed",
   "started_at": "2026-09-27T09:45:00.552Z",
   "phase_history": [
     {
@@ -42,8 +42,18 @@
     {
       "phase": 5,
       "phase_name": "SHIP",
-      "status": "in_progress",
-      "started_at": "2026-11-02T10:32:20.051Z"
+      "status": "completed",
+      "started_at": "2026-11-02T10:32:20.051Z",
+      "completed_at": "2026-11-02T13:08:01.822Z",
+      "duration_seconds": 9342
+    },
+    {
+      "phase": 6,
+      "phase_name": "CLOSE",
+      "status": "completed",
+      "started_at": "2026-11-02T15:49:13.452Z",
+      "completed_at": "2026-11-02T15:49:13.453Z",
+      "duration_seconds": 0
     }
   ],
   "isolation": {
@@ -51,7 +61,7 @@
     "branch": "sprint/2026-09-27-01"
   },
   "outputs": {
-    "worktree": ".worktrees/sprint/sprint-2026-09-27-01",
+    "worktree": "removed .worktrees/v2a-build (clean); branch sprint/v2a-build kept",
     "branch": "sprint/2026-09-27-01",
     "created_from": "main@d5b9be8",
     "baseline_tests": "277 passed / 3 skipped / 34 files",
@@ -73,10 +83,23 @@
     "coverage": "91.11/88.13/91.74/92.94",
     "landing_commit": "e873693",
     "build_gates": "G-CANARY closed; G-WINDOW hard bound PASS; G-PERF PASS (G2 64KB local tail, CI authoritative)",
-    "walkthrough": "APPROVED 3/3 (round 5 of 5, 100% consensus)",
+    "walkthrough": "3/3 APPROVED at 60c3733 (deepseek-v4.1-flash / qwen3.8-flash / glm-5.3-flashx)",
     "alignment": "PASS 15/15 REQ, 25/25 AC, score 96.0",
     "gates": "xp-gate check --all exit 0 (10 passed / 7 skipped); release:gate 10/10; README parity PASS",
-    "residuals": "orchestrateCanary deferred v2b; empty-anchor brand type deferred; nightly budgets unmeasured; recording replay not re-run"
+    "residuals": "G-CANARY replay accepted; nightly budgets unmeasured",
+    "pr": "#14 merged (d4e1632)",
+    "release": "v0.3.1",
+    "release_url": "https://github.com/boyingliu01/llmveto/releases/tag/v0.3.1",
+    "npm_publish": "blocked: NPM_TOKEN not configured",
+    "main_ci": "Tests success; bench success after rerun of a noise-only relative gate",
+    "uat": "passed 2026-11-02 (0 emergent issues)",
+    "main": "d4e1632",
+    "backup": ".sprint-history/sprint-20260927-46/"
   },
-  "metrics": {}
+  "metrics": {
+    "merge_base_sha": "d5b9be87e2366f4046d08f120033741955d2d4a7",
+    "total_sprint_commits": 83,
+    "completed_at": "2026-11-02T15:49:24Z",
+    "rework_rate": 0
+  }
 }

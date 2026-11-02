@@ -3,105 +3,79 @@
 **Sprint ID**: sprint-20260927-46
 **Specification**: SPEC-V2A-001 (15 REQ / 27 AC)
 **Status**: CLOSED
-**Date**: 2026-10-15T13:38:00+08:00
+**Final release**: v0.3.1 (supersedes v0.3.0)
+**Final main**: d4e1632
+**Date**: 2026-11-02
+
+> This report replaces the 2026-10-15 draft, which recorded SHIP as skipped and CLOSE as done
+> while UAT was still pending. The sprint was actually landed through PR #13 (v2a → v0.3.0)
+> and PR #14 (Linux CLI fix → v0.3.1), and UAT was performed on v0.3.1 on 2026-11-02.
 
 ---
 
 ## Phase Summary
 
-| Phase | Status | Duration | Key Outputs |
-|-------|--------|----------|-------------|
-| 1/6 PREP | ✅ COMPLETED | ~2 min | Worktree created, auto-estimate: complex |
-| 2/6 DESIGN | ✅ COMPLETED | ~2 days | R1 requirements Round 5 (100% consensus), R2 design Round 3 (100% consensus), specification.yaml frozen at bd4bb40 |
-| 3/6 BUILD | ✅ COMPLETED | ~1 day | 15 slices (SL-01 to SL-15) via ralph-loop TDD, 666 tests PASS, coverage ≥80%, xp-gate 12/12 per slice |
-| 4/6 VERIFY | ✅ COMPLETED | ~4 hours | test-alignment-report.json (96.8% PASS), xp-gate 10/10, delphi via opencode v2 (3 distinct example-provider models) |
-| 5/6 SHIP | ⏭️ SKIPPED | N/A | v2a BUILD already merged to main@c5fe4a2 in previous iteration; no new PR needed |
-| 6/6 CLOSE | ✅ COMPLETED | ~5 min | sprint-state backed up, worktree pruned, branch deleted, pushed to remote main@4934834 |
+| Phase | Status | Key Outputs |
+|-------|--------|-------------|
+| 1/6 PREP | ✅ | isolated worktree, auto-estimate: complex |
+| 2/6 DESIGN | ✅ | R1 requirements Round 5 (100% consensus), R2 design Round 3 (100% consensus), 15 slices frozen |
+| 3/6 BUILD | ✅ | 15/15 slices via ralph-loop TDD, 666 tests, coverage ≥80%, xp-gate 12/12 per slice |
+| 4/6 VERIFY | ✅ | code-walkthrough 5 rounds → 3/3 APPROVED; alignment 96 (15/15 REQ, 25/25 AC); xp-gate 10/10 |
+| 5/6 SHIP | ✅ | PR #13 → main → v0.3.0; PR #14 (0.3.1 CLI fix) → v0.3.1 release |
+| 6/6 CLOSE | ✅ | human UAT passed (0 emergent issues), state backed up, worktree removed, metrics recorded |
 
 ---
 
 ## Deliverables
 
-### Code Artifacts
-- **src/checkers/**: 4 new checkers (tool-call-shape T2a, canary-return-scan T1a, thinking-signature-presence T3a, usage-reconcile T4a)
-- **src/gateway/**: Admin dispatch D-03, evidence semantics D-04, session key D-06, budget gate D-09, error chain D-10/D-11
-- **src/evidence/**: Schema v2 with canary field versioning
-- **src/cli/index.ts**: Canary rotate control channel
-- **testkit/evil-relay.ts**: 13 opponent simulator (zero dependencies)
-- **.github/workflows/**: Dual-matrix CI (test.yml + relay-nightly.yml)
-
-### Test Coverage
-- **Total Tests**: 666 (+272 from baseline 394)
-- **Pass Rate**: 100% (666/666)
-- **Coverage**: statements 87.3%, branches 82.5%, functions 91.2%, lines 90.8% (all ≥80%)
-- **Test Files**: 52 files across tests/ and bench/
-
-### Documentation
-- **specification.yaml**: SPEC-V2A-001 frozen at bd4bb40
-- **delphi-config.json**: example-provider provider with 3 distinct models (local-deepseek-v4-flash, g-qwen3.8-flash, local-qwen3.8-27b)
-- **Phase outputs**: phase-1-summary.md through phase-4-summary.md, delphi-opencode-execution-note.md
-- **Test alignment**: test-alignment-report.json (96.8% score)
+- **Four v2a checkers**: canary-return-scan (T1a, block), tool-call-shape (T2a, block),
+  thinking-signature-presence (T3a, warn), usage-reconcile (T4a, warn).
+- **Canary engine**: managed-route injection, single-writer registry (TTL 24 h / LRU 64),
+  `canary rotate` online/offline channel, metrics counters.
+- **Streaming correctness and budgets**: per-checker windows, 256 KiB hard bound, G1/G3 budgets.
+- **Evil-relay testkit + dual CI matrices** (`test.yml`, `relay-nightly.yml`).
+- **Releases**: v0.3.0 (v2a core), v0.3.1 (POSIX bin symlink fix).
 
 ---
 
-## Infrastructure Improvements
+## Verification
 
-1. **xp-gate cleanup**: Removed duplicate xp-gate@0.12.10.0, retained @boyingliu01/xp-gate@0.20.1
-2. **opencode v2 integration**: Configured delphi-reviewer agents with three distinct example-provider models for multi-expert consensus
-3. **delphi-config.json**: Project-level configuration synced with opencode agent settings
-
----
-
-## Known Technical Debt
-
-1. **#367 test-specification-alignment tool**: Programmatic tool not implemented; manual report generation used as workaround
-2. **Delphi code-walkthrough automation**: Full three-expert consensus requires manual orchestration or external script (delphi-experts.cjs)
-3. **var/probe-linux-r11.ts**: Untracked probe script in working directory (needs review or cleanup)
+| Evidence | Result |
+|---|---|
+| Tests | 642 passed / 51 conditional skipped, 59 files |
+| Coverage | statements 91.11 · branches 88.13 · functions 91.74 · lines 92.94 |
+| Alignment | PASS, score 96 (15/15 REQ, 25/25 AC) |
+| Gate MW (v2a body) | 5 rounds → 3/3 APPROVED |
+| Gate MW (0.3.1) | 3/3 APPROVED at 60c3733 (deepseek-v4.1-flash / qwen3.8-flash / glm-5.3-flashx) |
+| release gate | 10/10 locally and on Linux CI (v0.3.1 tag) |
+| CI | PR #14 Tests + bench green; main Tests green, bench green after one rerun |
 
 ---
 
-## Emergent Issues
+## Release-surface residuals
 
-1. **Qoder platform limitation**: Custom Agent dispatch pins subagents to session model, cannot satisfy "three distinct executable model IDs" contract → Resolved by leveraging user's opencode v2 upgrade
-2. **Worktree permission issue**: `git worktree remove --force` failed due to file lock → Resolved by `git worktree prune` instead
-
----
-
-## Cleanup Actions
-
-- ✅ sprint-state backed up to `.sprint-state-backup-20261015-133800/`
-- ✅ Worktree pruned (`git worktree prune`)
-- ✅ Branch deleted (`git branch -D sprint/2026-09-27-01`)
-- ✅ Pushed to remote main (commit 4934834)
-
----
-
-## User Acceptance
-
-**Status**: ⚠️ PENDING MANUAL CONFIRMATION
-
-Per sprint-flow discipline, USER ACCEPTANCE is mandatory and cannot be automated. User must confirm:
-- All 15 REQs meet their intended functionality
-- 666 tests adequately cover the specification
-- Code quality and architecture align with project goals
-- Ready for next iteration or release activities
+1. **npm publish pending**: no `NPM_TOKEN` secret in the repository, so the tag workflow
+   fail-closes at publish. Release gate and version consistency pass; GitHub Release v0.3.1
+   was created manually. Add the secret and re-run the tag workflow (or publish manually).
+2. **v0.3.0 tag run failed** on the Linux bin symlink smoke — that is the defect fixed by 0.3.1.
+   The v0.3.0 release page remains; v0.3.1 is the recommended version.
+3. **G-CANARY replay criteria** remain an accepted residual (original recordings overwritten),
+   recorded in `docs/KNOWN-ISSUES.md`.
 
 ---
 
 ## Metrics
 
 | Metric | Value |
-|--------|-------|
-| Total Commits | 16 (f135e19 to 3ce8c99 in worktree, plus merge commits) |
-| Files Changed | 85 (+10049/-909) |
-| New Checkers | 4 |
-| New Tests | 272 |
-| Coverage Increase | Maintained ≥80% (from baseline) |
-| xp-gate Passes | 180/180 (12 gates × 15 slices) |
-| Delphi Rounds | R1 Round 5 (requirements), R2 Round 3 (design), CW via opencode v2 |
+|---|---|
+| Sprint commits (merge-base d5b9be8 → d4e1632) | 83 |
+| Slices | 15/15 |
+| Reopen/emergent issues | 0 |
+| Worktree | `.worktrees/v2a-build` removed (clean); branch `sprint/v2a-build` kept |
+| Backup | `.sprint-history/sprint-20260927-46/` |
+| UAT | 2026-11-02, passed |
 
 ---
 
-**Closed by**: Automated sprint-flow CLOSE phase
-**Verified by**: User confirmation required (see User Acceptance section)
-**Next Steps**: Await user acceptance confirmation before starting new sprint or release activities
+**Closed by**: sprint-flow Phase 6 CLOSE
+**UAT**: performed by the user on v0.3.1 — passed, no emergent issues.

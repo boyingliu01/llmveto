@@ -126,3 +126,64 @@ next_phase_context:
   - Phase 5 SHIP 前需先建 PR 观察 CI gate 3/7/8/9 是否 reveal fail
   - test-alignment-report.json 是 #367 EVIDENCE-GATE 的强制输入
 ```
+
+---
+
+# v2a Phase 4 VERIFY — sprint-20260927-46 (2026-11-02)
+
+- **Panel**: delphi code-walkthrough, 3 seats × profile `example-provider-v2a2`
+  (A architecture `g-deepseek-v4-flash`, B technical `g-qwen3.8-flash`, C feasibility `g-glm-5.3-flashx`)
+- **Rounds**: 5/5 → 100 % consensus at round 5 (APPROVED 8 / 9 / 7)
+- **Baseline**: 21334de, post-review docs commit 131113a
+- **Evidence**: `var/delphi-v2a-cw/round{1..5}.json`, `sast-round5.json`, `.sprint-state/code-walkthrough-reviewed.json`
+
+## FB-V2A-01 · Critical · PR CI 门禁被 `|| true` 静默降级（已闭合 fb155f7）
+
+- `.github/workflows/test.yml` 的 detection / false-positive 步骤用 `|| true` 吞掉失败，且引用的测试路径不存在；80 % 覆盖率门、dual typecheck、lint 在早期改动中被移除。
+- **Lesson**：CI 断言必须由 guard test 钉死（`tests/unit/ci-workflows.test.ts` 断言 PR 工作流不含 `|| true`、不含 relay 套件），否则"对齐文档"与"实际门禁"会长期漂移。
+
+## FB-V2A-02 · Critical · relay 套件排除不可证实（已闭合 fb155f7）
+
+- 原先用 `test.skipIf(process.env.CI)` 一类隐式条件排除 relay 矩阵，PR 与 nightly 的行为差异无法从代码读出。
+- 现为 `RELAY_MATRIX=1` 显式门 + `describe.skipIf`，nightly 两处步骤都注入该变量，guard test 断言恰好 2 处。
+
+## FB-V2A-03 · Major · 流式工具调用参数跨帧拼接后漏扫（已闭合各轮修复）
+
+- SSE `delta` 帧里的 `tool_calls[*].function.arguments` 被按片段扫描；改为按 index 合并后判定，并要求 UTF-8 字节计量与 256 KiB 上限只作用于工具参数（长 prose 不再误触 `window_overflow`）。
+
+## FB-V2A-04 · Major · 预算常量 docs 与代码漂移（已闭合 131113a）
+
+- 设计/CHANGELOG 写 G3 8/32/512 KiB 与 G1 5 ms；`src/gateway/budget.ts` 实为 8/64/512 KiB 与 `G1_PER_CHUNK = 12` ms（32 KB 是设计文档笔误）。
+- **Lesson**：档位数字只能有单一常量源；文档引用必须写符号名（如 `G1_PER_CHUNK`）而不是复制数值，或至少在 review packet 中内联常量源文件。
+
+## FB-V2A-05 · Major · `degraded` 计数语义反写（已闭合 131113a）
+
+- 文档曾称 `degraded` 是可与 `blocked` 重叠的附加标记；实际 `resolveActionTaken` 保证 block 优先，`degraded` 是与四桶互斥的第五桶，`findings[]` 才保留观察类 error。
+- 同步补 `doctor.coverage-counters` 的 `degraded=N` 输出，避免"计数存在但不可见"。
+
+## FB-V2A-06 · Major · doctor 与 store 双校验源（已闭合 06e6da7）
+
+- CLI `doctor.canary-registry` 与 `CanaryStore.load()` 各自实现 registry 校验，且 CLI 不能 import canary（AC-V2a-19③）。
+- 收敛到 `src/shared/registry-file-schema.ts`；Gate 5a 不识别 `tests/unit/shared/**`，按项目既有先例用 `@no-test-required:` 注解登记真实测试路径（未用 `--no-verify` 绕过）。
+
+## FB-V2A-07 · 流程事实 · Delphi 专家非确定失败
+
+- Rounds 1–3 各有一次席位空响应/未闭合 JSON，按 skill 规则作废整轮而非降级为少数专家；`rounds_used=5` 达到预算上限后收敛。
+- **Lesson**：把"评审证据不足"与"代码有缺陷"分开记账，避免为凑共识而接受降级面板。
+
+## 残余风险（accepted, 非阻塞）
+
+1. `orchestrateCanary` 仍是 core.ts 自由函数（deferred v2b）。
+2. 空锚 `"0:"` 在类型上不可区分（仅注释契约，v2b 品牌类型候选）。
+3. `relay-nightly.yml` 30/45 分钟预算未经 CI 实测；发布后首次 `workflow_dispatch` 记录耗时。
+4. 录制回放未能重跑（原始录制被探针流量覆盖，KNOWN-ISSUES 已登记）。
+5. 管理面 `/_llmveto/*` 仅 loopback 绑定，无 token/Host/Origin 校验；不得经反向代理暴露。
+
+## status
+
+```
+status: completed
+alignment: PASS (15/15 REQ, 25/25 AC broad, 21/25 strict, score 96.0)
+walkthrough: APPROVED (round 5, 100% consensus)
+gates: xp-gate check --all exit 0 (10 passed / 7 skipped)
+```

@@ -1,6 +1,6 @@
 # v2a Gate Evidence — G-WINDOW / G-PERF / G-CANARY
 
-**Sprint**: sprint-20260927-46 · **Collected**: 2026-11-02 · **Landing commit**: e873693
+**Sprint**: sprint-20260927-46 · **Collected**: 2026-11-02 · **Landing commit**: e873693 · **Verify HEAD**: 131113a
 **Environment (local)**: Windows 10 x64 · Bun (latest) · Node v24.18.0 · loopback bench harness (mock upstream)
 
 ## G-CANARY (pre-BUILD gate) — CLOSED (2026-10-14), replay criteria deferred
@@ -72,7 +72,9 @@ ubuntu-latest 为权威（本机为 Windows + 本地回环）。**处置**：PR 
 
 ## Gate 5 (tests + coverage) — PASS
 
-`npx vitest run --coverage`：57 files / **670 passed | 1 skipped**；
-statements **92.77%** · branches **89.31%** · functions **94.85%** · lines **94.91%**（门限 80%）。
+`npx vitest run --coverage`（HEAD 131113a）：59 test files / **642 passed | 50 skipped | 0 failed**；
+statements **91.11%** · branches **88.13%** · functions **91.74%** · lines **92.94%**（门限 80%）。
+50 条 skip 全部来自 `tests/integration/relay-detection.test.ts` 的 `RELAY_MATRIX=1` 条件门
+（该套件在 `RELAY_MATRIX=1` 下 49/49 通过，nightly 执行）。
 xp-gate pre-commit 全链（13 gates：11 PASS / 1 SKIP（Gate 11 stale-state，CLOSE 前修复）/ 1 WARN（Gate 13 无 C/C++ 编译器））
 在本提交上通过。

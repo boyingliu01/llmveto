@@ -161,5 +161,5 @@ suite("M3 daemon lifecycle (spawn real CLI)", () => {
     expect(await waitUntil(() => !pidAlive(pid), 3000)).toBe(true);
     expect(existsSync(pidFile)).toBe(false);
     expect(existsSync(join(dir, "gateway.url"))).toBe(false);
-  });
+  }, 60_000); // 跨进程 e2e：起停真实 daemon + 子进程编译启动，全量并行跑时 20s 默认值会误杀
 });

@@ -131,8 +131,17 @@ function collectChoiceParts(parsed: Record<string, unknown>, out: string[]): Rec
       const b = box as Record<string, unknown>;
       pushContentParts(b.content, out);
       // 工具调用载荷（T2a 载体）
-      if (Array.isArray(b.tool_calls)) for (const tc of b.tool_calls) collectToolCallParts(tc, out);
-      if (b.function_call) collectToolCallParts(b.function_call, out);
+      // has_tool_call_payload 让流式 checker 区分“本片是 arguments 片段”与“本片是
+      // content/reasoning 文本”：256KiB 单笔硬顶只约束前者（G-WINDOW §4.2 计量口径），
+      // 否则一段超长正文会被误判 window_overflow 而阻断。
+      if (Array.isArray(b.tool_calls) && b.tool_calls.length > 0) {
+        meta.has_tool_call_payload = true;
+        for (const tc of b.tool_calls) collectToolCallParts(tc, out);
+      }
+      if (b.function_call) {
+        meta.has_tool_call_payload = true;
+        collectToolCallParts(b.function_call, out);
+      }
       if (typeof b.reasoning_content === "string") out.push(b.reasoning_content);
     }
     if (typeof c0.finish_reason === "string") meta.finish_reason = c0.finish_reason;

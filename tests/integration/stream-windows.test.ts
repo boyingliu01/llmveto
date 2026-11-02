@@ -326,7 +326,8 @@ describe("SL-02 integration: AC-V2a-14 window_overflow（2049×128B fixture）",
     expect(r.status).toBe(200);
     const text = await r.text();
     const errs = errorEvents(text);
-    expect(errs).toHaveLength(1);
+    const debugRecs = await waitForEvidence(evidencePath);
+    expect(errs, `findings=${JSON.stringify(debugRecs[0]?.findings)}`).toHaveLength(1);
     expect(errs[0]).toContain('"delivered_chunks":2048');
     expect(text).toContain("#2048#"); // 第 2048 片已交付
     expect(text).not.toContain("#2049#"); // 越顶片不交付

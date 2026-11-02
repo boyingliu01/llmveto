@@ -92,7 +92,7 @@ describe("SL-13 relay detection matrix (REQ-V2a-08 AC-V2a-09)", () => {
       const relay = await startEvilRelay({ opponent, seed: 42 });
       relayInstances.push(relay);
     }
-  });
+  }, 60_000); // 13 个 evil-relay 子进程串行起停：默认 10s hookTimeout 在全量并行下会误杀
 
   afterAll(async () => {
     // Shutdown all relay instances

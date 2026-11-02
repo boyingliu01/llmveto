@@ -17,7 +17,9 @@ import { scanTexts } from "../shared/types.ts";
  */
 
 export const CHECKER_ID = "tool-call-shape";
+/** §4.2/ADR-0003：单个 tool_call 的 arguments 累积硬顶 = 256KiB（UTF-8 字节）。 */
 const WINDOW_LIMIT = 256 * 1024;
+const ACCUMULATED_BYTES_KEY = "accumulatedBytes";
 
 interface ToolCallShape { name: string; arguments: string }
 
@@ -28,6 +30,10 @@ function isToolCall(obj: unknown): obj is ToolCallShape {
 }
 
 function extractToolCalls(text: string): ToolCallShape[] {
+  // 廉价前置：ToolCallShape 必然同时含 "name" 与 "arguments" 两个键。
+  // 流式 arguments 片段（本 checker 逐帧累积的主体）通常一个都没有，跳过
+  // JSON.parse + 全文正则，避免 O(n²) 重扫在 G1 5ms/片预算里超时误阻断。
+  if (!text.includes('"name"') || !text.includes('"arguments"')) return [];
   try {
     const obj = JSON.parse(text);
     if (isToolCall(obj)) return [obj];
@@ -101,21 +107,38 @@ function checkUnit(unit: ScanUnit): CheckerResult {
 export const checkToolCallShapeNonStream: NonStreamChecker = (unit) => checkUnit(unit);
 
 export const checkToolCallShapeStream: StreamChecker = (window, chunk) => {
-  const prevLen = typeof window.extra?.accumulatedLength === "number" ? window.extra.accumulatedLength : 0;
-  const curLen = prevLen + chunk.text.length;
-  if (curLen > WINDOW_LIMIT) {
+  const advanced = {
+    pendingBytes: window.pendingBytes,
+    cursor: window.cursor + chunk.text.length,
+    ...(window.extra !== undefined ? { extra: window.extra } : {}),
+  };
+  // 256KiB 硬顶的计量对象是**未闭合的 arguments 片段**（§4.2），不是普通正文。
+  // content/reasoning 片不累积、不参与越顶判定：各片独立判定，正文长度不受此顶约束。
+  if (chunk.meta.has_tool_call_payload !== true) {
+    return [checkUnit(chunk), advanced] as const;
+  }
+  const prevBytes = typeof window.extra?.[ACCUMULATED_BYTES_KEY] === "number"
+    ? (window.extra[ACCUMULATED_BYTES_KEY] as number) : 0;
+  // 口径 = UTF-8 字节（与 gateway 窗口账本 consumedBytes 一致）；UTF-16 长度会在
+  // CJK 文本上低估实际留存最高 3 倍。
+  const curBytes = prevBytes + Buffer.byteLength(chunk.text, "utf8");
+  if (curBytes > WINDOW_LIMIT) {
     return [{ verdict: "error", evidence: [], reason: "window_overflow" }, {
       pendingBytes: window.pendingBytes, cursor: window.cursor + chunk.text.length,
-      extra: { ...window.extra, accumulatedLength: curLen },
+      extra: { ...window.extra, [ACCUMULATED_BYTES_KEY]: curBytes },
     }] as const;
   }
   const prev = typeof window.extra?.accumulatedText === "string" ? window.extra.accumulatedText : "";
   const acc = prev + chunk.text;
-  const result = checkUnit({ ...chunk, text: acc });
-  return [result, {
+  // 只有可能闭合一个结构时才重扫累积文本：未闭合片段逐帧全文 JSON.parse 是
+  // O(n²)，在 G1 5ms/片预算下长 arguments 流会自超时（checker_timeout 误阻断）。
+  const next = {
     pendingBytes: window.pendingBytes, cursor: window.cursor + chunk.text.length,
-    extra: { ...window.extra, accumulatedText: acc, accumulatedLength: curLen },
-  }] as const;
+    extra: { ...window.extra, accumulatedText: acc, [ACCUMULATED_BYTES_KEY]: curBytes },
+  } as const;
+  if (!chunk.text.includes("}")) return [{ verdict: "clean", evidence: [] }, next] as const;
+  const result = checkUnit({ ...chunk, text: acc });
+  return [result, next] as const;
 };
 
 export const TOOL_CALL_SHAPE_SPEC = {

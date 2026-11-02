@@ -1,12 +1,14 @@
 name: Relay Nightly (13 Opponents)
-# SL-14: Nightly evil-relay — 4-way matrix, port contention fallback
+# SL-14: nightly evil-relay — 13 opponents in a 4-way matrix (3/3/3/4 per job),
+# port-contention fallback = serial single fork.
+# 档位依据：docs/plans/2026-09-27-v2a-requirements.md §8.4。
 on:
   schedule:
     - cron: '0 2 * * *'
   workflow_dispatch:
     inputs:
       opponent_filter:
-        description: 'Filter opponent type (empty = all 13)'
+        description: 'Regex over opponent id (empty = run the matrix shard pattern)'
         required: false
         default: ''
 permissions:
@@ -14,40 +16,54 @@ permissions:
 jobs:
   relay-matrix:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 45 = 并行档 30 + 串行回退余量（§8.4 回退档）；回退与并行同 job 内切换，
+    # 故 job 上限必须覆盖两档，不能停在 30 让回退步被 job 先杀掉。
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        opponent_category: ['prompt-injection', 'data-exfiltration']
-        scenario_variant: ['direct', 'indirect']
+        # opponent id 取自 testkit/evil-relay.ts 的 OpponentId（下划线命名）；
+        # 13 个对手按 4 路分片，每 job ≤4。
         include:
-          - { opponent_category: 'model-confusion', scenario_variant: 'direct' }
-          - { opponent_category: 'model-confusion', scenario_variant: 'indirect' }
+          - { shard: 1, pattern: 'honest|drift|quantized' }
+          - { shard: 2, pattern: 'swap|pin|filter_en' }
+          - { shard: 3, pattern: 'true_random|cache|partial_mimic' }
+          - { shard: 4, pattern: 'prompt_injection|data_exfiltration|model_confusion|tool_manipulation' }
     steps:
       - uses: actions/checkout@v4
+      # 安装面 bun（唯一锁文件 bun.lock），运行面 node（与 test.yml / 本地一致）。
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "1.4.3" }
       - uses: actions/setup-node@v4
-        with: { node-version: '18', cache: 'npm' }
-      - run: npm ci
+        with: { node-version: "24" }
+      - run: bun install --frozen-lockfile
       - name: Evil-relay tests (parallel)
         id: parallel_run
         continue-on-error: true
         timeout-minutes: 30
+        env:
+          SHARD_PATTERN: ${{ matrix.pattern }}
+          OPPONENT_FILTER: ${{ github.event.inputs.opponent_filter }}
         run: |
-          echo "Category: ${{ matrix.opponent_category }} / Variant: ${{ matrix.scenario_variant }}"
-          npx vitest run tests/integration/evil-relay.test.ts \
-            --testNamePattern="${{ matrix.opponent_category }}.*${{ matrix.scenario_variant }}" || exit $?
+          pattern="${OPPONENT_FILTER:-$SHARD_PATTERN}"
+          echo "Shard ${{ matrix.shard }} pattern: $pattern"
+          npx vitest run tests/integration/relay-detection.test.ts \
+            --testNamePattern="$pattern" --passWithNoTests=false
       - name: Retry serial on port contention
         if: steps.parallel_run.outcome == 'failure'
-        timeout-minutes: 45
+        env:
+          SHARD_PATTERN: ${{ matrix.pattern }}
+          OPPONENT_FILTER: ${{ github.event.inputs.opponent_filter }}
         run: |
+          pattern="${OPPONENT_FILTER:-$SHARD_PATTERN}"
           echo "Retrying serial execution (port contention fallback)..."
-          npx vitest run tests/integration/evil-relay.test.ts \
-            --testNamePattern="${{ matrix.opponent_category }}.*${{ matrix.scenario_variant }}" \
-            --pool=forks --poolOptions.forks.singleFork=true || exit $?
+          npx vitest run tests/integration/relay-detection.test.ts \
+            --testNamePattern="$pattern" --passWithNoTests=false \
+            --pool=forks --poolOptions.forks.singleFork=true
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: nightly-${{ matrix.opponent_category }}-${{ matrix.scenario_variant }}
+          name: nightly-shard-${{ matrix.shard }}
           path: coverage/
           if-no-files-found: warn

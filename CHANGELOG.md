@@ -130,6 +130,18 @@ windows and execution budgets, and an evil-relay testkit. The evidence schema st
   `${len}:${text}` length prefix.
 - Tool-call arguments split across SSE `delta` frames were scanned as fragments; they are now
   merged before judgment.
+- `tool-call-shape` stream metering now uses **UTF-8 bytes** (matching the gateway window ledger)
+  and the 256 KiB hard bound applies only to tool-call argument fragments — long prose streams no
+  longer risk a spurious `window_overflow` block.
+- `tool-call-shape` no longer re-parses the whole accumulated arguments text on every frame
+  (O(n²) work could self-trip the 5 ms G1 budget as `checker_timeout` on long tool-call streams).
+- `test.yml` restores the 80 % coverage gate, dual typecheck and lint (these had been dropped),
+  and the detection / false-positive steps now point at real suites instead of `|| true`-masked
+  non-existent files. `relay-nightly.yml` installs from `bun.lock`, runs the actual relay suite in
+  a 4-way opponent-shard matrix with the serial fallback, and no longer contradicts its own
+  timeout budget.
+- Canary registry `lastSeen` refreshes are throttled (60 s) instead of a synchronous
+  write+rename on every managed request; allocation and rotation still persist immediately.
 
 ### Performance
 

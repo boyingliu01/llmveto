@@ -1,6 +1,7 @@
 name: Tests
-# SL-14: PR gate — unit+integration+detection+false-positive matrices (no 13-opponent evil-relay)
-# R10R2-A-m2: 全仓 test job（main + sprint/* 双分支支持）
+# SL-14: PR gate — unit+integration+e2e + detection/false-positive matrices
+# (13-opponent evil-relay E2E stays nightly; see relay-nightly.yml)
+# R10R2-A-m2: main + sprint/* 双分支支持
 on:
   pull_request:
     branches: ['main', 'sprint/*']
@@ -11,25 +12,35 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      # 安装面 = bun（仓库只有 bun.lock）；测试运行面 = node（vitest.config 注释：
+      # 测试跑在 Node 上，顺带验证 “兼容 Node >= 18”）。两处都钉版本，避免
+      # CI 与本地验证面漂移导致红灯归因失真。
       - uses: oven-sh/setup-bun@v2
-        with: { bun-version: latest }
+        with: { bun-version: "1.4.3" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "24" }
       - run: bun install --frozen-lockfile
-      - name: Typecheck
-        run: npx tsc --noEmit
-      - name: Unit + integration tests
-        run: npx vitest run
-      - name: Detection matrix (threat fixtures T*/ )
-        run: |
-          for d in tests/fixtures/threats/T*/; do
-            [ -d "$d" ] && echo "Testing $d"
-          done
-          npx vitest run tests/unit/checkers.test.ts || true
+      # 80% 四项门只在 COVERAGE_ALL=1 时生效（vitest.config 的 CI 全量模式）；
+      # 裸 `vitest run` 不产生覆盖率也不应用阈值，故此行是覆盖率契约的唯一执行面。
+      - name: Full suite with 80% coverage gates
+        run: COVERAGE_ALL=1 npx vitest run --coverage
+      - name: Typecheck (source + build surface)
+        run: bun run typecheck && bun run typecheck:dist
+      - name: Lint
+        run: npx oxlint bench tests src
+      # 全量步已覆盖以下两个套件；独立成步只把“矩阵红了”从整仓红里分离出来，
+      # 便于归因。任何一步失败都必须红——不得添 `|| true`。
+      - name: Detection matrix (threat fixtures)
+        run: npx vitest run tests/integration/detection-matrix.test.ts tests/integration/relay-detection.test.ts
       - name: False-positive matrix (benign traffic)
-        run: npx vitest run tests/unit/false-positive.test.ts || true
-      - name: Upload coverage
+        run: npx vitest run tests/integration/false-positive-matrix.test.ts
+      - name: Upload coverage summary (audit trail)
         if: always()
         uses: actions/upload-artifact@v4
-        with: { name: coverage-report, path: coverage/, if-no-files-found: warn }
+        with:
+          name: coverage-summary
+          path: coverage/coverage-summary.json
+          if-no-files-found: warn

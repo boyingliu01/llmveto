@@ -23,6 +23,12 @@ export const CANARY_TTL_MS = 24 * 60 * 60 * 1000;
 export const CANARY_LRU_CAPACITY = 64 as const;
 /** AC-V2a-07：canary 串固定 27 字符 → 默认熵源 = 15 字符前缀 + 12 hex。 */
 const CANARY_TOKEN_PREFIX = "llmveto-canary-";
+/**
+ * 热路径落盘节流：已有 session 的 lastSeen 刷新不再每请求 writeFileSync+renameSync
+ * （同步 IO 落在事件循环上，尾延迟随并发放大）。分配新串与轮换仍然立即落盘；
+ * lastSeen 最多滞后 60s，最坏后果 = 崩溃重启后把 60s 内活跃的会话当作更旧，TTL 24h 下可忽略。
+ */
+export const LAST_SEEN_PERSIST_INTERVAL_MS = 60_000;
 
 export type RegistryUnavailableCause = "invalid_json" | "unknown_version" | "malformed_structure";
 
@@ -97,6 +103,7 @@ export class CanaryStore {
   private readonly now: () => number;
   private rotations = 0;
   private rotatedAtMs: number | null = null;
+  private lastPersistAt = Number.NEGATIVE_INFINITY;
   /** 构造时同步加载；结果恒显式（ok / registry_unavailable），不 throw。 */
   readonly loadStatus: RegistryLoadStatus;
 
@@ -136,7 +143,7 @@ export class CanaryStore {
     const existing = this.entries.get(session);
     if (existing !== undefined) {
       existing.last_seen = now;
-      this.persist();
+      if (now - this.lastPersistAt >= LAST_SEEN_PERSIST_INTERVAL_MS) this.persist();
       return { canary: existing.canary, created: false };
     }
     const canary = this.entropy();
@@ -215,5 +222,6 @@ export class CanaryStore {
     const tmp = `${this.filePath}.tmp`;
     writeFileSync(tmp, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
     renameSync(tmp, this.filePath);
+    this.lastPersistAt = this.now();
   }
 }

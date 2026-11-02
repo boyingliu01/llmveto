@@ -167,8 +167,8 @@ describe("SL-09 tool-call-shape (REQ-V2a-02)", () => {
 
   it("流式：delta 累积后扫描 → finding", () => {
     // 模拟流式 chunks
-    const chunk1 = unit('{"name": "unkn', {});
-    const chunk2 = unit('own_tool", "arguments": "{}"}', {});
+    const chunk1 = unit('{"name": "unkn', { has_tool_call_payload: true });
+    const chunk2 = unit('own_tool", "arguments": "{}"}', { has_tool_call_payload: true });
 
     let window: ScanWindow = emptyWindow;
     const [r1, w1] = checkToolCallShapeStream(window, chunk1);
@@ -180,7 +180,7 @@ describe("SL-09 tool-call-shape (REQ-V2a-02)", () => {
   });
 
   it("流式：带 declared_tools 的 delta 累积 → finding", () => {
-    const meta = { declared_tools: ["get_weather"] };
+    const meta = { declared_tools: ["get_weather"], has_tool_call_payload: true };
     const chunk1 = unit('{"name": "unkn', meta);
     const chunk2 = unit('own_tool", "arguments": "{}"}', meta);
 
@@ -196,17 +196,35 @@ describe("SL-09 tool-call-shape (REQ-V2a-02)", () => {
   it("window_overflow: 累积超过 256KiB → reason=window_overflow", () => {
     // 构造超大 payload（>256KiB）
     const largeText = '{"name": "test", "arguments": "' + "x".repeat(260 * 1024) + '"}';
-    const chunk = unit(largeText, {});
+    const chunk = unit(largeText, { has_tool_call_payload: true });
 
     const window: ScanWindow = {
       pendingBytes: new Uint8Array(),
       cursor: 0,
-      extra: { accumulatedLength: 260 * 1024 }, // 模拟已累积超限
+      extra: { accumulatedBytes: 260 * 1024 }, // 模拟已累积超限
     };
 
     const [r, _next] = checkToolCallShapeStream(window, chunk);
     expect(r.verdict).toBe("error");
     expect(r.reason).toBe("window_overflow");
+  });
+
+  it("window_overflow 口径 = UTF-8 字节：131073 个 CJK 字符（393219 B）越顶（UTF-16 长度仍低于 256Ki）", () => {
+    const chunk = unit("中".repeat(131_073), { has_tool_call_payload: true });
+    expect(chunk.text.length).toBeLessThan(256 * 1024);
+    const [r, _next] = checkToolCallShapeStream(emptyWindow, chunk);
+    expect(r.verdict).toBe("error");
+    expect(r.reason).toBe("window_overflow");
+  });
+
+  it("正文流不参与 256KiB 硬顶：content 片跨片累积远超 256KiB 仍 clean（硬顶只约束 arguments 片段）", () => {
+    let window: ScanWindow = emptyWindow;
+    for (let i = 0; i < 3; i += 1) {
+      const [r, next] = checkToolCallShapeStream(window, unit("x".repeat(200 * 1024), {}));
+      expect(r.verdict).toBe("clean");
+      window = next;
+    }
+    expect(window.extra?.accumulatedBytes).toBeUndefined();
   });
 
   // ── Spec declaration ────────────────────────────────────────────────────────

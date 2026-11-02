@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
@@ -367,10 +367,14 @@ function sleep(ms: number): Promise<void> {
 // 重入本入口，走 cmdStartDaemon 常驻持有 server 事件循环。stop/status 基于 pid 文件 + 真实探活。
 // 可移植自识别：`import.meta.main` 仅 Bun / Node ≥24 有，Node ≥18 无此属性；
 // 改用 import.meta.url 与 process.argv[1] 的路径比对，Bun(源码) 与 Node(dist) 均可。
+// npm 在 POSIX 上把 bin 装成指向 dist 的符号链接（argv[1]=.../.bin/llmveto），必须解析
+// 真实路径后再比对，否则入口永不执行、进程静默 exit 0。
 export function isDirectRun(metaUrl: string, argv1: string | undefined = process.argv[1]): boolean {
   if (!argv1) return false;
   try {
-    return resolve(fileURLToPath(metaUrl)) === resolve(argv1);
+    const self = fileURLToPath(metaUrl);
+    if (resolve(self) === resolve(argv1)) return true;
+    return realpathSync(self) === realpathSync(argv1);
   } catch {
     return false;
   }

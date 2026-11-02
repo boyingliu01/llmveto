@@ -1,6 +1,15 @@
 import { randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import {
+  REGISTRY_VERSION,
+  validateRegistryFile,
+  type RegistryEntry,
+  type RegistryFile,
+  type RegistryUnavailableCause,
+} from "../shared/registry-file-schema.ts";
+
+export { REGISTRY_VERSION, validateRegistryFile } from "../shared/registry-file-schema.ts";
 
 /**
  * @test REQ-V2a-07
@@ -16,7 +25,6 @@ import { dirname } from "node:path";
  *         注意：本模块与 src/gateway/registry.ts（checker 注册表）无关（D-10/T-M1 命名澄清）。
  */
 
-export const REGISTRY_VERSION = 1 as const;
 /** §4.3 定值：session 自最后一条过闸请求起 24h 内视为活跃。 */
 export const CANARY_TTL_MS = 24 * 60 * 60 * 1000;
 /** §4.2 定值：活跃集合按 LRU 截断至 64（跨客户端共享）。 */
@@ -30,27 +38,10 @@ const CANARY_TOKEN_PREFIX = "llmveto-canary-";
  */
 export const LAST_SEEN_PERSIST_INTERVAL_MS = 60_000;
 
-export type RegistryUnavailableCause = "invalid_json" | "unknown_version" | "malformed_structure";
-
 /** 加载结果：ok 或收敛后的显式不可用（store 不把损坏 throw 给调用方，§4.3/D-02）。 */
 export type RegistryLoadStatus =
   | { readonly status: "ok" }
   | { readonly status: "registry_unavailable"; readonly cause: RegistryUnavailableCause };
-
-export interface RegistryEntry {
-  readonly canary: string;
-  /** epoch ms；TTL 与 LRU 的排序基准。 */
-  readonly last_seen: number;
-}
-
-/** canary-registry.json 文件 schema（自带 version 字段，D-02）。 */
-export interface RegistryFile {
-  readonly version: typeof REGISTRY_VERSION;
-  readonly rotation_count: number;
-  /** ISO-8601；null = 从未轮换。 */
-  readonly last_rotated_at: string | null;
-  readonly entries: Readonly<Record<string, RegistryEntry>>;
-}
 
 export interface CanaryStoreOptions {
   /** 熵源注入点；默认 crypto 随机 27 字符 token。 */
@@ -65,37 +56,6 @@ interface MutableEntry {
 } // 单条 registry 条目的可变形态（Map 内部用；持久化经 RegistryFile schema）
 
 const defaultEntropy = (): string => CANARY_TOKEN_PREFIX + randomBytes(6).toString("hex");
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-type ValidatedFile = { rotation_count: number; last_rotated_at: string | null; entries: Record<string, MutableEntry> };
-
-/** 结构校验：不合法返回损坏原因（三类之一），合法返回规整化数据。 */
-function validateFile(v: unknown): ValidatedFile | RegistryUnavailableCause {
-  if (!isPlainObject(v)) return "malformed_structure";
-  if (v["version"] !== REGISTRY_VERSION) return "unknown_version";
-  const rotation = v["rotation_count"];
-  const rotatedAt = v["last_rotated_at"];
-  if (typeof rotation !== "number" || !Number.isFinite(rotation) || rotation < 0) return "malformed_structure";
-  if (rotatedAt !== null && (typeof rotatedAt !== "string" || Number.isNaN(Date.parse(rotatedAt)))) {
-    return "malformed_structure";
-  }
-  const raw = v["entries"];
-  if (!isPlainObject(raw)) return "malformed_structure";
-  const entries: Record<string, MutableEntry> = {};
-  for (const [session, entry] of Object.entries(raw)) {
-    if (!isPlainObject(entry)) return "malformed_structure";
-    const canary = entry["canary"];
-    const lastSeen = entry["last_seen"];
-    if (typeof canary !== "string" || typeof lastSeen !== "number" || !Number.isFinite(lastSeen)) {
-      return "malformed_structure";
-    }
-    entries[session] = { canary, last_seen: lastSeen };
-  }
-  return { rotation_count: rotation, last_rotated_at: rotatedAt, entries };
-}
 
 export class CanaryStore {
   private readonly entries = new Map<string, MutableEntry>();
@@ -126,7 +86,7 @@ export class CanaryStore {
     } catch {
       return { status: "registry_unavailable", cause: "invalid_json" };
     }
-    const checked = validateFile(parsed);
+    const checked = validateRegistryFile(parsed);
     if (typeof checked === "string") return { status: "registry_unavailable", cause: checked };
     for (const [session, entry] of Object.entries(checked.entries)) {
       this.entries.set(session, { canary: entry.canary, last_seen: entry.last_seen });

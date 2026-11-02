@@ -23,6 +23,13 @@
   change.
 - **Operational note**: injection only applies to the four managed routes above; traffic routed
   through other `client/provider` paths is scanned but never injected.
+- **Admin boundary**: `POST /_llmveto/canary/rotate` and `GET /_llmveto/metrics` are protected only
+  by the daemon binding to loopback. Do not expose `/_llmveto/*` through a reverse proxy; v0.3.0
+  has no Host/Origin/token check on the admin surface.
+- **Empty-anchor sessions**: a request with no user text or an unparsable body derives a shared
+  deterministic session anchor and is assigned a canary, but injection is skipped, so that canary
+  never leaves the gateway. It can appear as a candidate in other sessions' snapshots yet cannot be
+  legitimately returned by an upstream.
 
 ### T2a: Tool-Call Structure Judgment
 

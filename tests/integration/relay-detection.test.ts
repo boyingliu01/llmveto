@@ -19,6 +19,11 @@ import { parseYamlSubset, type YamlValue } from "../utils/yaml-subset.ts";
 
 const FIXTURES_DIR = new URL("../fixtures/threats/T5a/", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
 
+// §8.4 档位：13 对手 evil-relay E2E 只在 nightly 跑（relay-nightly.yml 置 RELAY_MATRIX=1）。
+// PR 全量步默认跳过，避免 13 个子进程与 nightly 门户争用端口/超时；detection-matrix 仍覆盖
+// checker 判定面。显式 gate 而非静默 exclude：本地跑该套件只需 RELAY_MATRIX=1。
+const RELAY_MATRIX = process.env.RELAY_MATRIX === "1";
+
 interface RelayFixture {
   readonly request: Record<string, unknown>;
   readonly response: Record<string, unknown>;
@@ -66,7 +71,7 @@ function unitFromResponse(response: Record<string, unknown>, meta: Record<string
   return buildResponseScanUnit(body, bodyObj as any, null, "non-stream", enrichedMeta);
 }
 
-describe("SL-13 relay detection matrix (REQ-V2a-08 AC-V2a-09)", () => {
+describe.skipIf(!RELAY_MATRIX)("SL-13 relay detection matrix (REQ-V2a-08 AC-V2a-09)", () => {
   const fixtures = loadFixtures();
   let relayInstances: EvilRelayInstance[] = [];
 
@@ -182,7 +187,7 @@ describe("SL-13 relay detection matrix (REQ-V2a-08 AC-V2a-09)", () => {
   });
 });
 
-describe("SL-13 relay false-positive matrix (REQ-V2a-08 AC-V2a-09)", () => {
+describe.skipIf(!RELAY_MATRIX)("SL-13 relay false-positive matrix (REQ-V2a-08 AC-V2a-09)", () => {
   const fpPath = new URL("../fixtures/false-positives.json", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
   const fpData = JSON.parse(readFileSync(fpPath, "utf8"));
   const relayFps = fpData.fps.filter((fp: any) => fp.id.startsWith("FP-T5a-RELAY"));

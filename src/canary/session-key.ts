@@ -52,7 +52,8 @@ function firstUserTextParts(body: string): readonly string[] {
     parsed = JSON.parse(body);
   } catch {
     return [];
-  }  if (!isPlainObject(parsed)) return [];
+  }
+  if (!isPlainObject(parsed)) return [];
   const messages = parsed["messages"];
   if (!Array.isArray(messages)) return [];
   for (const m of messages) if (isPlainObject(m) && m["role"] === "user") return textContentParts(m["content"]);

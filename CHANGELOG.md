@@ -151,6 +151,15 @@ windows and execution budgets, and an evil-relay testkit. The evidence schema st
   promoting the later one.
 - `relay-nightly.yml` no longer uploads a `coverage/` artifact it never generates; the PR
   detection step no longer re-runs the 13-opponent relay suite (nightly-only by design).
+- The 13-opponent relay suite is now explicitly gated by `RELAY_MATRIX=1` in the test file
+  itself, so the PR full-suite step no longer starts 13 relay subprocesses; nightly sets the
+  variable on both the parallel and serial-fallback steps. A guard test pins the gate.
+- `doctor.canary-registry` reuses the runtime `validateRegistryFile` judgment instead of a shallow
+  `typeof` check, so a structurally invalid registry (e.g. `entries: null`) now reports
+  `[DEGRADED]` instead of a false `registry ok`.
+- The streamed tool-call merger emits a synthetic `window_overflow` error finding on overflow
+  without throwing from the SSE generator (a throw there could surface as an unhandled rejection
+  after headers were sent, turning fail-closed into a daemon-level fail-open).
 
 ### Performance
 
@@ -180,6 +189,10 @@ windows and execution budgets, and an evil-relay testkit. The evidence schema st
   the chain alone cannot recover the original body; retain the client-side or upstream-side body
   when forensic reconstruction is required. AC-V2a-07 is a test-time invariant, not a
   time-unbounded recovery guarantee.
+- The `/_llmveto/*` admin surface relies on the daemon binding to a loopback address as its only
+  security boundary (no Host/Origin/token check). Do not expose `/_llmveto/*` through a reverse
+  proxy; a proxy that forwards those paths re-exposes rotation and metrics. A token/Host guard is
+  deferred to the same later release as the checker kill switch.
 
 ### Deferred to v2b
 

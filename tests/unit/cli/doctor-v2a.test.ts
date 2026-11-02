@@ -72,4 +72,22 @@ describe("SL-12 doctor expansion (AC-V2a-08)", () => {
     expect(line).toContain("[DEGRADED]");
     rmSync(dir, { recursive: true, force: true });
   });
+
+  it("结构非法但 JSON 可解析（entries=null）→ [DEGRADED]（与运行期 validateRegistryFile 同判）", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "llmveto-doctor-regshape-"));
+    writeFileSync(join(dir, "canary-registry.json"), JSON.stringify({
+      version: 1, rotation_count: 0, last_rotated_at: null, entries: null,
+    }), "utf8");
+    const r = await runCli("doctor", {
+      stateDir: dir,
+      env: {
+        LLMVETO_OPENCODE_CONFIG: join(dir, "absent-opencode.json"),
+        LLMVETO_DELPHI_CONFIG: join(dir, "absent-delphi.json"),
+      },
+    });
+    const line = r.stdout.split("\n").find((l) => l.includes("doctor.canary-registry"))!;
+    expect(line).toContain("[DEGRADED]");
+    expect(line).toContain("malformed_structure");
+    rmSync(dir, { recursive: true, force: true });
+  });
 });

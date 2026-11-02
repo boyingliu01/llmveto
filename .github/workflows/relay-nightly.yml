@@ -44,6 +44,7 @@ jobs:
         env:
           SHARD_PATTERN: ${{ matrix.pattern }}
           OPPONENT_FILTER: ${{ github.event.inputs.opponent_filter }}
+          RELAY_MATRIX: "1"
         run: |
           pattern="${OPPONENT_FILTER:-$SHARD_PATTERN}"
           echo "Shard ${{ matrix.shard }} pattern: $pattern"
@@ -54,6 +55,7 @@ jobs:
         env:
           SHARD_PATTERN: ${{ matrix.pattern }}
           OPPONENT_FILTER: ${{ github.event.inputs.opponent_filter }}
+          RELAY_MATRIX: "1"
         run: |
           pattern="${OPPONENT_FILTER:-$SHARD_PATTERN}"
           echo "Retrying serial execution (port contention fallback)..."

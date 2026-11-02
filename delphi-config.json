@@ -42,7 +42,7 @@
         "architecture": {
           "provider": "example-provider",
           "model": "g-deepseek-v4-flash",
-          "expected_echo": "deepseek-v4-flash",
+          "expected_echo": "deepseek-v4.1-flash",
           "persona_file": "C:/Users/admin/.qoder/agents/delphi-architecture.md"
         },
         "technical": {

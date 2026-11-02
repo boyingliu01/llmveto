@@ -12,6 +12,7 @@ import { opencodeAdapter } from "../adapters/opencode.ts";
 import type { Adapter, Env } from "../adapters/index.ts";
 import { EvidenceWriter } from "../evidence/writer.ts";
 import { startGateway } from "../gateway/server.ts";
+import { validateRegistryFile } from "../shared/registry-file-schema.ts";
 
 /**
  * @test REQ-VETO-008
@@ -225,9 +226,12 @@ function checkCanaryRegistry(ctx: CliCtx): DoctorCheck {
     return { id: "doctor.canary-registry", ok: true, message: "registry not configured (no file)" };
   }
   try {
-    const raw = JSON.parse(readFileSync(registryPath, "utf8")) as Record<string, unknown>;
-    const ok = typeof raw["version"] === "number" && typeof raw["entries"] === "object";
-    return { id: "doctor.canary-registry", ok, message: ok ? "registry ok" : "[DEGRADED] registry malformed" };
+    const raw = JSON.parse(readFileSync(registryPath, "utf8")) as unknown;
+    const checked = validateRegistryFile(raw);
+    if (typeof checked === "string") {
+      return { id: "doctor.canary-registry", ok: false, message: `[DEGRADED] registry ${checked}` };
+    }
+    return { id: "doctor.canary-registry", ok: true, message: "registry ok" };
   } catch {
     return { id: "doctor.canary-registry", ok: false, message: "[DEGRADED] registry unreadable" };
   }

@@ -323,6 +323,7 @@ export async function handleChatCompletions(
         ...(reqDecision.degraded ? (["degraded_observational"] as const) : []),
       ]),
       findings: reqFindings,
+      // 请求侧 block 早退：canary 编排尚未执行 ⇒ 无 gateway reason 可携带（恒空）。
       reason: reasonOf(reqFindings),
       forwardedBody: req.body, canaryMeta: null, // block 前置：编排不进入，链上 sha = 客户端原体
       deliveredChunks: 0,
@@ -464,15 +465,19 @@ function handleStreaming(p: {
   function scanMergedArgs(): boolean {
     // AC-V2a-14：归并器在 256 KiB 处封顶；越顶本身就是安全类判定（window_overflow），
     // 不再重扫已封顶文本，也不得让上游继续喂大（内存/CPU 有界）。
+    // 本函数运行在 sse() 惰性 generator 内：任何 throw 都会冒泡出 for-await，headers
+    // 已发出时无法再收敛为 HTTP 错误，且未处理的 rejection 可能杀 daemon（fail-open）。
+    // 因此注册表缺项也不得抛错——合成 scanner_error 条目并照常 block。
     if (argsMerger.overflowed) {
       if (!mergedOverflowReported) {
         mergedOverflowReported = true;
         const spec = REGISTRY.find((c) => c.id === "tool-call-shape");
-        if (spec === undefined) throw new Error("D-10: tool-call-shape spec missing (registration defect)");
-        allFindings.push(...flattenFindings([{
-          checkerId: spec.id, safetyClass: spec.safetyClass, threat: spec.threat,
-          result: { verdict: "error", evidence: [], reason: "window_overflow" },
-        }]));
+        allFindings.push({
+          checker: "tool-call-shape",
+          threat: spec?.threat ?? CHECKER_THREAT_BY_ID["tool-call-shape"] ?? "T2a",
+          verdict: "error",
+          rule_id: "window_overflow",
+        });
       }
       return true;
     }

@@ -48,7 +48,15 @@ describe("CI workflows（REQ-V2a-09 / AC-V2a-10）", () => {
     expect(wf).toContain("tests/integration/false-positive-matrix.test.ts");
     // 13 对手 relay 只在 nightly 跑，PR 档不得重复消费（§8.4 档位）
     expect(wf).not.toContain("tests/integration/relay-detection.test.ts");
+    expect(wf).not.toContain("RELAY_MATRIX");
     expect(wf).not.toContain("|| true");
+  });
+
+  it("relay 套件默认跳过（PR 全量步），仅 nightly 置 RELAY_MATRIX=1 执行", () => {
+    const relay = read("tests/integration/relay-detection.test.ts");
+    expect(relay).toContain('process.env.RELAY_MATRIX === "1"');
+    expect(relay).toContain("describe.skipIf(!RELAY_MATRIX)");
+    expect(read(NIGHTLY_WF).match(/RELAY_MATRIX: "1"/g) ?? []).toHaveLength(2);
   });
 
   it("relay-nightly.yml：安装面为 bun.lock，运行面为真实 relay 套件", () => {

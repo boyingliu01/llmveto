@@ -128,6 +128,12 @@ suite("M3 daemon lifecycle (spawn real CLI)", () => {
     const url = readFileSync(join(dir, "gateway.url"), "utf8").trim();
     expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
 
+    // 1b) D-02 接线：daemon 必须持有 stateDir/canary-registry.json；否则 rotate 恒 503、注入永不生效。
+    const rotate = await fetch(`${url}/_llmveto/canary/rotate`, { method: "POST" });
+    expect(rotate.status).toBe(200);
+    expect(await rotate.json()).toMatchObject({ rotation_count: 1 });
+    expect(existsSync(join(dir, "canary-registry.json"))).toBe(true);
+
     // 2) status：真实探活（pid 存活 → running，并回显 url）
     const running = cli(["status"], { LLMVETO_STATE_DIR: dir });
     expect(running.status).toBe(0);
@@ -135,7 +141,7 @@ suite("M3 daemon lifecycle (spawn real CLI)", () => {
     expect(running.stdout).toContain(`url=${url}`);
 
     // 3) 跨进程：从测试进程真实请求后台 daemon，经 catch-all 路由转发到 mock 上游 → 200 + evidence 落盘
-    const res = await fetch(`${url}/bench/default/v1/chat/completions`, {
+    const res = await fetch(`${url}/opencode/mock/v1/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "daemon probe" }] }),
@@ -143,6 +149,8 @@ suite("M3 daemon lifecycle (spawn real CLI)", () => {
     expect(res.status).toBe(200);
     await res.text();
     expect(mock.requests.length).toBe(1); // 请求真的到达了上游（经独立 daemon 进程转发）
+    // D-02 + §4.3：受管路径在 fetch 前注入会话 canary（rotate 后 registry 已建，首请求分配并落盘）。
+    expect(mock.requests[0]!.body).toContain("llmveto-canary-");
     // evidence 落盘在响应之后（server.ts 先 res.end 后 writeEvidence）→ 轮询等待"最终一致"，不断言写序
     const evidenceFile = join(dir, "evidence.jsonl");
     expect(await waitUntil(() => existsSync(evidenceFile))).toBe(true);

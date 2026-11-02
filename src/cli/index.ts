@@ -146,7 +146,9 @@ async function cmdStartDaemon(ctx: CliCtx, env: Readonly<Record<string, string |
   }
   const modelsSnapshotPath = env.LLMVETO_MODELS_SNAPSHOT;
   const port = env.LLMVETO_PORT !== undefined ? Number(env.LLMVETO_PORT) : 8787;
-  const gw = await startGateway({ port, config: { upstreamBaseUrl, evidenceWriter: writer, ...(upstreams ? { upstreams } : {}), ...(modelsSnapshotPath ? { modelsSnapshotPath } : {}) } });
+  // D-02：registry 与 gateway.pid 同级；缺省此路径 = canary 域整体关闭（rotate 503 / 不注入）。
+  const canaryRegistryPath = join(dir, "canary-registry.json");
+  const gw = await startGateway({ port, config: { upstreamBaseUrl, evidenceWriter: writer, canaryRegistryPath, ...(upstreams ? { upstreams } : {}), ...(modelsSnapshotPath ? { modelsSnapshotPath } : {}) } });
   writeFileSync(pidFile(ctx), String(process.pid), "utf8");
   writeFileSync(urlFile(ctx), gw.url, "utf8");
   // 优雅收尾：SIGTERM/SIGINT → 关 server + 清理 pid/url（Windows 下 stop 直接删文件，不依赖此路）。

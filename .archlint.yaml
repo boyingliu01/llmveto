@@ -17,3 +17,7 @@ ignore:
 - '**/__fixtures__/**'
 - '**/*.mock.ts'
 - '**/*.mock.js'
+# bench/ 是基准探针与 case 表，唯一消费者是 *.test.ts（被上面规则忽略 → dead symbol 全是误报）
+- 'bench/**'
+# var/*.ts 是刻意 git 跟踪的 G-CANARY 录制工具（.gitignore !var/*.ts），独立脚本、不参与网关分层架构
+- 'var/**'

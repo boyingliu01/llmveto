@@ -128,34 +128,14 @@ async function dispatch(
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
   const route = parseRoute(req.url ?? "/");
 
-  // P1 缓解：GET /opencode/models → 本地模型目录快照（不转发、不留面）
-  if (cfg.modelsSnapshotPath && route.client === "opencode" && route.providerId === null && route.rest === "/models" && req.method === "GET") {
-    try {
-      const snapshot = readFileSync(cfg.modelsSnapshotPath, "utf8");
-      res.statusCode = 200;
-      res.setHeader("content-type", "application/json");
-      res.end(snapshot);
-    } catch {
-      res.statusCode = 502; // 快照丢失 = models URL 锁死失效，fail-closed 不回落真源
-      res.end(JSON.stringify({ error: { code: "llmveto:models-snapshot-missing" } }));
-    }
-    return;
-  }
+  if (maybeServeModelsSnapshot(route, req.method, res, cfg)) return;
 
   const chunks: Buffer[] = [];
   for await (const c of req) chunks.push(c as Buffer);
   const bodyBuf = Buffer.concat(chunks);
   const bodyText = bodyBuf.toString("utf8");
   const headers = normalizeHeaders(req.headers);
-  // 身份识别：路径段优先，x-llmveto-* 头作 fallback（兼容 legacy 直连 /v1 与测试 harness）。
-  // 信任边界：网关硬绑 127.0.0.1，本机客户端视为同一信任域，故身份头不做认证——它们只影响
-  // evidence 归属与（catch-all 路径下的）路由条目选择，不改变转发目标；唯一能改变目标的是
-  // x-llmveto-upstream-url，由 allowUpstreamHeaderOverride 门控（默认关闭，生产不开启）。
-  const client = route.client ?? headers["x-llmveto-client"] ?? "unknown";
-  const providerId = route.providerId ?? headers["x-llmveto-provider"] ?? cfg.providerId ?? "unknown";
-  const requestId = headers["x-llmveto-request-id"] ?? randomUUID();
-  const sessionId = headers["x-llmveto-session-id"] ?? "s-" + requestId.slice(0, 8);
-  const turnId = headers["x-llmveto-turn-id"] ?? "t-" + requestId.slice(0, 8);
+  const id = resolveIdentity(route, headers, cfg);
 
   const resolution = resolveUpstream(route, headers, cfg);
   // 查询串随路径一并转发（如受管 Delphi endpoint 的 `?stream=1`、Azure 风格 api-version）
@@ -164,16 +144,7 @@ async function dispatch(
 
   // fail-closed：无任何路由可解析 → 502，不转发，evidence 记录 router finding
   if (!upstreamUrl) {
-    const body = JSON.stringify({ error: { code: "llmveto:no-upstream-route" } });
-    res.statusCode = 502;
-    res.setHeader("content-type", "application/json");
-    res.end(body);
-    const routerFinding: EvidenceFinding = {
-      checker: "router", threat: "T0", verdict: "error", severity: "high", rule_id: "no-upstream-route",
-    };
-    writeEvidence(cfg, { sessionId, turnId, requestId, client, providerId, endpointHost,
-      bodyText, bodyBuf, respText: body, stream: false, findings: [routerFinding],
-      actionTaken: "blocked_before_forward", deliveredChunks: 0, partial: false, t0 });
+    respondNoUpstreamRoute(res, cfg, id, { bodyText, bodyBuf, endpointHost, t0 });
     return;
   }
 
@@ -191,33 +162,113 @@ async function dispatch(
     body: bodyText,
     headers,
     upstreamUrl,
-    requestId,
-    sessionId,
-    turnId,
-    client,
-    providerId,
+    requestId: id.requestId,
+    sessionId: id.sessionId,
+    turnId: id.turnId,
+    client: id.client,
+    providerId: id.providerId,
     endpointHost,
     transport,
   });
 
-  const respText = outcome.body;
-  res.statusCode = outcome.status;
-  // content-type 以实际响应形态为准：stream 判定为真但无 sse（如上游非 2xx 走错误分支）时
-  // 交付的是 JSON 体，若仍标 text/event-stream 会令流式客户端解析失败（R2 评审 A-N-1）。
-  res.setHeader("content-type", outcome.sse ? "text/event-stream" : "application/json");
-  if (outcome.sse) {
-    for await (const chunk of outcome.sse) {
-      res.write(chunk);
-      fwd.chunks++; // 兜底路径据此如实记 delivered_chunks（PWR1-B-M3）
-    }
-    res.end();
-  } else {
-    res.end(respText);
-  }
-  writeEvidence(cfg, { sessionId, turnId, requestId, client, providerId, endpointHost,
-    bodyText, bodyBuf, respText, stream, findings: outcome.findings,
+  await deliverOutcome(res, outcome, fwd);
+  writeEvidence(cfg, { sessionId: id.sessionId, turnId: id.turnId, requestId: id.requestId,
+    client: id.client, providerId: id.providerId, endpointHost,
+    bodyText, bodyBuf, respText: outcome.body, stream, findings: outcome.findings,
     actionTaken: outcome.actionTaken, deliveredChunks: outcome.deliveredChunks,
     partial: outcome.actionTaken === "terminated_after_delivery", t0 });
+}
+
+/** P1 缓解：GET /opencode/models → 本地模型目录快照（不转发、不留面）。返回 true = 已响应。 */
+function maybeServeModelsSnapshot(
+  route: RouteInfo,
+  method: string | undefined,
+  res: ServerResponse,
+  cfg: GatewayConfig,
+): boolean {
+  if (method !== "GET" || route.client !== "opencode" || route.providerId !== null || route.rest !== "/models") return false;
+  if (!cfg.modelsSnapshotPath) return false;
+  try {
+    const snapshot = readFileSync(cfg.modelsSnapshotPath, "utf8");
+    res.statusCode = 200;
+    res.setHeader("content-type", "application/json");
+    res.end(snapshot);
+  } catch {
+    res.statusCode = 502; // 快照丢失 = models URL 锁死失效，fail-closed 不回落真源
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ error: { code: "llmveto:models-snapshot-missing" } }));
+  }
+  return true;
+}
+
+/** 请求身份五元组：路径段优先，x-llmveto-* 头 fallback（兼容 legacy 直连 /v1 与测试 harness）。
+ *  信任边界：网关硬绑 127.0.0.1，本机客户端视为同一信任域，故身份头不做认证——它们只影响
+ *  evidence 归属与（catch-all 路径下的）路由条目选择，不改变转发目标；唯一能改变目标的是
+ *  x-llmveto-upstream-url，由 allowUpstreamHeaderOverride 门控（默认关闭，生产不开启）。 */
+interface RequestIdentity {
+  readonly client: string;
+  readonly providerId: string;
+  readonly requestId: string;
+  readonly sessionId: string;
+  readonly turnId: string;
+}
+
+/** 取第一个非 null/undefined 的候选值；命中即返回，保持 `a ?? b ?? c` 的短路语义。 */
+function firstDefined(...candidates: readonly (string | undefined | null)[]): string | undefined {
+  for (const c of candidates) if (c !== undefined && c !== null) return c;
+  return undefined;
+}
+
+function resolveIdentity(route: RouteInfo, headers: Readonly<Record<string, string>>, cfg: GatewayConfig): RequestIdentity {
+  const requestId = headers["x-llmveto-request-id"] ?? randomUUID();
+  return {
+    client: firstDefined(route.client, headers["x-llmveto-client"]) ?? "unknown",
+    providerId: firstDefined(route.providerId, headers["x-llmveto-provider"], cfg.providerId) ?? "unknown",
+    requestId,
+    sessionId: firstDefined(headers["x-llmveto-session-id"]) ?? "s-" + requestId.slice(0, 8),
+    turnId: firstDefined(headers["x-llmveto-turn-id"]) ?? "t-" + requestId.slice(0, 8),
+  };
+}
+
+/** fail-closed：无任何路由可解析 → 502，不转发，evidence 记录 router finding。 */
+function respondNoUpstreamRoute(
+  res: ServerResponse,
+  cfg: GatewayConfig,
+  id: RequestIdentity,
+  p: { readonly bodyText: string; readonly bodyBuf: Buffer; readonly endpointHost: string; readonly t0: number },
+): void {
+  const body = JSON.stringify({ error: { code: "llmveto:no-upstream-route" } });
+  res.statusCode = 502;
+  res.setHeader("content-type", "application/json");
+  res.end(body);
+  const routerFinding: EvidenceFinding = {
+    checker: "router", threat: "T0", verdict: "error", severity: "high", rule_id: "no-upstream-route",
+  };
+  writeEvidence(cfg, { sessionId: id.sessionId, turnId: id.turnId, requestId: id.requestId,
+    client: id.client, providerId: id.providerId, endpointHost: p.endpointHost,
+    bodyText: p.bodyText, bodyBuf: p.bodyBuf, respText: body, stream: false, findings: [routerFinding],
+    actionTaken: "blocked_before_forward", deliveredChunks: 0, partial: false, t0: p.t0 });
+}
+
+/** 响应交付：content-type 以实际响应形态为准（stream 判定为真但无 sse——如上游非 2xx 走错误
+ *  分支——交付的是 JSON 体，若仍标 text/event-stream 会令流式客户端解析失败，R2 评审 A-N-1）；
+ *  SSE 逐帧写并计数进 fwd，兜底路径据此如实记 delivered_chunks（PWR1-B-M3）。 */
+async function deliverOutcome(
+  res: ServerResponse,
+  outcome: Awaited<ReturnType<typeof handleChatCompletions>>,
+  fwd: DeliveryState,
+): Promise<void> {
+  res.statusCode = outcome.status;
+  res.setHeader("content-type", outcome.sse ? "text/event-stream" : "application/json");
+  if (!outcome.sse) {
+    res.end(outcome.body);
+    return;
+  }
+  for await (const chunk of outcome.sse) {
+    res.write(chunk);
+    fwd.chunks++;
+  }
+  res.end();
 }
 
 interface EvidenceWriteParams {

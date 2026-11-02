@@ -1,5 +1,5 @@
 {
-  "$comment": "Delphi Review configuration for llmveto project. Uses example-provider provider with three local models for cross-review consensus.",
+  "$comment": "Delphi Review configuration for llmveto project. Supports example-provider and tokensaver providers with distinct models for cross-review consensus.",
   "active_profile": "example-provider-local",
   "profiles": {
     "example-provider-local": {
@@ -26,6 +26,34 @@
           "provider": "example-provider",
           "model": "local-qwen3.8-27b",
           "expected_echo": "Qwen3_8-27B",
+          "persona_file": "C:/Users/admin/.qoder/agents/delphi-feasibility.md"
+        }
+      }
+    },
+    "tokensaver": {
+      "providers": {
+        "tokensaver": {
+          "base_url": "https://www.tokensaver.net/v1",
+          "api_key_env": "TOKEN_SAVER_API_KEY"
+        }
+      },
+      "experts": {
+        "architecture": {
+          "provider": "tokensaver",
+          "model": "gpt-6.1-sol",
+          "expected_echo": "gpt-6.1-sol",
+          "persona_file": "C:/Users/admin/.qoder/agents/delphi-architecture.md"
+        },
+        "technical": {
+          "provider": "tokensaver",
+          "model": "grok-4.7",
+          "expected_echo": "grok-4.7",
+          "persona_file": "C:/Users/admin/.qoder/agents/delphi-technical.md"
+        },
+        "feasibility": {
+          "provider": "tokensaver",
+          "model": "gpt-6-sol",
+          "expected_echo": "gpt-6-sol",
           "persona_file": "C:/Users/admin/.qoder/agents/delphi-feasibility.md"
         }
       }

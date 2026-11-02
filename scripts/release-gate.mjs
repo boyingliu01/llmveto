@@ -52,11 +52,25 @@ function tail(s, n = 30) {
 
 function run(cmd, args, opts = {}) {
   const { timeout = 300_000, ...rest } = opts;
-  const finalArgs = IS_WIN ? args.map(shellQuote) : args;
-  const r = spawnSync(cmd, finalArgs, {
+  let file = cmd;
+  let finalArgs = args;
+  if (IS_WIN) {
+    // 无 shell 直调（semgrep spawn-shell-true / detect-child-process + Node DEP0190）：
+    // .exe（bun/tar）由 CreateProcess 走 PATH 解析；.cmd shim（npm/llmveto）在 Node ≥18.20
+    // 无 shell 直调会 EINVAL，改为 node 直调其等价入口 JS——npm → 安装目录自带 npm-cli.js，
+    // llmveto → 全局安装的 bin 入口（bin.llmveto 指向的同一文件，等价于 .cmd shim 的转发目标）。
+    if (cmd === "npm") {
+      file = process.execPath;
+      finalArgs = [npmCliJs(), ...args];
+    } else if (cmd === "llmveto") {
+      file = process.execPath;
+      finalArgs = [llmvetoEntry(), ...args];
+    }
+  }
+  // cmd 仅为本脚本内的固定调用名（bun/npm/llmveto/tar，见 steps 与 SMOKE_ROWS），无外部输入汇入。
+  const r = spawnSync(file, finalArgs, { // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process
     encoding: "utf8",
     cwd: ROOT,
-    shell: IS_WIN,
     timeout,
     windowsHide: true,
     ...rest,
@@ -71,8 +85,26 @@ function run(cmd, args, opts = {}) {
   };
 }
 
-function shellQuote(a) {
-  return /^[\w./@:=\\+\-~]+$/.test(a) ? a : `"${a}"`;
+function npmCliJs() {
+  const p = join(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
+  if (!existsSync(p)) fail(`release-gate: npm-cli.js not found at ${p} —— node 安装布局非标准，无法无 shell 调用 npm`);
+  return p;
+}
+
+let llmvetoEntryCache = null;
+function llmvetoEntry() {
+  if (llmvetoEntryCache) return llmvetoEntryCache;
+  const r = spawnSync(process.execPath, [npmCliJs(), "prefix", "-g"], {
+    encoding: "utf8",
+    cwd: ROOT,
+    timeout: 60_000,
+    windowsHide: true,
+  });
+  if (r.status !== 0) fail("release-gate: `npm prefix -g` 失败，无法定位全局 llmveto 入口", [tail(r.stderr)]);
+  const p = join(String(r.stdout).trim(), "node_modules", "llmveto", "dist", "cli", "index.js");
+  if (!existsSync(p)) fail(`release-gate: global llmveto entry not found at ${p} —— install-tarball 步是否成功？`);
+  llmvetoEntryCache = p;
+  return p;
 }
 
 function readPkg() {

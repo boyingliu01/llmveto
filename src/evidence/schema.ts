@@ -7,7 +7,6 @@ import type { ActionTaken, BodyCapture } from "../shared/types.ts";
  */
 
 export const EVIDENCE_VERSION = 1 as const;
-export const CANARY_V1: null = null; // AC-VETO-007-05：v1 canary 恒 null
 
 export interface EvidenceFinding {
   readonly checker: string;
@@ -88,6 +87,25 @@ export const REQUIRED_FIELDS: readonly (keyof EvidenceRecord)[] = Object.freeze(
 
 const HEX64 = /^[0-9a-f]{64}$/;
 
+/**
+ * 单字段校验表：顺序即报错顺序（v1 冻结）；新增受检字段 = 追加一行，不再增长
+ * validateEvidence 的圈复杂度（lizard 曾报 CCN 22）。
+ */
+const FIELD_VALIDATORS: readonly ((
+  r: Record<string, unknown>,
+  push: (m: string) => void,
+) => void)[] = [
+  (r, push) => { if (r.evidence_version !== 1) push(`evidence_version must be 1, got ${String(r.evidence_version)}`); },
+  (r, push) => { if (typeof r.seq !== "number" || !Number.isInteger(r.seq) || r.seq < 0) push("seq: non-negative integer required"); },
+  (r, push) => { if (typeof r.ts !== "string" || Number.isNaN(Date.parse(r.ts))) push("ts: ISO-8601 string required"); },
+  ...(["prev_hash", "record_hash", "request_body_sha256", "response_body_sha256"] as const).map((f) =>
+    (r: Record<string, unknown>, push: (m: string) => void) => {
+      if (typeof r[f] === "string" && !HEX64.test(r[f] as string)) push(`${f}: hex64 required`);
+    },
+  ),
+  (r, push) => { if ("canary" in r && r.canary !== null) push("canary must be null in v1"); },
+];
+
 /** 运行时 schema 断言：verify 消费入口 + writer 落盘前调用。 */
 export function validateEvidence(rec: unknown): { ok: true } | { ok: false; errors: readonly string[] } {
   const errors: string[] = [];
@@ -98,13 +116,6 @@ export function validateEvidence(rec: unknown): { ok: true } | { ok: false; erro
   for (const f of REQUIRED_FIELDS) {
     if (!(f in r)) errors.push(`missing: ${f}`);
   }
-  if (r.evidence_version !== 1) errors.push(`evidence_version must be 1, got ${String(r.evidence_version)}`);
-  if (typeof r.seq !== "number" || !Number.isInteger(r.seq) || r.seq < 0) errors.push("seq: non-negative integer required");
-  if (typeof r.ts !== "string" || Number.isNaN(Date.parse(r.ts))) errors.push("ts: ISO-8601 string required");
-  if (typeof r.prev_hash === "string" && !HEX64.test(r.prev_hash)) errors.push("prev_hash: hex64 required");
-  if (typeof r.record_hash === "string" && !HEX64.test(r.record_hash)) errors.push("record_hash: hex64 required");
-  if (typeof r.request_body_sha256 === "string" && !HEX64.test(r.request_body_sha256)) errors.push("request_body_sha256: hex64 required");
-  if (typeof r.response_body_sha256 === "string" && !HEX64.test(r.response_body_sha256)) errors.push("response_body_sha256: hex64 required");
-  if ("canary" in r && r.canary !== null) errors.push("canary must be null in v1");
+  for (const check of FIELD_VALIDATORS) check(r, (m) => errors.push(m));
   return errors.length === 0 ? { ok: true } : { ok: false, errors };
 }

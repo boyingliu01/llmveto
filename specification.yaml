@@ -22,23 +22,23 @@ specification:
   # ─────────────────────────────────────────────────────────────────────────
   requirements:
 
-    - id: "REQ-REL-07"
+    - id: REQ-REL-07
       description: "仓库公开化前置检查（阻断性，时序第一）：gitleaks 全历史+工作区、git ls-files 公开面核查、内部端点 filter-repo 全量改写（DD-11，三段式）、提交信息扫描"
       priority: "MUST"
       acceptance_criteria:
-        - id: "AC-REL-07a"
+        - id: AC-REL-07a
           given: "本迭代全部切片已 merge main，用户确认执行前置检查"
           when: "gitleaks git（全历史）+ gitleaks dir .（工作区）本地运行（工具不入仓）"
           then: "高置信发现 = 0；扫描输出留档；工具一次性使用与 docs/licenses.md 不捆绑决议不冲突"
-        - id: "AC-REL-07b"
+        - id: AC-REL-07b
           given: "07a 通过"
           when: "按核查清单核对 git ls-files"
           then: "无 .worktrees/、无 evidence 产物、无 .delphi-config.json 本地配置、无 .sprint-history/；var/ 仅 canary-split.ts / capture-proxy.ts / mock-relay.ts 三件；.sprint-state/ 声明保留为公开审计面（须先过 07c+07a）；.gitignore 完备性清单留档"
-        - id: "AC-REL-07c"
+        - id: AC-REL-07c
           given: "bundle 备份（git bundle create --all）与 mirror clone 预演改写报告已完成人工审查"
           when: "git filter-repo --replace-text 将 internal-gateway.invalid/redacted 全历史 blob 改写为 https://internal-gateway.invalid/redacted 并 force-push"
           then: "改写前全历史 grep 前置确认替换集合=已识别 4 文件且无未知文件；改写后 07a/07b/07d 三重复扫零残留（过闸判据非可选）；SHA 映射表（pre/post）留档；全量测试门复跑全绿留档；评审不重做（内容零变化）；PR/issue 旧 SHA 悬链登记接受"
-        - id: "AC-REL-07d"
+        - id: AC-REL-07d
           given: "07c 改写完成"
           when: "全历史 git log 扫描 commit 与 tag message（内部人名/邮箱/域名/工单号口径）"
           then: "零处置项，或命中项经 --replace-message 追加改写轮后复扫归零"
@@ -47,19 +47,19 @@ specification:
         integration: false
         e2e: false
 
-    - id: "REQ-REL-01"
+    - id: REQ-REL-01
       description: "npm 发布转正（ADR-0001 承诺兑现）：private 移除 + 元数据补齐 + 发布前置构建门链（scripts/release-gate.mjs 单一真源）+ release.yml + npm 凭据安全"
       priority: "MUST"
       acceptance_criteria:
-        - id: "AC-REL-01a"
+        - id: AC-REL-01a
           given: "release-gate.mjs 全链（clean→install→build→test→typecheck→typecheck:dist→pack→install-tarball→smoke→publish-dry-run）执行"
           when: "npm i -g tarball 后在受控 PATH（剥离含 bun 目录、断言 bun 不可达、node --version ≥18）下运行冻结判据表"
           then: "8 行判据全过：无参调用 exit 2 且 stderr 含 'valid: start, stop, status, doctor, verify'；启动前 status exit 1 含 'not running'；start exit 0 含 'gateway started in background (pid='；status exit 0 含 'running pid=' 与 'url=http://127.0.0.1:'；verify exit 0 含 'ok: ' 与 'records verified'；doctor exit 0 含 '[PASS] doctor.evidence-chain: chain ok (' 与 '[PASS] doctor.port-reachable'（前置=预写 LLMVETO_OPENCODE_CONFIG/LLMVETO_DELPHI_CONFIG 受管配置副本，最小字段集随 S2 冻结留档）；stop exit 0 含 'stop: signal sent'；teardown 复核 status exit 1 含 'not running'；try/finally 保证失败路径无全局包与 daemon 残留"
-        - id: "AC-REL-01b"
+        - id: AC-REL-01b
           given: "tag push 匹配 ^v[0-9]+\\.[0-9]+\\.[0-9]+$ 或 workflow_dispatch 触发 release.yml"
           when: "工作流执行（checkout→setup-node 20→setup-bun→build→test→npm run release:gate 显式门链步→publish（npm view 幂等前置）→gh release create）"
           then: "任一步红则不 publish 不 Release；同 tag 三情形语义成立（同 SHA 重 push=no-op 不触发；dispatch=补建 Release 入口且 publish 被幂等前置跳过；EPUBLISHCONFLICT 兜底）；npm view 非'已存在'类失败按 fail-closed 阻断 publish 步；publish 成功后真装烟测失败决策树（安全缺陷 deprecate+unpublish+公告 / 非安全 deprecate+0.2.1）入 runbook；workflow 文件无内部端点/人名/凭据字面量"
-        - id: "AC-REL-01c"
+        - id: AC-REL-01c
           given: "发布凭据配置环节（用户侧，S4 runbook 指引）"
           when: "按 runbook 执行"
           then: "granular access token 最小权限（仅本包 publish scope）；发布账号 2FA 启用确认；NPM_TOKEN 入 GitHub secret 且本地不持有（关闭 --ignore-scripts 本地直 publish 绕过面）；token 轮换口径成文"
@@ -68,11 +68,11 @@ specification:
         integration: true
         e2e: false
 
-    - id: "REQ-REL-02"
+    - id: REQ-REL-02
       description: "GitHub Release 通道：合规 tag 自动产出 Release，正文含该版本要点（取 CHANGELOG 对应节）"
       priority: "MUST"
       acceptance_criteria:
-        - id: "AC-REL-02a"
+        - id: AC-REL-02a
           given: "v0.2.0 tag push 且 release.yml 门链全绿"
           when: "gh release create 执行"
           then: "Release 存在且正文含 CHANGELOG [0.2.0] 节要点；publish 成功而 Release 步失败时可 workflow_dispatch 补建"
@@ -81,15 +81,15 @@ specification:
         integration: false
         e2e: false
 
-    - id: "REQ-REL-03"
+    - id: REQ-REL-03
       description: "英文 README 全量双语（DR-004/DR-007）：README.md=English 全量 + README.zh-CN.md 中文全量镜像 + CONTEXT.md 术语对照表冻结 + 轻量机器核对"
       priority: "MUST"
       acceptance_criteria:
-        - id: "AC-REL-03a"
+        - id: AC-REL-03a
           given: "中文版章节清单冻结（定位段/能力边界表/快速开始/路径路由约定/环境变量表/CLI 表/开发环境/分发与 runtime 承诺/ADR 索引）"
           when: "英文 README 逐章翻译 + check-readme-parity.mjs 运行"
           then: "章节标题序列对等（脚本核验通过）+ 能力表/环境变量表/CLI 表行级人工核对留档；README.zh-CN.md 迁入自检=迁移前后章节标题序列 diff=0；两文件首行互链"
-        - id: "AC-REL-03b"
+        - id: AC-REL-03b
           given: "CONTEXT.md Language 节受控词全集（26 条，含 evidence）"
           when: "新增 Glossary（受控词英文定译）节"
           then: "覆盖全部受控词且含 Avoid 英文列；vetting 行附 avoid 语义注释（指称限制非一般禁用）；evidence/action_taken 保留原名不译"
@@ -98,11 +98,11 @@ specification:
         integration: false
         e2e: false
 
-    - id: "REQ-REL-04"
+    - id: REQ-REL-04
       description: "开源卫生件：SECURITY.md + CONTRIBUTING.md（英文，保守承诺口径 DR-009，核对基准=仓库实况）"
       priority: "MUST"
       acceptance_criteria:
-        - id: "AC-REL-04a"
+        - id: AC-REL-04a
           given: "核对基准 = package.json scripts 实况 13 条 + pre-commit 12 门名称 + Gate MW（证据绑 HEAD）+ #367 对齐报告门"
           when: "两文件成文并逐条核对"
           then: "文中出现的每个门名/命令与仓库实况一致（核对记录留档）；SECURITY.md 含支持版本表（0.2.x）、GitHub 私密漏洞报告渠道、best-effort 无 SLA、不承诺功能请求；CONTRIBUTING.md 含 PR 须过全量测试门+覆盖率门（80%）+12 道 pre-commit 门+Gate MW 走查链、开发环境 Bun ≥1.1 + Node ≥18、parity 脚本触发约定"
@@ -111,11 +111,11 @@ specification:
         integration: false
         e2e: false
 
-    - id: "REQ-REL-05"
+    - id: REQ-REL-05
       description: "上游容错边界登记（零代码）：fail-closed 已缓解 + 无重试/备用上游边界明示，双语 README + 威胁模型 T0 行核对"
       priority: "MUST"
       acceptance_criteria:
-        - id: "AC-REL-05a"
+        - id: AC-REL-05a
           given: "S5 README 双语结构冻结后（S5→S7 串行）"
           when: "威胁模型 docs/issues/1-req-threat-model.md T0 行 + README 分发承诺段逐点核对"
           then: "双语核对清单逐点打勾留档；英文定译含 'No retry or failover upstream'边界句；git diff <base> -- src/ 为空"
@@ -124,11 +124,11 @@ specification:
         integration: false
         e2e: false
 
-    - id: "REQ-REL-06"
+    - id: REQ-REL-06
       description: "版本与变更记录：0.2.0 直发（DR-008）+ CHANGELOG.md 设立（Keep a Changelog 轻量，英文）+ tag 严格一致"
       priority: "MUST"
       acceptance_criteria:
-        - id: "AC-REL-06a"
+        - id: AC-REL-06a
           given: "S2 元数据转正提交（package.json + VERSION 终版核对同批，Gate 0 守护）与 S8 CHANGELOG 收口完成"
           when: "核对 tag 规则与版本一致性"
           then: "tag 格式 vX.Y.Z 与 package.json version 严格一致（v + 同值）；版本若有改动则 package.json/VERSION/CHANGELOG 同一提交；Gate 0 绿；CHANGELOG [0.2.0] 节概括 v1 能力不逐 commit 罗列"

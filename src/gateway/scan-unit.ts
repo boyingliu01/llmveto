@@ -97,6 +97,26 @@ function pushArguments(args: unknown, out: string[]): void {
   else if (args && typeof args === "object") out.push(JSON.stringify(args));
 }
 
+/** content 投影：string 直取；多模态分段数组取 seg.text。请求侧 messages 与响应侧 choices 共用。 */
+function pushContentParts(content: unknown, out: string[]): void {
+  if (typeof content === "string") {
+    out.push(content);
+  } else if (Array.isArray(content)) {
+    for (const seg of content) {
+      if (seg && typeof seg === "object" && "text" in seg) out.push(String((seg as { text: unknown }).text));
+    }
+  }
+}
+
+/** 请求侧单条 message 投影：content + 工具调用载荷（助手历史里的 arguments 同为 T2a 载体）。 */
+function collectMessageParts(m: unknown, out: string[]): void {
+  if (!m || typeof m !== "object") return;
+  const mm = m as Record<string, unknown>;
+  if ("content" in mm) pushContentParts(mm.content, out);
+  if (Array.isArray(mm.tool_calls)) for (const tc of mm.tool_calls) collectToolCallParts(tc, out);
+  if (mm.function_call) collectToolCallParts(mm.function_call, out);
+}
+
 /** 抽 choices[*] 里 message/delta 的文本 + 工具调用载荷；同时回填结构性 meta。 */
 function collectChoiceParts(parsed: Record<string, unknown>, out: string[]): Record<string, unknown> {
   const meta: Record<string, unknown> = {};
@@ -109,15 +129,7 @@ function collectChoiceParts(parsed: Record<string, unknown>, out: string[]): Rec
       const box = c0[key];
       if (!box || typeof box !== "object") continue;
       const b = box as Record<string, unknown>;
-      // 文本内容（含多模态分段）
-      if (typeof b.content === "string") out.push(b.content);
-      else if (Array.isArray(b.content)) {
-        for (const seg of b.content) {
-          if (seg && typeof seg === "object" && "text" in seg) {
-            out.push(String((seg as { text: unknown }).text));
-          }
-        }
-      }
+      pushContentParts(b.content, out);
       // 工具调用载荷（T2a 载体）
       if (Array.isArray(b.tool_calls)) for (const tc of b.tool_calls) collectToolCallParts(tc, out);
       if (b.function_call) collectToolCallParts(b.function_call, out);
@@ -138,27 +150,11 @@ export function buildRequestScanUnit(
   const meta: Record<string, unknown> = {};
   if (parsed && typeof parsed === "object") {
     if (typeof parsed.model === "string") meta.model_requested = parsed.model;
-    // messages 展平为 text；跳过 auth 头（不在 body 中，但 extra_headers 也可能带 auth）
+    // messages 展平为 text；extra_headers 里的 auth 头跳过（AC-VETO-002-06）
     const parts: string[] = [];
     const msgs = parsed.messages;
     if (Array.isArray(msgs)) {
-      for (const m of msgs) {
-        if (m && typeof m === "object" && "content" in m) {
-          const c = (m as { content: unknown }).content;
-          if (typeof c === "string") parts.push(c);
-          else if (Array.isArray(c)) {
-            for (const seg of c) {
-              if (seg && typeof seg === "object" && "text" in seg) parts.push(String((seg as { text: unknown }).text));
-            }
-          }
-        }
-        // 助手历史里的工具调用：arguments 是请求侧同样存在的 T2a 载体
-        if (m && typeof m === "object") {
-          const mm = m as Record<string, unknown>;
-          if (Array.isArray(mm.tool_calls)) for (const tc of mm.tool_calls) collectToolCallParts(tc, parts);
-          if (mm.function_call) collectToolCallParts(mm.function_call, parts);
-        }
-      }
+      for (const m of msgs) collectMessageParts(m, parts);
     }
     if (typeof parsed.system === "string") parts.push(parsed.system);
     if (Array.isArray(parsed.tools)) parts.push(JSON.stringify(parsed.tools));

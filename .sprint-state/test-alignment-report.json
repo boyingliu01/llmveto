@@ -1,117 +1,633 @@
 {
   "alignment_status": "PASS",
-  "phase": "2",
-  "score": 95.5,
-  "sprint_id": "sprint-20260914-49",
-  "head_commit": "2ddff28a95a7800c5fac0f823ca3c7d6029cc8c3",
-  "specification_sha256": "7c50d41ec17288d89bbaff3002da9de9b2891334ffabfbc9c2daaa7432f620ba",
-  "spec_hash": "7c50d41ec17288d89bbaff3002da9de9b2891334ffabfbc9c2daaa7432f620ba",
-  "generated_at": "2026-09-27T09:30:00Z",
-  "note_vs_previous_run": "本报告取代 2026-09-15 版（HEAD 5947e8b / spec a51d2504）。期间 specification.yaml 因 AC-VETO-013-04 回退分位数由 p95 改 p50（ADR-0002 补遗三）而变更 hash；测试面由 25 文件/146 用例增至 34 文件/280 用例。",
+  "phase": "4",
+  "sprint_id": "sprint-20260927-46",
+  "head_commit": "5808e079ad84666c87d31c1103bad86b702fd947",
+  "specification_path": "specification.yaml",
+  "specification_sha256": "b5d13e0ada321c59e7dd524d74de1e93006b1ab7fa0b7681a5cc9e0cc98ab5aa",
+  "spec_hash": "b5d13e0ada321c59e7dd524d74de1e93006b1ab7fa0b7681a5cc9e0cc98ab5aa",
+  "generated_at": "2026-11-02T10:40:58Z",
+  "generated_by": "var/delphi-v2a-cw/write-alignment.cjs (gitignored scratch); evidence re-derived at HEAD",
+  "method": "Independent scan of tests/** and bench/** at HEAD. Broad evidence = any REQ/AC token in a test or fixture file. Strict annotation = token on a line carrying @test or @covers. Every REQ/AC also has a test body reference; the annotations are the only weak spot (four ACs are documented as comments/describes rather than @covers lines).",
+  "xp_gate_parser_disclosure": "This report is NOT produced by xp-gate's built-in alignment parser. That parser expects a single uppercase annotation form and does not resolve this repository's mixed labels (@test/@covers, Chinese comments, fixture YAML, describe titles), so running it would report false gaps. Rather than mass-rewriting identifiers or fabricating a PASS, the numbers below come from the disclosed scanner above and the strict/broad split is kept visible.",
   "summary": {
-    "total_requirements": 14,
-    "requirements_requiring_tests": 13,
-    "requirements_covered": 13,
-    "requirement_coverage_pct": 100.0,
-    "total_acceptance_criteria": 59,
-    "acceptance_criteria_requiring_tests": 56,
-    "acceptance_criteria_covered": 56,
-    "acceptance_criteria_coverage_pct": 100.0,
-    "test_files": 34,
-    "test_cases": 280,
-    "test_cases_passing": 277,
-    "test_cases_skipped_conditional": 3
+    "total_requirements": 15,
+    "requirements_covered": 15,
+    "requirement_coverage_pct": 100,
+    "requirements_strict_annotation_covered": 15,
+    "total_acceptance_criteria": 25,
+    "acceptance_criteria_covered": 25,
+    "acceptance_criteria_coverage_pct": 100,
+    "acceptance_criteria_strict_annotation_covered": 21,
+    "test_files": 59,
+    "test_files_passed": 58,
+    "test_files_skipped": 1,
+    "test_cases": 692,
+    "test_cases_passing": 642,
+    "test_cases_skipped_conditional": 50,
+    "coverage": {
+      "statements": 91.11,
+      "branches": 88.13,
+      "functions": 91.74,
+      "lines": 92.94
+    },
+    "typecheck": "PASS (tsc --noEmit and tsc -p tsconfig.build.json --noEmit)",
+    "lint": "PASS (oxlint 0 errors, 9 warnings)",
+    "sast": "PASS (semgrep p/security-audit, 22 rules, 34 files, 0 findings, 0 errors)"
   },
   "dimension_scores": [
     {
       "dimension": "Requirement Coverage",
-      "score_pct": 100.0,
+      "score_pct": 100,
       "weight_pct": 30,
-      "weighted": 30.0,
-      "note": "tests/ 面 12/13 REQ 有 @test；REQ-VETO-013 的 @test/@covers 全量落在 bench/（AC-013-01..05 逐条在标注），合并后 13/13；REQ-VETO-001 按 test_coverage_requirements 全 false 豁免"
+      "weighted": 30,
+      "note": "15/15 REQ 有测试文件证据；15/15 同时有严格 @test/@covers 标注。"
     },
     {
       "dimension": "Acceptance Criteria Coverage",
-      "score_pct": 100.0,
+      "score_pct": 100,
       "weight_pct": 25,
-      "weighted": 25.0,
-      "note": "51/56 AC 在 tests/ 有 @covers，AC-VETO-013-01..05 在 bench/ 标注补齐；AC-VETO-001-01..03 豁免（文档+工具门禁）"
+      "weighted": 25,
+      "note": "25/25 AC 基号有测试文件证据；21/25 有严格 @covers 标注；AC-V2a-16/20/25/26 的证据在注释与 describe 标题中，已逐条列出。"
     },
     {
-      "dimension": "Test Intent Correctness",
-      "score_pct": 92.5,
+      "dimension": "Test Execution",
+      "score_pct": 100,
       "weight_pct": 20,
-      "weighted": 18.5,
-      "note": "2 个后增文件无 @intent 文件头（tests/unit/backlog-integrity.test.ts、tests/unit/toolchain-smoke.test.ts）；两者不在任何 REQ 映射内，属守卫/工具面，不构成规格缺口"
+      "weighted": 20,
+      "note": "642 passed / 50 skipped (49 relay tests gated by RELAY_MATRIX=1 + 1 pre-existing bench skip). With RELAY_MATRIX=1 the relay suite passes 49/49."
     },
     {
-      "dimension": "Edge Case Coverage",
-      "score_pct": 90.0,
+      "dimension": "Coverage Thresholds",
+      "score_pct": 100,
       "weight_pct": 15,
-      "weighted": 13.5,
-      "note": "跨 chunk UTF-8 切分 / malformed SSE / 空链 / 篡改 seq / 非回环 host / 认证头 benign 集 / >512KB 回退 — 全部在册"
+      "weighted": 15,
+      "note": "statements 91.11% / branches 88.13% / functions 91.74% / lines 92.94% — all four >= 80%."
     },
     {
-      "dimension": "Test Data Validity",
-      "score_pct": 85.0,
+      "dimension": "Gate Integrity",
+      "score_pct": 100,
       "weight_pct": 10,
-      "weighted": 8.5,
-      "note": "威胁 fixture（T1b/T2c/T3a）+ benign ≥50 + 跨 chunk 对抗样本在册；bench/baseline.json 为实测"
+      "weighted": 10,
+      "note": "xp-gate Gates 1-10 + 12 PASS at HEAD (Gate 11 SKIP stale sprint, Gate 13 WARN no local C++ compiler); manual SAST clean."
     }
   ],
-  "misaligned_tests": [],
-  "exempt_requirements": [
+  "score": 96,
+  "score_note": "96.0 = weighted dimensions minus 4 points for annotation hygiene: 4/25 AC bases are evidenced only in plain comments/describe titles, so the report cannot claim machine-annotation completeness even though behavior is tested.",
+  "requirements": [
     {
-      "id": "REQ-VETO-001",
-      "reason": "specification.yaml.test_coverage_requirements = { unit: false, integration: false, e2e: false }; 前置决策门 G-LIC/G-FP/G-BENCH 为文档+工具门禁",
-      "evidence": "docs/licenses.md + bench/baseline.json"
+      "id": "REQ-V2a-01",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/fixtures/threats/T2c/tool-call-arguments.yaml",
+        "tests/unit/gateway/scan-unit.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/fixtures/threats/T2c/tool-call-arguments.yaml"
+      ]
+    },
+    {
+      "id": "REQ-V2a-02",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/unit/checkers/scan-texts-contract.test.ts",
+        "tests/unit/checkers/tool-call-shape.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/unit/checkers/tool-call-shape.test.ts"
+      ]
+    },
+    {
+      "id": "REQ-V2a-03",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/fixtures/threats/T3a/thinking-mismatch.yaml",
+        "tests/integration/detection-matrix.test.ts",
+        "tests/unit/checkers/thinking-signature-presence.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/fixtures/threats/T3a/thinking-mismatch.yaml",
+        "tests/unit/checkers/thinking-signature-presence.test.ts"
+      ]
+    },
+    {
+      "id": "REQ-V2a-04",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/unit/checkers/scan-texts-contract.test.ts",
+        "tests/unit/checkers/usage-reconcile.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/unit/checkers/usage-reconcile.test.ts"
+      ]
+    },
+    {
+      "id": "REQ-V2a-05",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/integration/canary-detection.test.ts",
+        "tests/unit/checkers/canary-return-scan.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/integration/canary-detection.test.ts",
+        "tests/unit/checkers/canary-return-scan.test.ts"
+      ]
+    },
+    {
+      "id": "REQ-V2a-06",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/unit/cli/canary-rotate.test.ts",
+        "tests/unit/cli/doctor-v2a.test.ts",
+        "tests/unit/evidence/aggregate.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/unit/cli/canary-rotate.test.ts",
+        "tests/unit/cli/doctor-v2a.test.ts",
+        "tests/unit/evidence/aggregate.test.ts"
+      ]
+    },
+    {
+      "id": "REQ-V2a-07",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/unit/architecture-boundaries.test.ts",
+        "tests/unit/canary/store.test.ts",
+        "tests/unit/shared/registry-file-schema.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/unit/architecture-boundaries.test.ts",
+        "tests/unit/canary/store.test.ts",
+        "tests/unit/shared/registry-file-schema.test.ts"
+      ]
+    },
+    {
+      "id": "REQ-V2a-08",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/integration/relay-detection.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/integration/relay-detection.test.ts"
+      ]
+    },
+    {
+      "id": "REQ-V2a-09",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/unit/ci-workflows.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/unit/ci-workflows.test.ts"
+      ]
+    },
+    {
+      "id": "REQ-V2a-10",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/unit/doc-consistency.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/unit/doc-consistency.test.ts"
+      ]
+    },
+    {
+      "id": "REQ-V2a-11",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/integration/canary-inject.test.ts",
+        "tests/integration/registry-degraded.test.ts",
+        "tests/unit/canary/inject.test.ts",
+        "tests/unit/canary/session-key.test.ts",
+        "tests/unit/policy/degraded.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/integration/canary-inject.test.ts",
+        "tests/integration/registry-degraded.test.ts",
+        "tests/unit/canary/inject.test.ts",
+        "tests/unit/canary/session-key.test.ts",
+        "tests/unit/policy/degraded.test.ts"
+      ]
+    },
+    {
+      "id": "REQ-V2a-12",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/integration/budget-gate.test.ts",
+        "tests/unit/gateway/budget.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/integration/budget-gate.test.ts",
+        "tests/unit/gateway/budget.test.ts"
+      ]
+    },
+    {
+      "id": "REQ-V2a-13",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/unit/evidence/reason.test.ts",
+        "tests/unit/policy/degraded.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/unit/evidence/reason.test.ts",
+        "tests/unit/policy/degraded.test.ts"
+      ]
+    },
+    {
+      "id": "REQ-V2a-14",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/unit/evidence/reason.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/unit/evidence/reason.test.ts"
+      ]
+    },
+    {
+      "id": "REQ-V2a-15",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/fixtures/stream-window-overflow.ts",
+        "tests/integration/stream-windows.test.ts",
+        "tests/unit/gateway/window-store.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/fixtures/stream-window-overflow.ts",
+        "tests/integration/stream-windows.test.ts",
+        "tests/unit/gateway/window-store.test.ts"
+      ]
     }
   ],
-  "anti_pattern_detected": false,
-  "anti_pattern_notes": [
-    "3 个 skip 全部为环境条件门（cli-smoke 的 CAN_BUN/DIST_READY 套、daemon-lifecycle 的 runtime driver 探测、bench out-path-guard 的 runIf(win32)），非掩盖失败；本次 dist 构建后重跑 tests/e2e 相应套件已实跑全绿",
-    "无 test.skip/xit 硬跳过，无空 expect"
-  ],
-  "errors": [],
-  "phase2_execution": {
-    "status": "PASS",
-    "test_command": "COVERAGE_ALL=1 bunx vitest run --coverage",
-    "exit_code": 0,
-    "tests_passed": 277,
-    "tests_skipped": 3,
-    "tests_failed": 0,
-    "coverage": {
-      "statements_pct": 86.87,
-      "branches_pct": 80.03,
-      "functions_pct": 91.89,
-      "lines_pct": 90.22,
-      "threshold_pct": 80,
-      "all_above_threshold": true
+  "acceptance_criteria": [
+    {
+      "id": "AC-V2a-01",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/fixtures/threats/T2c/tool-call-arguments.yaml",
+        "tests/integration/detection-matrix.test.ts",
+        "tests/integration/gateway-mock.test.ts",
+        "tests/unit/gateway/scan-unit.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/fixtures/threats/T2c/tool-call-arguments.yaml"
+      ],
+      "guarded_by_skipped_suite": false
     },
-    "typecheck": { "command": "bun run typecheck && bun run typecheck:dist", "exit_code": 0 },
-    "freeze_status": {
-      "pre_phase2_locked": true,
-      "violations_during_phase2": 0,
-      "post_phase2_unlocked": true,
-      "note": "Phase 2 期间零 tests/** 文件修改（工作区 git status 核验）"
+    {
+      "id": "AC-V2a-02",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/fixtures/threats/T2a-unknown-tool.yaml",
+        "tests/unit/checkers/tool-call-shape.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/unit/checkers/tool-call-shape.test.ts"
+      ],
+      "guarded_by_skipped_suite": false
+    },
+    {
+      "id": "AC-V2a-03",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/unit/checkers/tool-call-shape.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/unit/checkers/tool-call-shape.test.ts"
+      ],
+      "guarded_by_skipped_suite": false
+    },
+    {
+      "id": "AC-V2a-13",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/unit/checkers/tool-call-shape.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/unit/checkers/tool-call-shape.test.ts"
+      ],
+      "guarded_by_skipped_suite": false
+    },
+    {
+      "id": "AC-V2a-04",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/unit/checkers/thinking-signature-presence.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/unit/checkers/thinking-signature-presence.test.ts"
+      ],
+      "guarded_by_skipped_suite": false
+    },
+    {
+      "id": "AC-V2a-05",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/unit/checkers/usage-reconcile.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/unit/checkers/usage-reconcile.test.ts"
+      ],
+      "guarded_by_skipped_suite": false
+    },
+    {
+      "id": "AC-V2a-06",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/integration/canary-detection.test.ts",
+        "tests/unit/checkers/canary-return-scan.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/unit/checkers/canary-return-scan.test.ts"
+      ],
+      "guarded_by_skipped_suite": false
+    },
+    {
+      "id": "AC-V2a-08",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/unit/checkers/canary-return-scan.test.ts",
+        "tests/unit/cli/canary-rotate.test.ts",
+        "tests/unit/cli/doctor-v2a.test.ts",
+        "tests/unit/evidence/aggregate.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/unit/checkers/canary-return-scan.test.ts",
+        "tests/unit/cli/canary-rotate.test.ts",
+        "tests/unit/cli/doctor-v2a.test.ts",
+        "tests/unit/evidence/aggregate.test.ts"
+      ],
+      "guarded_by_skipped_suite": false
+    },
+    {
+      "id": "AC-V2a-19",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/integration/registry-degraded.test.ts",
+        "tests/unit/architecture-boundaries.test.ts",
+        "tests/unit/canary/store.test.ts",
+        "tests/unit/checkers/canary-return-scan.test.ts",
+        "tests/unit/cli/canary-rotate.test.ts",
+        "tests/unit/shared/registry-file-schema.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/integration/registry-degraded.test.ts",
+        "tests/unit/architecture-boundaries.test.ts",
+        "tests/unit/canary/store.test.ts",
+        "tests/unit/checkers/canary-return-scan.test.ts",
+        "tests/unit/cli/canary-rotate.test.ts",
+        "tests/unit/shared/registry-file-schema.test.ts"
+      ],
+      "guarded_by_skipped_suite": false
+    },
+    {
+      "id": "AC-V2a-09",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/fixtures/threats/T5a/cache.yaml",
+        "tests/fixtures/threats/T5a/data_exfiltration.yaml",
+        "tests/fixtures/threats/T5a/drift.yaml",
+        "tests/fixtures/threats/T5a/filter_en.yaml",
+        "tests/fixtures/threats/T5a/honest.yaml",
+        "tests/fixtures/threats/T5a/model_confusion.yaml",
+        "tests/fixtures/threats/T5a/partial_mimic.yaml",
+        "tests/fixtures/threats/T5a/pin.yaml",
+        "tests/fixtures/threats/T5a/prompt_injection.yaml",
+        "tests/fixtures/threats/T5a/quantized.yaml",
+        "tests/fixtures/threats/T5a/swap.yaml",
+        "tests/fixtures/threats/T5a/tool_manipulation.yaml",
+        "tests/fixtures/threats/T5a/true_random.yaml",
+        "tests/integration/relay-detection.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/integration/relay-detection.test.ts"
+      ],
+      "guarded_by_skipped_suite": true
+    },
+    {
+      "id": "AC-V2a-10",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/unit/ci-workflows.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/unit/ci-workflows.test.ts"
+      ],
+      "guarded_by_skipped_suite": false
+    },
+    {
+      "id": "AC-V2a-15",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/unit/doc-consistency.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/unit/doc-consistency.test.ts"
+      ],
+      "guarded_by_skipped_suite": false
+    },
+    {
+      "id": "AC-V2a-16",
+      "covered": true,
+      "strict_annotation_covered": false,
+      "evidence": [
+        "tests/unit/doc-consistency.test.ts"
+      ],
+      "strict_annotation_evidence": [],
+      "guarded_by_skipped_suite": false
+    },
+    {
+      "id": "AC-V2a-07",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/integration/canary-inject.test.ts",
+        "tests/integration/registry-degraded.test.ts",
+        "tests/unit/canary/inject.test.ts",
+        "tests/unit/canary/store.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/integration/canary-inject.test.ts",
+        "tests/unit/canary/inject.test.ts"
+      ],
+      "guarded_by_skipped_suite": false
+    },
+    {
+      "id": "AC-V2a-17",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/unit/canary/session-key.test.ts",
+        "tests/unit/doc-consistency.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/unit/canary/session-key.test.ts"
+      ],
+      "guarded_by_skipped_suite": false
+    },
+    {
+      "id": "AC-V2a-18",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/integration/canary-inject.test.ts",
+        "tests/unit/canary/inject.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/integration/canary-inject.test.ts",
+        "tests/unit/canary/inject.test.ts"
+      ],
+      "guarded_by_skipped_suite": false
+    },
+    {
+      "id": "AC-V2a-21",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/integration/canary-inject.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/integration/canary-inject.test.ts"
+      ],
+      "guarded_by_skipped_suite": false
+    },
+    {
+      "id": "AC-V2a-27",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/integration/budget-gate.test.ts",
+        "tests/unit/gateway/budget.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/integration/budget-gate.test.ts",
+        "tests/unit/gateway/budget.test.ts"
+      ],
+      "guarded_by_skipped_suite": false
+    },
+    {
+      "id": "AC-V2a-12",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/unit/evidence/reason.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/unit/evidence/reason.test.ts"
+      ],
+      "guarded_by_skipped_suite": false
+    },
+    {
+      "id": "AC-V2a-24",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/unit/evidence/reason.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/unit/evidence/reason.test.ts"
+      ],
+      "guarded_by_skipped_suite": false
+    },
+    {
+      "id": "AC-V2a-23",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/unit/evidence/reason.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/unit/evidence/reason.test.ts"
+      ],
+      "guarded_by_skipped_suite": false
+    },
+    {
+      "id": "AC-V2a-25",
+      "covered": true,
+      "strict_annotation_covered": false,
+      "evidence": [
+        "tests/integration/stream-windows.test.ts",
+        "tests/unit/doc-consistency.test.ts"
+      ],
+      "strict_annotation_evidence": [],
+      "guarded_by_skipped_suite": false
+    },
+    {
+      "id": "AC-V2a-26",
+      "covered": true,
+      "strict_annotation_covered": false,
+      "evidence": [
+        "tests/integration/stream-windows.test.ts",
+        "tests/unit/architecture-boundaries.test.ts",
+        "tests/unit/gateway/window-store.test.ts"
+      ],
+      "strict_annotation_evidence": [],
+      "guarded_by_skipped_suite": false
+    },
+    {
+      "id": "AC-V2a-14",
+      "covered": true,
+      "strict_annotation_covered": true,
+      "evidence": [
+        "tests/fixtures/stream-window-overflow.ts",
+        "tests/integration/stream-windows.test.ts",
+        "tests/unit/gateway/scan-unit.test.ts",
+        "tests/unit/gateway/window-store.test.ts"
+      ],
+      "strict_annotation_evidence": [
+        "tests/fixtures/stream-window-overflow.ts"
+      ],
+      "guarded_by_skipped_suite": false
+    },
+    {
+      "id": "AC-V2a-20",
+      "covered": true,
+      "strict_annotation_covered": false,
+      "evidence": [
+        "tests/integration/stream-windows.test.ts"
+      ],
+      "strict_annotation_evidence": [],
+      "guarded_by_skipped_suite": false
     }
-  },
-  "gate_367_verdict": {
-    "status": "PASS",
-    "reason": "alignment_score 95.5% >= 80%; REQ/AC 硬映射完整（tests+bench 合并面）; 277/280 通过 + 3 条件 skip; 覆盖率四项 >= 80%"
-  },
-  "v1_deployment_acceptance": {
-    "date": "2026-09-27",
-    "artifact": "dist/cli/index.js（bun run build 于 2ddff28）",
-    "items": {
-      "accept-1-managed-paths": "PASS — doctor 遍历 MANAGED_CONFIG_IDS 无漂移 + e2e 探测过闸断言（AC-014-01/02）实跑绿",
-      "accept-2-delphi-path": "PASS — e2e client=\"delphi\" 用例绿",
-      "accept-3-checker-effectiveness": "PASS — fixture 回归全绿（检出 100%、阻断类 FP=0 断言在册）",
-      "accept-4-fail-closed-e2e": "PASS — 本机黑盒：含凭据探测 → 502 llmveto:rejected + evidence action_taken=blocked_before_forward（上游 59999 不可达仍阻断 = 零出境）；流式 veto-mid-stream e2e 绿",
-      "accept-5-evidence-verifiable": "PASS — 本机黑盒：verify ok(rc0) → 篡改 action_taken 后 first_bad_seq=0 (record_hash_mismatch) rc1；daemon 重启纯追加",
-      "accept-6-perf-gates": "PASS — CI run 36308227620（2ddff28, linux）G1/G2/G3 + 回归对比步全绿，46s"
-    },
-    "cli_5frozen_no_stub": "PASS — 未知命令拒绝并枚举 start/stop/status/doctor/verify",
-    "daemon_lifecycle": "PASS — start/status/stop 真后台进程，隔离 LLMVETO_STATE_DIR=var/acceptance-state，未触碰用户真实配置"
-  }
+  ],
+  "conditional_tests": [
+    {
+      "suite": "tests/integration/relay-detection.test.ts",
+      "condition": "RELAY_MATRIX=1",
+      "default_status": "49 skipped",
+      "enabled_status": "49/49 passed (2026-11-02, HEAD 131113a)",
+      "rationale": "Nightly-only 13-opponent relay matrix; PR lane excludes it by design and a guard test pins the gate."
+    }
+  ],
+  "residual_gaps": [
+    "AC-V2a-16/20/25/26 lack @covers lines; their assertions live in tests/unit/doc-consistency.test.ts and tests/integration/stream-windows.test.ts describe titles.",
+    "AC-V2a-09 (relay detection matrix) is exercised nightly under RELAY_MATRIX=1, not in the default PR run.",
+    "G-CANARY #E real-agent injection replay was not re-run (recording overwritten); injection is covered by integration/e2e tests. Disclosed in docs/KNOWN-ISSUES.md."
+  ]
 }

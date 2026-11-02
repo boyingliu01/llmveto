@@ -92,6 +92,7 @@ function toolCallShapeStub(opts: { readonly revealAt?: number } = {}): StubHandl
     side: "response",
     synchronous: true,
     safetyClass: true,
+    threat: "T2a",
     runStream: (window: ScanWindow, chunk: ScanUnit) => {
       // 归并重投影是已消费内容的重放：不累积、不判定（否则 AC-V2a-14 的 i=2049 会被
       // 归并路径的重复计账提前触发）

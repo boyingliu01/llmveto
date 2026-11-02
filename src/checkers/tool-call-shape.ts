@@ -7,7 +7,7 @@ import type {
   ScanWindow,
   StreamChecker,
 } from "../shared/types.ts";
-import { scanTexts } from "../shared/types.ts";
+import { scanTexts, STREAM_WINDOW_OVERFLOW_LIMIT } from "../shared/types.ts";
 
 /**
  * @test REQ-V2a-02
@@ -17,8 +17,8 @@ import { scanTexts } from "../shared/types.ts";
  */
 
 export const CHECKER_ID = "tool-call-shape";
-/** §4.2/ADR-0003：单个 tool_call 的 arguments 累积硬顶 = 256KiB（UTF-8 字节）。 */
-const WINDOW_LIMIT = 256 * 1024;
+/** §4.2/ADR-0003：单个 tool_call 的 arguments 累积硬顶（常量单一来源 = window-store）。 */
+const WINDOW_LIMIT = STREAM_WINDOW_OVERFLOW_LIMIT;
 const ACCUMULATED_BYTES_KEY = "accumulatedBytes";
 
 interface ToolCallShape { name: string; arguments: string }
@@ -142,6 +142,6 @@ export const checkToolCallShapeStream: StreamChecker = (window, chunk) => {
 };
 
 export const TOOL_CALL_SHAPE_SPEC = {
-  id: CHECKER_ID, side: "response", synchronous: true, safetyClass: true,
+  id: CHECKER_ID, side: "response", synchronous: true, safetyClass: true, threat: "T2a",
   runNonStream: checkToolCallShapeNonStream, runStream: checkToolCallShapeStream,
 } as const;

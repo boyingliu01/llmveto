@@ -86,5 +86,6 @@ export const USAGE_RECONCILE_SPEC = {
   side: "response",
   synchronous: true,
   safetyClass: false,
+  threat: "T4a",
   runNonStream: checkUsageReconcile,
 } as const;

@@ -26,3 +26,8 @@ export const REGISTRY: readonly CheckerSpec[] = Object.freeze([
 export function checkersFor(side: "request" | "response"): readonly CheckerSpec[] {
   return REGISTRY.filter((c) => c.side === side);
 }
+
+/** §4.5 威胁表：单一来源 = 各 CheckerSpec.threat（不得在 policy/evidence 侧另设字面表）。 */
+export const CHECKER_THREAT_BY_ID: Readonly<Record<string, string>> = Object.freeze(
+  Object.fromEntries(REGISTRY.map((c) => [c.id, c.threat])),
+);

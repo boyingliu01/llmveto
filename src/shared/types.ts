@@ -99,11 +99,16 @@ export type StreamChecker = (
  * - `synchronous`：v1 三个内置 checker 全部为 true；false 是 v2+ 观测类才允许。
  * - `safetyClass`：v1 = true 者映射为 block；策略降级规则按此属性圈定。
  */
+/** §4.2/ADR-0003：单次 tool-call arguments 累积硬顶 = 256 KiB（UTF-8 字节，严格大于语义）。 */
+export const STREAM_WINDOW_OVERFLOW_LIMIT = 262144 as const;
+
 export interface CheckerSpec {
   readonly id: string;
   readonly side: Direction;
   readonly synchronous: true;
   readonly safetyClass: boolean;
+  /** §4.5 威胁表归属：error 条目落链时的 threat 唯一来源（禁止在 policy 侧另设表）。 */
+  readonly threat: string;
   readonly runNonStream?: NonStreamChecker;
   readonly runStream?: StreamChecker;
 }

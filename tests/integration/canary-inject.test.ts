@@ -112,6 +112,7 @@ function metaProbe(): { spec: CheckerSpec; seen: { injectedKey: boolean; injecte
     side: "response",
     synchronous: true,
     safetyClass: false,
+    threat: "T0",
     runNonStream: (unit: ScanUnit) => {
       seen.push({
         injectedKey: "canary_injected" in unit.meta,
@@ -347,6 +348,7 @@ describe("SL-07 integration ⑤: 判定域外（非受管 / block）与 inject_s
       side: "request",
       synchronous: true,
       safetyClass: true,
+      threat: "T0",
       runNonStream: () => ({ verdict: "finding", evidence: [{ checker: "block-probe", threat: "T0", verdict: "finding" }] }),
     };
     mock = await startMockUpstream({ transport: "non-stream", body: okResponse() });

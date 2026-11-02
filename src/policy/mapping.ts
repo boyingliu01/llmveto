@@ -81,18 +81,5 @@ export function resolveActionTaken(candidates: readonly ActionTaken[]): ActionTa
   return best ?? "allowed";
 }
 
-// ── D-10（SL-03/REQ-V2a-13）：checker → threat 取值表（§4.5 威胁表） ─────────
-// findings[] verdict=error 条目的 threat 由此表提供；表中查不到的 checker 视为登记
-// 缺陷，flatten 端必须显式失败（fail-closed），不得自造 threat。包含 v2a 已规划
-// 尚未落地的 checker（SL-08/09/10/11），声明面一次钉死避免后续切片再触本文件。
-
-export const CHECKER_THREAT_BY_ID: Readonly<Record<string, string>> = Object.freeze({
-  "egress-secret-scan": "T1b",
-  "invisible-unicode-scan": "T2c",
-  "model-label-consistency": "T3a",
-  "tool-call-shape": "T2a",
-  "canary-return-scan": "T1a",
-  "thinking-signature-presence": "T3a",
-  "usage-reconcile": "T4a",
-  "budget-window-stub": "T4a", // 测试桩：预算门窗口行为验证（观测类）
-});
+// ── D-10（SL-03/REQ-V2a-13）：checker → threat 归属由 CheckerSpec.threat 单一声明 ──
+// （gateway/registry.ts 派生 CHECKER_THREAT_BY_ID；policy 侧不再维护字面表，避免双源。）

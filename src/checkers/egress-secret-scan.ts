@@ -83,5 +83,6 @@ export const EGRESS_SECRET_SCAN_SPEC = {
   side: "request",
   synchronous: true,
   safetyClass: true, // → policy 层 finding=block；error=block（DESIGN §降级规则）
+  threat: "T1b",
   runNonStream: egressSecretScan,
 } as const;

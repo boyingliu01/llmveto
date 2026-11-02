@@ -59,5 +59,6 @@ export const CANARY_RETURN_SCAN_SPEC = {
   side: "response",
   synchronous: true,
   safetyClass: true, // T1a 安全类 → finding=block
+  threat: "T1a",
   runNonStream: checkCanaryReturnScan,
 } as const;

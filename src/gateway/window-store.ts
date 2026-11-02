@@ -1,4 +1,6 @@
 import type { ScanWindow } from "../shared/types.ts";
+import { STREAM_WINDOW_OVERFLOW_LIMIT } from "../shared/types.ts";
+export { STREAM_WINDOW_OVERFLOW_LIMIT } from "../shared/types.ts";
 
 /**
  * @test REQ-V2a-15
@@ -18,8 +20,7 @@ import type { ScanWindow } from "../shared/types.ts";
  *     tool-call-shape 自身窗口累积字节承载，checker 侧自判，网关不做全局截断）。
  */
 
-/** §4.2/ADR-0003 定值：单次 tool-call arguments 累积硬顶 = 256KiB（UTF-8 字节）。 */
-export const STREAM_WINDOW_OVERFLOW_LIMIT = 262144 as const;
+/** §4.2/ADR-0003 定值（单一来源 = shared/types.ts）：单次 tool-call arguments 累积硬顶 = 256 KiB。 */
 
 /** 严格大于语义（AC-V2a-14）：Σ 累积 + 本片长度恰好等于 LIMIT 仍放行，越顶即触发。 */
 export function exceedsWindowOverflowLimit(accumulatedBytes: number, nextChunkLength: number): boolean {

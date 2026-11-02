@@ -34,6 +34,7 @@ function probeChecker(id: string): CheckerSpec & { cursors: number[]; reprojecte
     side: "response",
     synchronous: true,
     safetyClass: true,
+    threat: "T0",
     runStream: (window: ScanWindow, chunk: ScanUnit) => {
       cursors.push(window.cursor);
       reprojected.push(chunk.meta.llmveto_reprojected === true);

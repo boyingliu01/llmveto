@@ -87,6 +87,7 @@ function metaProbe(): { spec: CheckerSpec; seen: { injectedKey: boolean; injecte
     side: "response",
     synchronous: true,
     safetyClass: false,
+    threat: "T0",
     runNonStream: (unit: ScanUnit) => {
       seen.push({
         injectedKey: "canary_injected" in unit.meta,

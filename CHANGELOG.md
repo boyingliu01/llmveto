@@ -174,6 +174,12 @@ windows and execution budgets, and an evil-relay testkit. The evidence schema st
   and restart. A live toggle is deliberate scope for a later release, not an oversight.
 - `package.json` declares Node `>=18`, but CI and the local verification matrix run Node 24 only;
   a Node 18 regression would not be caught by the PR gate.
+- Post-injection evidence (`request_bytes` / `request_body_sha256` describe the forwarded body) is
+  not permanently reversible: reconstructing the client body from the chain needs the session's
+  canary, which rotation re-randomizes and TTL 24 h / LRU 64 eviction removes. After either event
+  the chain alone cannot recover the original body; retain the client-side or upstream-side body
+  when forensic reconstruction is required. AC-V2a-07 is a test-time invariant, not a
+  time-unbounded recovery guarantee.
 
 ### Deferred to v2b
 

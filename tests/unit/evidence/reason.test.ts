@@ -17,7 +17,7 @@ import {
   pickTopReasonFromErrorFindings,
   pickTopReasonWinner,
 } from "../../../src/policy/engine.ts";
-import { CHECKER_THREAT_BY_ID } from "../../../src/policy/mapping.ts";
+import { CHECKER_THREAT_BY_ID } from "../../../src/gateway/registry.ts";
 import { REGISTRY, checkersFor } from "../../../src/gateway/registry.ts";
 import { GatewayCore, handleChatCompletions, sha256Hex } from "../../../src/gateway/core.ts";
 import { startMockUpstream, type MockUpstream } from "../../utils/mock-upstream.ts";
@@ -329,9 +329,10 @@ describe("SL-03 CHECKER_THREAT_BY_ID：error 条目 threat 取值表（§4.5）"
     expect(CHECKER_THREAT_BY_ID["usage-reconcile"]).toBe("T4a");
   });
 
-  it("对 REGISTRY 完备（fail-closed：flatten error 条目时 threat 查不到必须显式失败，而非自造）", () => {
+  it("单一来源：每个 REGISTRY spec 的 threat 字段与 §4.5 表逐项一致（map 由 spec 派生）", () => {
     for (const c of REGISTRY) {
-      expect(typeof CHECKER_THREAT_BY_ID[c.id], `threat for ${c.id}`).toBe("string");
+      expect(CHECKER_THREAT_BY_ID[c.id], `threat for ${c.id}`).toBe(c.threat);
+      expect(typeof c.threat).toBe("string");
     }
   });
 });

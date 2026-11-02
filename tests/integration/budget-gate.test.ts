@@ -134,6 +134,7 @@ function budgetWindowStub(spinMs: number): StubHandle {
     side: "response",
     synchronous: true,
     safetyClass: false, // 观测类：error 不阻断 → 流可走完，多片窗口行为可观测
+    threat: "T4a",
     runStream: (window: ScanWindow, chunk: ScanUnit) => {
       // 归并重投影是已消费内容的重放：不累积、不判定（SL-02 标记语义，包裹不改变它）
       if (chunk.meta.llmveto_reprojected === true) {

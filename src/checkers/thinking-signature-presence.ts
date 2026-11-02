@@ -72,5 +72,6 @@ export const THINKING_SIGNATURE_PRESENCE_SPEC = {
   side: "response",
   synchronous: true,
   safetyClass: false,
+  threat: "T3a",
   runNonStream: checkThinkingSignaturePresence,
 } as const;

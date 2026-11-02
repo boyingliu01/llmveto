@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { checkersFor, REGISTRY } from "./registry.ts";
+import { checkersFor, CHECKER_THREAT_BY_ID, REGISTRY } from "./registry.ts";
 import { G1_PER_CHUNK, g3BudgetForBodyBytes, runStreamWithBudget, runWithBudget } from "./budget.ts";
 import {
   createWindowStore,
@@ -18,7 +18,7 @@ import {
 import { encodeVetoEvent, parseSseFrames, tryParseJson } from "./sse-tee.ts";
 import { decide, pickScenario, pickTopReasonFromErrorFindings, type BehaviorScenario } from "../policy/engine.ts";
 import type { PolicyInput } from "../policy/engine.ts";
-import { resolveActionTaken, CHECKER_THREAT_BY_ID } from "../policy/mapping.ts";
+import { resolveActionTaken } from "../policy/mapping.ts";
 import type {
   CheckerResult,
   CheckerSpec,
@@ -136,7 +136,7 @@ export class GatewayCore {
       const fn = spec.runNonStream as NonStreamChecker | undefined;
       if (!fn) continue;
       const r = safeRun(fn, scanUnit, this.budgetFor(spec.id, defaultBudget));
-      inputs.push({ checkerId: spec.id, safetyClass: spec.safetyClass, result: r });
+      inputs.push({ checkerId: spec.id, safetyClass: spec.safetyClass, threat: spec.threat, result: r });
     }
     return { inputs, scanUnit };
   }
@@ -152,7 +152,7 @@ export class GatewayCore {
       const fn = spec.runNonStream as NonStreamChecker | undefined;
       if (!fn) continue;
       const r = safeRun(fn, unit, this.budgetFor(spec.id, defaultBudget));
-      inputs.push({ checkerId: spec.id, safetyClass: spec.safetyClass, result: r });
+      inputs.push({ checkerId: spec.id, safetyClass: spec.safetyClass, threat: spec.threat, result: r });
     }
     return inputs;
   }
@@ -195,7 +195,7 @@ export class GatewayCore {
           effectiveUnit,
           this.budgetFor(spec.id, defaultBudget),
         );
-        inputs.push({ checkerId: spec.id, safetyClass: spec.safetyClass, result });
+        inputs.push({ checkerId: spec.id, safetyClass: spec.safetyClass, threat: spec.threat, result });
         if (advance) {
           // 重组点 = 网关唯一推进点；ledger 在场时落账（AC-V2a-26③ 字节账本）随行。
           nextWindows.set(
@@ -207,7 +207,7 @@ export class GatewayCore {
         }
       } else if (spec.runNonStream) {
         const r = safeRun(spec.runNonStream as NonStreamChecker, effectiveUnit, this.budgetFor(spec.id, defaultBudget));
-        inputs.push({ checkerId: spec.id, safetyClass: spec.safetyClass, result: r });
+        inputs.push({ checkerId: spec.id, safetyClass: spec.safetyClass, threat: spec.threat, result: r });
       }
     }
     return { inputs, nextWindows };
@@ -460,7 +460,22 @@ function handleStreaming(p: {
    * （advance:false + REPROJECTION_META_KEY 标记；消费计数只认逐帧口径，
    * 窗口归属/offsets 语义由 D-07/D-08 接管）。
    */
+  let mergedOverflowReported = false;
   function scanMergedArgs(): boolean {
+    // AC-V2a-14：归并器在 256 KiB 处封顶；越顶本身就是安全类判定（window_overflow），
+    // 不再重扫已封顶文本，也不得让上游继续喂大（内存/CPU 有界）。
+    if (argsMerger.overflowed) {
+      if (!mergedOverflowReported) {
+        mergedOverflowReported = true;
+        const spec = REGISTRY.find((c) => c.id === "tool-call-shape");
+        if (spec === undefined) throw new Error("D-10: tool-call-shape spec missing (registration defect)");
+        allFindings.push(...flattenFindings([{
+          checkerId: spec.id, safetyClass: spec.safetyClass, threat: spec.threat,
+          result: { verdict: "error", evidence: [], reason: "window_overflow" },
+        }]));
+      }
+      return true;
+    }
     const merged = argsMerger.mergedText();
     if (merged === "") return false;
     const scan = core.scanResponseStreamUnit(windows, buildMergedToolCallScanUnit(merged, responseMeta), { advance: false });
@@ -546,19 +561,19 @@ function handleStreaming(p: {
 function flattenFindings(inputs: readonly PolicyInput[]): EvidenceFinding[] {
   const out: EvidenceFinding[] = [];
   for (const i of inputs) {
-    // D-10 第二层：verdict=error 的输入本身落一条 error 条目（rule_id 承载成因，
-    // 即 i.result.reason）；threat 由 §4.5 表提供——查不到视为登记缺陷，显式失败
-    // （fail-closed），绝不自造 threat。观测类与安全类 error 一视同仁，无分类豁免。
+    // D-10 第二层：verdict=error 的输入本身落一条 error 条目（rule_id 承载成因）。
+    // threat 从 CheckerSpec.threat 经 PolicyInput 下传——单一声明，缺登记即显式失败；
+    // 缺 reason 归一为 scanner_error，保证 reasonOf 不会静默丢条目（§4.5）。
     if (i.result.verdict === "error") {
-      const threat = CHECKER_THREAT_BY_ID[i.checkerId];
+      const threat = i.threat ?? CHECKER_THREAT_BY_ID[i.checkerId];
       if (threat === undefined) {
-        throw new Error(`D-10: checker '${i.checkerId}' has no threat mapping in the §4.5 table (registration defect)`);
+        throw new Error(`D-10: checker '${i.checkerId}' has no threat mapping (registration defect)`);
       }
       out.push({
         checker: i.checkerId,
         threat,
         verdict: "error",
-        ...(i.result.reason !== undefined ? { rule_id: i.result.reason } : {}),
+        rule_id: i.result.reason ?? "scanner_error",
       });
     }
     for (const f of i.result.evidence) {

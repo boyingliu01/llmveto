@@ -6,6 +6,7 @@ import { EvidenceWriter } from "../../../src/evidence/writer.ts";
 import type { ScanWindow } from "../../../src/shared/types.ts";
 import { invisibleUnicodeScanNonStream } from "../../../src/checkers/invisible-unicode-scan.ts";
 import { egressSecretScan } from "../../../src/checkers/egress-secret-scan.ts";
+import { STREAM_WINDOW_OVERFLOW_LIMIT } from "../../../src/gateway/window-store.ts";
 
 // @test REQ-VETO-002
 // @intent 扫描单元组装 + SSE 帧解析 + veto-mid-stream 契约（AC-VETO-002-06 / AC-VETO-002-03）
@@ -263,6 +264,31 @@ describe("SL-01 gateway: 流式 delta.tool_calls 跨 chunk 归并（AC-V2a-01）
     expect(m.mergedText()).toBe("");
     expect(m.toolCallCount).toBe(0);
     expect(buildMergedToolCallScanUnit(m.mergedText()).text).toBe("");
+  });
+
+  it("AC-V2a-14 归并硬顶：恰满 256 KiB 允许（overflowed=false），再多 1 字节即越顶且不再增长", () => {
+    const exact = "a".repeat(STREAM_WINDOW_OVERFLOW_LIMIT);
+    const m = createToolCallArgsMerger();
+    m.feed(JSON.parse(toolCallFrame(exact, 0, true)));
+    expect(m.overflowed).toBe(false);
+    expect(Buffer.byteLength(m.mergedText(), "utf8")).toBe(STREAM_WINDOW_OVERFLOW_LIMIT);
+    m.feed(JSON.parse(toolCallFrame("b")));
+    expect(m.overflowed).toBe(true);
+    expect(m.mergedText()).toBe(exact); // 越顶片段整段丢弃，不发生半截写入
+  });
+
+  it("AC-V2a-14 字节口径：多字节字符按 UTF-8 计（CJK 3 字节），越顶后后续帧全部不再吸收", () => {
+    // 87381 个「中」= 262143 字节（未过半字节边界也按整字符计入，不得截断字符）
+    const cjk = "中".repeat(87381);
+    const m = createToolCallArgsMerger();
+    m.feed(JSON.parse(toolCallFrame(cjk, 0, true)));
+    expect(m.overflowed).toBe(false);
+    m.feed(JSON.parse(toolCallFrame("a"))); // 262144 恰好等于硬顶 → 仍允许
+    expect(m.overflowed).toBe(false);
+    expect(Buffer.byteLength(m.mergedText(), "utf8")).toBe(STREAM_WINDOW_OVERFLOW_LIMIT);
+    m.feed(JSON.parse(toolCallFrame("b"))); // 262145 → 越顶
+    expect(m.overflowed).toBe(true);
+    expect(m.mergedText()).toBe(cjk + "a");
   });
 
   it("benign 工具调用流（含可还原的良性转义）经归并零误报", () => {

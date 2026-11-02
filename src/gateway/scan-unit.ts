@@ -1,4 +1,5 @@
 import type { ScanUnit, Transport } from "../shared/types.ts";
+import { STREAM_WINDOW_OVERFLOW_LIMIT } from "./window-store.ts";
 
 /**
  * @test REQ-VETO-002
@@ -278,30 +279,41 @@ export interface ToolCallArgsMerger {
   mergedText(): string;
   /** 已累积的 tool_call 数（0 = 本流未出现工具调用载荷）。 */
   readonly toolCallCount: number;
+  /** AC-V2a-14：arguments 累积是否越过 256 KiB 硬顶（越顶后不再增长）。 */
+  readonly overflowed: boolean;
+}
+
+interface MergerState {
+  readonly acc: Map<string, string>;
+  bytes: number;
+  overflowed: boolean;
 }
 
 export function createToolCallArgsMerger(): ToolCallArgsMerger {
-  const acc = new Map<string, string>();
+  const state: MergerState = { acc: new Map(), bytes: 0, overflowed: false };
   return {
     get toolCallCount() {
-      return acc.size;
+      return state.acc.size;
+    },
+    get overflowed() {
+      return state.overflowed;
     },
     feed(parsed) {
       if (!parsed || typeof parsed !== "object") return;
       const choices = parsed.choices;
       if (!Array.isArray(choices)) return;
-      for (let ci = 0; ci < choices.length; ci++) feedChoiceDelta(acc, ci, choices[ci]);
+      for (let ci = 0; ci < choices.length; ci++) feedChoiceDelta(state, ci, choices[ci]);
     },
     mergedText() {
       let out = "";
-      for (const v of acc.values()) out = out === "" ? v : out + "\n" + v;
+      for (const v of state.acc.values()) out = out === "" ? v : out + "\n" + v;
       return out;
     },
   };
 }
 
 /** 吸收单条 choice 的 delta：tool_calls 数组按 index 分桶，旧式 function_call 单独一桶。 */
-function feedChoiceDelta(acc: Map<string, string>, ci: number, choice: unknown): void {
+function feedChoiceDelta(state: MergerState, ci: number, choice: unknown): void {
   if (!choice || typeof choice !== "object") return;
   const delta = (choice as Record<string, unknown>).delta;
   if (!delta || typeof delta !== "object") return;
@@ -315,20 +327,27 @@ function feedChoiceDelta(acc: Map<string, string>, ci: number, choice: unknown):
       // 跨帧稳定，保证同一 tool_call 的片段落进同一桶按到达序拼接。
       const key = `${ci}:${typeof to.index === "number" ? to.index : ti}`;
       const fn = to.function;
-      if (fn && typeof fn === "object") appendFragment(acc, key, (fn as Record<string, unknown>).arguments);
-      else if (!fn) appendFragment(acc, key, to.arguments); // 扁平形态（无 function 包裹）
+      if (fn && typeof fn === "object") appendFragment(state, key, (fn as Record<string, unknown>).arguments);
+      else if (!fn) appendFragment(state, key, to.arguments); // 扁平形态（无 function 包裹）
     }
   }
   if (d.function_call && typeof d.function_call === "object") {
-    appendFragment(acc, `${ci}:fc`, (d.function_call as Record<string, unknown>).arguments);
+    appendFragment(state, `${ci}:fc`, (d.function_call as Record<string, unknown>).arguments);
   }
 }
 
-/** arguments 协议为 string 且流式分片只对 string 有意义；对象形态直发由逐帧单元覆盖（非字符串不归并）。 */
-function appendFragment(acc: Map<string, string>, key: string, args: unknown): void {
-  if (typeof args !== "string" || args.length === 0) return;
-  const prev = acc.get(key);
-  acc.set(key, prev === undefined ? args : prev + args);
+/** arguments 协议为 string 且流式分片只对 string 有意义；对象形态直发由逐帧单元覆盖（非字符串不归并）。
+ *  累积按 UTF-8 字节封顶 256 KiB（AC-V2a-14 同口径）：越顶即停，防止无界内存与越顶后的重扫。 */
+function appendFragment(state: MergerState, key: string, args: unknown): void {
+  if (typeof args !== "string" || args.length === 0 || state.overflowed) return;
+  const add = Buffer.byteLength(args, "utf8");
+  if (state.bytes + add > STREAM_WINDOW_OVERFLOW_LIMIT) {
+    state.overflowed = true;
+    return;
+  }
+  state.bytes += add;
+  const prev = state.acc.get(key);
+  state.acc.set(key, prev === undefined ? args : prev + args);
 }
 
 /**

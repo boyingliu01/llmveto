@@ -25,6 +25,8 @@ export interface PolicyDecision {
 export interface PolicyInput {
   readonly checkerId: string;
   readonly safetyClass: boolean;
+  /** §4.5 威胁归属：由调用方从 CheckerSpec.threat 下传（error 落链唯一来源）。 */
+  readonly threat?: string;
   readonly result: CheckerResult;
 }
 

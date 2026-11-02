@@ -3,7 +3,7 @@
   "evidence_schema_version": 2,
   "id": "sprint-20260927-46",
   "task_description": "llmveto v2a detection core (roadmap v2 slice 1/2): evidence schema canary-field versioning decision + 4 new checkers (thinking-signature-presence, tool-call-shape, usage-reconcile, fingerprint-probe) + canary engine with 'canary rotate' CLI + evil-relay simulator with dual-matrix CI. Deferred to v2b: periodic fingerprint patrol with provider trust score, billing reconciliation with 'report' CLI, Claude Code/Codex/promptfoo adapters",
-  "phase": 3,
+  "phase": 5,
   "status": "in_progress",
   "started_at": "2026-09-27T09:45:00.552Z",
   "phase_history": [
@@ -26,8 +26,24 @@
     {
       "phase": 3,
       "phase_name": "BUILD",
+      "status": "completed",
+      "started_at": "2026-10-14T15:49:11.126Z",
+      "completed_at": "2026-11-02T10:31:48.854Z",
+      "duration_seconds": 1622558
+    },
+    {
+      "phase": 4,
+      "phase_name": "VERIFY",
+      "status": "completed",
+      "started_at": "2026-11-02T10:32:12.960Z",
+      "completed_at": "2026-11-02T10:32:12.961Z",
+      "duration_seconds": 0
+    },
+    {
+      "phase": 5,
+      "phase_name": "SHIP",
       "status": "in_progress",
-      "started_at": "2026-10-14T15:49:11.126Z"
+      "started_at": "2026-11-02T10:32:20.051Z"
     }
   ],
   "isolation": {
@@ -51,7 +67,16 @@
       "R-PRE-2 CI gap: only bench.yml",
       "R-PRE-3 knowledge base stale (claims src empty)",
       "R-PRE-4 delphi walkthrough non-convergence precedent"
-    ]
+    ],
+    "slices_completed": "15/15 (SL-01..SL-15)",
+    "tests": "642 passed / 50 conditional skips (RELAY_MATRIX nightly)",
+    "coverage": "91.11/88.13/91.74/92.94",
+    "landing_commit": "e873693",
+    "build_gates": "G-CANARY closed; G-WINDOW hard bound PASS; G-PERF PASS (G2 64KB local tail, CI authoritative)",
+    "walkthrough": "APPROVED 3/3 (round 5 of 5, 100% consensus)",
+    "alignment": "PASS 15/15 REQ, 25/25 AC, score 96.0",
+    "gates": "xp-gate check --all exit 0 (10 passed / 7 skipped); release:gate 10/10; README parity PASS",
+    "residuals": "orchestrateCanary deferred v2b; empty-anchor brand type deferred; nightly budgets unmeasured; recording replay not re-run"
   },
   "metrics": {}
 }

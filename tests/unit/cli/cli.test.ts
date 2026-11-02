@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -9,6 +9,19 @@ import { EvidenceWriter } from "../../../src/evidence/writer.ts";
 // @test REQ-VETO-008
 // @intent CLI 冻结 5 命令集合（无 stub）+ doctor 4 检查项 + verify 三种失败模式
 // @covers AC-VETO-008-01 AC-VETO-008-02 AC-VETO-008-03 AC-VETO-008-04
+
+const CAN_SYMLINK = (() => {
+  const d = mkdtempSync(join(tmpdir(), "llmveto-symlink-probe-"));
+  try {
+    writeFileSync(join(d, "t"), "");
+    symlinkSync(join(d, "t"), join(d, "l"), "file");
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
+})();
 
 describe("SL-11 CLI (REQ-VETO-008)", () => {
   let dir: string;
@@ -298,5 +311,17 @@ describe("SL-11 CLI (REQ-VETO-008)", () => {
     expect(isDirectRun(pathToFileURL(process.argv[1]!).href, process.argv[1])).toBe(true);
     expect(isDirectRun("file:///somewhere/else/cli.ts", undefined)).toBe(false);
     expect(isDirectRun("not-a-url", process.argv[1])).toBe(false);
+  });
+
+  // npm 在 POSIX 上把 bin 装成符号链接（.bin/llmveto → dist/cli/index.js）。只比对字面路径会让
+  // 入口判定为 false，CLI 静默 exit 0 —— v0.3.0 的 release-gate smoke 即因此失败。
+  it.skipIf(!CAN_SYMLINK)("isDirectRun：argv1 是解析到本模块的符号链接 → true（解析真实路径）", () => {
+    const d = mkdtempSync(join(tmpdir(), "llmveto-binlink-"));
+    const real = join(d, "index.js");
+    const link = join(d, "llmveto");
+    writeFileSync(real, "");
+    symlinkSync(real, link, "file");
+    expect(isDirectRun(pathToFileURL(real).href, link)).toBe(true);
+    rmSync(d, { recursive: true, force: true });
   });
 });

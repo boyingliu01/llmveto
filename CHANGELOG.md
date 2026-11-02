@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file. The format is a
 take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] - 2026-11-02
+
+### Fixed
+
+- **The installed CLI on POSIX exited silently with no output.** npm installs the `bin` entry as a
+  symlink (`.bin/llmveto` → `dist/cli/index.js`), and the direct-run check compared literal paths,
+  concluded it was being imported as a module, and skipped the entry block — so `llmveto` with no
+  arguments exited 0 instead of 2. The check now resolves real paths before comparing. Found by the
+  tag-triggered release gate (`smoke row 1`); a symlinked-entry regression test covers it.
+
 ## [0.3.0] - 2026-11-02
 
 The v2a detection core: four new checkers (T1a canary return, T2a tool-call shape, T3a thinking
@@ -206,5 +216,6 @@ fail-closed blocking, and a tamper-evident audit trail.
 
 ---
 
+[0.3.1]: https://github.com/boyingliu01/llmveto/releases/tag/v0.3.1
 [0.3.0]: https://github.com/boyingliu01/llmveto/releases/tag/v0.3.0
 [0.2.0]: https://github.com/boyingliu01/llmveto/releases/tag/v0.2.0

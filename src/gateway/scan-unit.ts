@@ -1,5 +1,5 @@
 import type { ScanUnit, Transport } from "../shared/types.ts";
-import { STREAM_WINDOW_OVERFLOW_LIMIT } from "./window-store.ts";
+import { STREAM_WINDOW_OVERFLOW_LIMIT } from "../shared/types.ts";
 
 /**
  * @test REQ-VETO-002
@@ -275,6 +275,7 @@ export interface ToolCallArgsMerger {
   /**
    * 归并文本：各 tool_call 的片段按到达序拼接；**工具之间以 \n 分隔**——
    * 防止工具 A 尾部的半个转义与工具 B 开头的字符跨桶拼出原文里不存在的伪转义（FP 面）。
+   * 工具顺序 = 首次到达序，不保证 index 序；判定不依赖工具顺序（只做逐行结构校验）。
    */
   mergedText(): string;
   /** 已累积的 tool_call 数（0 = 本流未出现工具调用载荷）。 */

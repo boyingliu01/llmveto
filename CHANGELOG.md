@@ -100,7 +100,10 @@ windows and execution budgets, and an evil-relay testkit. The evidence schema st
   `input_malformed`; key absent when clean), `verdict: "error"` entries in `findings[]` with
   checker/threat preserved, and the `action_taken` priority order
   (`blocked_before_forward` > `blocked_before_deliver` > `terminated_after_delivery` >
-  `degraded_observational` > `warned` > `allowed`). Canary plaintext never enters evidence.
+  `degraded_observational` > `warned` > `allowed`). `action_taken` is a single summary value: when a
+  block and degradation coincide, the block wins and the degradation remains visible in the
+  persisted `findings[]` and in the aggregate `degraded` counter. Canary plaintext never enters
+  evidence.
 - **Streaming correctness** — per-checker windows with a single cursor advance per chunk, tool-call
   argument deltas merged across SSE frames before scanning, and UTF-16 offsets preserved across
   chunk boundaries.

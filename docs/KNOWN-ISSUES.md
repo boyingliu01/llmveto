@@ -30,6 +30,9 @@
   deterministic session anchor and is assigned a canary, but injection is skipped, so that canary
   never leaves the gateway. It can appear as a candidate in other sessions' snapshots yet cannot be
   legitimately returned by an upstream.
+- **Single-writer assumption**: the registry is designed for one gateway process per `stateDir`.
+  Running two daemons against the same state directory is not detected or locked; the last writer
+  wins and the other process's session state can be silently dropped.
 
 ### T2a: Tool-Call Structure Judgment
 

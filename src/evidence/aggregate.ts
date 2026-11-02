@@ -8,6 +8,11 @@ import type { EvidenceRecord } from "./schema.ts";
  *         收敛为显式 degraded 结果（doctor [DEGRADED] 前缀消费）。
  */
 
+/**
+ * degraded 是附加标记，不是与 allowed/blocked/warned/terminated 互斥的分桶：
+ * allowed+blocked+warned+terminated+degraded 一般不等于 total（一条记录可同时 degraded 且 blocked）。
+ * total 是记录数上界；组合场景以各计数并列读，勿用恒等式反推。
+ */
 export interface AggregateCounts {
   readonly total: number;
   readonly allowed: number;

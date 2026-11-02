@@ -1,6 +1,5 @@
 import type { ScanWindow } from "../shared/types.ts";
 import { STREAM_WINDOW_OVERFLOW_LIMIT } from "../shared/types.ts";
-export { STREAM_WINDOW_OVERFLOW_LIMIT } from "../shared/types.ts";
 
 /**
  * @test REQ-V2a-15

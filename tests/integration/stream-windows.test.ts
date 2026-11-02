@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { EvidenceWriter } from "../../src/evidence/writer.ts";
 import { startGateway } from "../../src/gateway/server.ts";
-import { exceedsWindowOverflowLimit, STREAM_WINDOW_OVERFLOW_LIMIT } from "../../src/gateway/window-store.ts";
-import type { CheckerSpec, ScanUnit, ScanWindow } from "../../src/shared/types.ts";
+import { exceedsWindowOverflowLimit } from "../../src/gateway/window-store.ts";
+import { STREAM_WINDOW_OVERFLOW_LIMIT, type CheckerSpec, type ScanUnit, type ScanWindow } from "../../src/shared/types.ts";
 import { startMockUpstream, type MockUpstream } from "../utils/mock-upstream.ts";
 import {
   OVERFLOW_CHUNK_BYTES,

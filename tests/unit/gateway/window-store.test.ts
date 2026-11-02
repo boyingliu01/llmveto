@@ -5,8 +5,8 @@ import {
   initialWindow,
   isWindowStore,
   recombineWindow,
-  STREAM_WINDOW_OVERFLOW_LIMIT,
 } from "../../../src/gateway/window-store.ts";
+import { STREAM_WINDOW_OVERFLOW_LIMIT } from "../../../src/shared/types.ts";
 import { GatewayCore } from "../../../src/gateway/core.ts";
 import { EvidenceWriter } from "../../../src/evidence/writer.ts";
 import type { CheckerSpec, ScanUnit, ScanWindow } from "../../../src/shared/types.ts";

@@ -3,10 +3,9 @@ import { decodeEscapes, isAuthHeader, buildRequestScanUnit, buildResponseScanUni
 import { encodeVetoEvent, parseSseFrames, tryParseJson } from "../../../src/gateway/sse-tee.ts";
 import { GatewayCore } from "../../../src/gateway/core.ts";
 import { EvidenceWriter } from "../../../src/evidence/writer.ts";
-import type { ScanWindow } from "../../../src/shared/types.ts";
+import { STREAM_WINDOW_OVERFLOW_LIMIT, type ScanWindow } from "../../../src/shared/types.ts";
 import { invisibleUnicodeScanNonStream } from "../../../src/checkers/invisible-unicode-scan.ts";
 import { egressSecretScan } from "../../../src/checkers/egress-secret-scan.ts";
-import { STREAM_WINDOW_OVERFLOW_LIMIT } from "../../../src/gateway/window-store.ts";
 
 // @test REQ-VETO-002
 // @intent 扫描单元组装 + SSE 帧解析 + veto-mid-stream 契约（AC-VETO-002-06 / AC-VETO-002-03）

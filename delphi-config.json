@@ -30,6 +30,35 @@
         }
       }
     },
+    "example-provider-v2a2": {
+      "$comment": "v2a Phase 4 code-walkthrough 复审档：三槽位换为三家不同厂家的可用模型（避免 local 槽位 echo 漂移与 reasoning 吃满预算）。",
+      "providers": {
+        "example-provider": {
+          "base_url": "https://internal-gateway.invalid/redacted",
+          "api_key_env": "OPENCODE_EXAMPLE_API_KEY"
+        }
+      },
+      "experts": {
+        "architecture": {
+          "provider": "example-provider",
+          "model": "g-deepseek-v4-flash",
+          "expected_echo": "deepseek-v4-flash",
+          "persona_file": "C:/Users/admin/.qoder/agents/delphi-architecture.md"
+        },
+        "technical": {
+          "provider": "example-provider",
+          "model": "g-qwen3.8-flash",
+          "expected_echo": "qwen3.8-flash",
+          "persona_file": "C:/Users/admin/.qoder/agents/delphi-technical.md"
+        },
+        "feasibility": {
+          "provider": "example-provider",
+          "model": "g-glm-5.3-flashx",
+          "expected_echo": "glm-5.3-flashx",
+          "persona_file": "C:/Users/admin/.qoder/agents/delphi-feasibility.md"
+        }
+      }
+    },
     "tokensaver": {
       "providers": {
         "tokensaver": {

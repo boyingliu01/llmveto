@@ -1,8 +1,9 @@
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { COMMANDS, assertNoV2Stubs, runCli } from "../../../src/cli/index.ts";
+import { COMMANDS, assertNoV2Stubs, isDirectRun, runCli } from "../../../src/cli/index.ts";
 import { EvidenceWriter } from "../../../src/evidence/writer.ts";
 
 // @test REQ-VETO-008
@@ -14,8 +15,8 @@ describe("SL-11 CLI (REQ-VETO-008)", () => {
   beforeAll(() => { dir = mkdtempSync(join(tmpdir(), "llmveto-cli-")); });
   afterAll(() => { rmSync(dir, { recursive: true, force: true }); });
 
-  it("AC-01 命令集合封闭枚举：仅 start/stop/status/doctor/verify", () => {
-    expect([...COMMANDS].sort()).toEqual(["doctor", "start", "status", "stop", "verify"]);
+  it("AC-01 命令集合封闭枚举：start/stop/status/doctor/verify + canary（SL-12 扩展 5→6）", () => {
+    expect([...COMMANDS].sort()).toEqual(["canary", "doctor", "start", "status", "stop", "verify"]);
     expect(() => assertNoV2Stubs()).not.toThrow();
   });
 
@@ -283,5 +284,19 @@ describe("SL-11 CLI (REQ-VETO-008)", () => {
     expect(line).toContain("[FAIL]");
     expect(r.exitCode).toBe(1);
     rmSync(d, { recursive: true, force: true });
+  });
+
+  it("start(daemon 子)：端口配置非法 → 异常被 runCli 兜底收敛为 exit=1（错误不逃逸出 CLI）", async () => {
+    const d = mkdtempSync(join(tmpdir(), "llmveto-portbad-"));
+    const r = await runCli("start", { stateDir: d, env: { LLMVETO_DAEMON_CHILD: "1", LLMVETO_PORT: "not-a-port" } });
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toMatch(/^error: /);
+    rmSync(d, { recursive: true, force: true });
+  });
+
+  it("isDirectRun：直跑 URL 匹配 → true；argv1 缺失 / 非法 URL → false（不抛）", () => {
+    expect(isDirectRun(pathToFileURL(process.argv[1]!).href, process.argv[1])).toBe(true);
+    expect(isDirectRun("file:///somewhere/else/cli.ts", undefined)).toBe(false);
+    expect(isDirectRun("not-a-url", process.argv[1])).toBe(false);
   });
 });

@@ -1,0 +1,42 @@
+# T5a 威胁样本：partial_mimic opponent (fpverify selective pattern imitation)
+# AC-V2a-09: Structure copied but content replaced with template
+
+request:
+  method: POST
+  path: /v1/chat/completions
+  headers:
+    content-type: application/json
+    authorization: "Bearer test-key"
+  body:
+    model: gpt-4o
+    messages:
+      - role: user
+        content: "Explain the theory of relativity"
+
+response:
+  status: 200
+  headers:
+    content-type: application/json
+  body:
+    id: chatcmpl-mimic-001
+    object: chat.completion
+    created: 1234567890
+    choices:
+      - index: 0
+        message:
+          role: assistant
+          content: "[MIMICKED]"
+        finish_reason: stop
+    usage:
+      prompt_tokens: 15
+      completion_tokens: 1
+      total_tokens: 16
+
+expected:
+  verdict: finding
+  checker: thinking-signature-presence
+  threat: T5a
+  opponent: partial_mimic
+  rule_id: template-response
+  action: warn
+  rationale: "Response uses template placeholder instead of genuine content — partial mimicry attack"

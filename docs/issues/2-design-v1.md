@@ -34,7 +34,7 @@ Delphi/XP-Gate(.delphi-config) ─────┤→ [反代核] → [checker �
 3. **策略引擎**：`verdict → action` 的**确定性映射表**。v1 = 内置固定表（每 checker 一行，用户不可配置）；v3 = 可配置动作 + 全局配置 > 项目级配置（防仓库级劫持）。action 语义与 transport 组合的完整行为见 REQ §行为矩阵；`redact` 为 v3 能力，v1 不可达。
 4. **evidence store**：append-only JSONL + SHA-256 链式哈希；字段表见 TEST 契约 #4（v1 冻结）；信任边界与崩溃/并发等级见 REQ §evidence 信任边界；`llmveto verify` 为 v1 交付的校验提供者。
 5. **CLI**：v1 冻结为 5 个命令 —— `start` / `stop` / `status` / `doctor` / `verify`（证据链校验 + JSONL schema 断言）。`report`（计费对账/provider 健康趋势）与 `canary rotate` 属 v2，**v1 不注册 stub**（未实现的命令比缺失的命令更有害）。
-   - **`doctor` v1 检查项 = 冻结封闭枚举（本清单为唯一权威，README 引用之）**：① 受管配置覆写/漂移断言（遍历 `MANAGED_CONFIG_IDS`）；② 网关端口连通（`127.0.0.1` 监听探活）；③ `--write-managed-config` 写入托管配置（`experimental.policies` 写入失败仅告警）；④ evidence 链 `verify` 可跑通。**TLS/CA 信任检查项不在 v1 doctor 检查集内**（v1 不实现 TLS 拦截，放一个恒 `not-applicable` 的检查项 = 检查项空转，故 v1 直接不注册；该检查项随 TLS 拦截能力于 v3 一并引入）。
+   - **`doctor` 检查项 = 冻结封闭枚举（本清单为唯一权威，README 引用之）**：① 受管配置覆写/漂移断言（遍历 `MANAGED_CONFIG_IDS`）；② 网关端口连通（`127.0.0.1` 监听探活）；③ `--write-managed-config` 写入托管配置（`experimental.policies` 写入失败仅告警）；④ evidence 链 `verify` 可跑通。**v2a 扩项 [AC-VETO-008-02 文字同批订正]**：该封闭枚举由 v1 的 4 项扩为 6 项——新增 ⑤ `doctor.canary-registry`（registry 文件合法 + 轮换计数展示）与 ⑥ `doctor.coverage-counters`（覆盖面计数器核对，非零计数行加 `[DEGRADED]` 前缀标记）。**TLS/CA 信任检查项不在 v1 doctor 检查集内**（v1 不实现 TLS 拦截，放一个恒 `not-applicable` 的检查项 = 检查项空转，故 v1 直接不注册；该检查项随 TLS 拦截能力于 v3 一并引入）。
 
 ### 扫描单元定义（可测试性前置，v1 冻结）
 

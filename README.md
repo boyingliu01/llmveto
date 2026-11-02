@@ -8,13 +8,21 @@ A local LLM traffic security gateway daemon — making traffic between agents an
 > Existing tools are polarized: observational proxies neither verify nor block, while agent execution firewalls cannot see LLM traffic.
 > **The gap llmveto fills = deterministic verification at the LLM traffic layer + fail-closed blocking.**
 
-## What v1 does and does not do (read this first)
+## What v1 provides, what v2a adds (read this first)
 
-| | v1 (current) |
+| | v1 baseline |
 |---|---|
 | **Provides** | Outbound credential interception (T1b, `block`) · Invisible-character detection (T2c, response-level rejection for non-streaming / stream termination for streaming) · Model **field-consistency** warning (T3a subset) · Vetting of managed paths · Upstream-failure fail-closed (502 + evidence trail, daemon survives) · Full evidence trail + `llmveto verify` |
-| **Does not provide** | Data-exfiltration detection (T1a, canaries are v2) · Tool-call **structure** judgment (T2a, RCE-grade, v2; note: tool-call **payloads** are already in the scan surface, see below) · Response-injection protection (T2b, v2) · Model **authenticity** proof (v2 fingerprint) · Usage reconciliation (T4x, v2) · Bypass discovery (v3) · TLS interception (v3) |
+| **Does not provide** | Data-exfiltration detection (T1a, canaries are v2) · Tool-call **structure** judgment (T2a, RCE-grade, v2; note: tool-call **payloads** are already in the scan surface, see below) · Invisible-character coverage of the tool-call **parameter path** (T2c, covered only from v2a) · Streaming forensic offsets: streaming-hit `offsets` are not forensically usable in v1 (fixed from v2a) · Response-injection protection (T2b, v3) · Model **authenticity** proof (v2 fingerprint) · Usage reconciliation (T4x, v2) · Bypass discovery (v3) · TLS interception (v3) |
 | **Blocking granularity** | Bytes of a streaming response already forwarded are **irrevocable**; v1's streaming block = stream termination, not swallowing bytes |
+
+**v2a (0.3.0) adds** — T1a canary engine (27-character per-session canary injected into the last
+user text on managed routes; cross-session return scan → `block`; `llmveto canary rotate`) · T2a
+tool-call-shape checker (`block`: unknown tool name, missing required arguments, invalid JSON
+arguments) · T3a thinking-signature presence (`warn`) · T4a usage reconciliation (`warn`) ·
+per-checker streaming windows with a 256 KiB hard bound · per-checker execution budgets (G1/G3) ·
+optional top-level evidence `reason` while the evidence schema stays **v1**. The canary registry
+lives at `stateDir/canary-registry.json` and is wired automatically by `llmveto start`.
 
 **Scan-surface statement (after the 2026-09-27 fixes)**: checkers see `messages[*].content` / `system` / `tools` / custom `extra_headers`,
 plus **tool-call payloads** `tool_calls[*].function.arguments` (including legacy `function_call`, on both request and response sides).
@@ -22,7 +30,7 @@ Each scan unit produces two projections — "raw text" and "unescape-restored te
 **writing invisible characters with escape sequences no longer evades detection**; multiple backslashes (`\\uXXXX` etc.) collapse to the innermost `\uXXXX` pair during restoration and
 fall into the restored projection as well, adding no evasion surface. Still **not** covered: URL encoding (`%E2%80%8B`), base64 and other second-layer encodings,
 NFKC-normalized homoglyph variants, custom PUA encodings, and authentication headers (`Authorization` and 5 more are excluded from scan units by design, see REQ §T1b row).
-**Tool-call "structure" judgment** (argument shape / dangerous commands / unauthorized tool names) belongs to v2; v1 does not judge "malicious commands written in ordinary characters".
+**Tool-call "structure" judgment** (argument shape / dangerous commands / unauthorized tool names) was v1's boundary; **v2a adds T2a structure checks** for unknown tool names, missing required arguments, and invalid JSON arguments. Dangerous-command allowlists and semantic intent judgment remain out of scope.
 
 For the full statement see [REQ §v1 residual-risk register](docs/issues/1-req-threat-model.md). **Installing the gateway ≠ being protected**: traffic from clients that are not onboarded is entirely unmanaged in v1.
 
@@ -120,7 +128,7 @@ Requirements: **Bun ≥ 1.1** (package management + test/build driver) and **Nod
 
 ## CLI
 
-v1 is frozen at 5 commands (no stubs for unimplemented commands). The distribution artifact is `dist/cli/index.js` (`llmveto`); in development mode use `bun run llmveto <cmd>` or `bun run src/cli/index.ts <cmd>`:
+v2a extends the command set 5→6 by adding `llmveto canary rotate` (v2a design D-14; no stubs for unimplemented commands). The distribution artifact is `dist/cli/index.js` (`llmveto`); in development mode use `bun run llmveto <cmd>` or `bun run src/cli/index.ts <cmd>`:
 
 ```bash
 llmveto start      # start the gateway (loopback-only, background daemon; dev mode: bun run src/cli/index.ts start)
@@ -128,13 +136,14 @@ llmveto status     # status (real liveness probe; stale pid files are reported a
 llmveto stop       # stop the background daemon
 llmveto doctor     # managed-config enumeration override/drift assertions + port reachability + evidence chain; --write-managed-config writes real configs
 llmveto verify     # evidence chain integrity + schema assertions
+llmveto canary rotate  # rotate canary secrets (v2a D-03: via the daemon's loopback control channel; offline via the canary-rotate.request marker file)
 ```
 
-`report` (billing reconciliation) and `canary rotate` (canary rotation) belong to v2. v1's `doctor` check items are a **closed enumeration** (managed-config override/drift assertions + port reachability + `--write-managed-config` + evidence-chain verification); the authoritative list is in DESIGN §component 5. TLS/CA trust checks arrive only with TLS interception (v3); **v1 does not register that check item** (no permanently-empty check items).
+`report` (billing reconciliation) belongs to v2. The `doctor` check items remain a **closed enumeration**, extended by v2a from 4 to 6 items: managed-config override/drift assertions + port reachability + `--write-managed-config` + evidence-chain verification, plus `doctor.canary-registry` and `doctor.coverage-counters`; the authoritative list is in DESIGN §component 5. TLS/CA trust checks arrive only with TLS interception (v3); **v1 does not register that check item** (no permanently-empty check items).
 
 ## Status
 
-The v1 product shell is complete (M1–M3): real path routing, adapters that truly read/write configs + real doctor drift, portable dist distribution (ADR-0001), background daemon lifecycle, CLI black-box smoke + daemon lifecycle E2E. The security core (proxy core / checkers / fail-closed / evidence chain) has been real since v0.1. Version `0.2.0`. See the [ROADMAP](docs/issues/5-roadmap.md).
+The v1 product shell is complete (M1–M3): real path routing, adapters that truly read/write configs + real doctor drift, portable dist distribution (ADR-0001), background daemon lifecycle, CLI black-box smoke + daemon lifecycle E2E. The security core (proxy core / checkers / fail-closed / evidence chain) has been real since v0.1. The v2a detection core landed in v0.3.0: T1a canary return scan, T2a tool-call shape, T3a thinking signature, T4a usage reconciliation, per-checker stream windows and budgets. Version `0.3.0`. See the [ROADMAP](docs/issues/5-roadmap.md).
 
 **Evidence trust statement (quoted verbatim from the [REQ](docs/issues/1-req-threat-model.md))**: the evidence chain's adversary is "accidental corruption and cheap tampering", not "a process that can read and write your disk". Claiming "tamper-proof" would be an over-promise.
 

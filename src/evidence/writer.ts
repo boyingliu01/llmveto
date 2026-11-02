@@ -1,42 +1,24 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, openSync, readSync, closeSync, statSync } from "node:fs";
-import type { ActionTaken, BodyCapture } from "../shared/types.ts";
 import { GENESIS_HASH, sealRecord } from "./chain.ts";
-import {
-  EVIDENCE_VERSION,
-  validateEvidence,
-  type EvidenceFinding,
-  type EvidenceRecord,
-  type ResponseDelivered,
-} from "./schema.ts";
+import { EVIDENCE_VERSION, validateEvidence, type EvidenceRecord } from "./schema.ts";
 
 /**
  * @test REQ-VETO-007
  * @intent evidence 单写者 append-only JSONL + fsync best-effort + 崩溃残留半行丢弃。
  */
 
-export interface AppendInput {
-  readonly session_id: string;
-  readonly turn_id: string;
-  readonly request_id: string;
-  readonly client: string;
-  readonly provider_id: string;
-  readonly endpoint_host: string;
-  readonly model_requested: string | null;
-  readonly model_responded: string | null;
-  readonly transport: "stream" | "non-stream";
-  readonly request_bytes: number;
-  readonly response_bytes: number;
-  readonly chunk_count: number;
-  readonly latency: number;
-  readonly findings: readonly EvidenceFinding[];
-  readonly action_taken: ActionTaken;
-  readonly response_delivered: ResponseDelivered;
-  readonly request_body_sha256: string;
-  readonly response_body_sha256: string;
-  readonly body_capture: BodyCapture;
+// AppendInput = EvidenceRecord 去掉链封存字段 + ts 可选；字段表以 schema.ts 为单一事实源，
+// 防止 schema 与 writer 两处手工清单漂移（jscpd 曾报 19 行克隆）。
+// reason（D-10 可选位，SL-03）经 Omit 保留其可选性：未传时落盘记录键整体缺席。
+export type AppendInput = Omit<
+  EvidenceRecord,
+  "evidence_version" | "event_id" | "seq" | "ts" | "prev_hash" | "record_hash" | "canary" | "reason"
+> & {
   readonly ts?: string;
-}
+  /** D-10 可选位：显式 undefined 视同缺席（writer 侧键不落盘），故类型允许 undefined。 */
+  readonly reason?: string | undefined;
+};
 
 export class EvidenceWriter {
   private seq = 0;
@@ -104,6 +86,8 @@ export class EvidenceWriter {
         latency: input.latency,
         findings: input.findings,
         action_taken: input.action_taken,
+        // D-10：reason 可选位 —— 未传时键整体缺席（§14.4-4），v1 记录形状零扰动。
+        ...(input.reason !== undefined ? { reason: input.reason } : {}),
         response_delivered: input.response_delivered,
         request_body_sha256: input.request_body_sha256,
         response_body_sha256: input.response_body_sha256,

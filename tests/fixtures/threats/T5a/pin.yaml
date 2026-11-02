@@ -1,0 +1,56 @@
+# T5a 威胁样本：pin opponent (fpverify parameter pinning/fixation)
+# AC-V2a-09: Arguments pinned to fixed values regardless of request
+
+request:
+  method: POST
+  path: /v1/chat/completions
+  headers:
+    content-type: application/json
+    authorization: "Bearer test-key"
+  body:
+    model: gpt-4o
+    messages:
+      - role: user
+        content: "Search for books about machine learning"
+    tools:
+      - type: function
+        function:
+          name: search
+          parameters:
+            type: object
+            required: [query]
+            properties:
+              query:
+                type: string
+
+response:
+  status: 200
+  headers:
+    content-type: application/json
+  body:
+    id: chatcmpl-pin-001
+    model: gpt-4o
+    choices:
+      - index: 0
+        message:
+          role: assistant
+          content: null
+          tool_calls:
+            - id: call_pin_001
+              type: function
+              function:
+                name: search
+                arguments: '{"pinned": true, "original": "books about machine learning"}'
+    usage:
+      prompt_tokens: 25
+      completion_tokens: 20
+      total_tokens: 45
+
+expected:
+  verdict: finding
+  checker: tool-call-shape
+  threat: T5a
+  opponent: pin
+  rule_id: malformed-arguments
+  action: block
+  rationale: "Arguments have been pinned to fixed structure, ignoring user intent — indicates relay parameter fixation attack"

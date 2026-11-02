@@ -60,15 +60,15 @@ expected:
    | `provider_id` / `endpoint_host` / `model_requested` / `model_responded` | string | ✅ | 过闸归属与模型字段（`model_responded` 可为 `null`） |
    | `transport` | string | ✅ | `stream` \| `non-stream` |
    | `request_bytes` / `response_bytes` / `chunk_count` | int | ✅ | 体量观测 |
-   | `latency` | object | ✅ | `{ttft_ms, total_ms, request_gate_ms, scan_ms}`（对齐 DESIGN §性能预算三台门） |
+   | `latency` | object | ✅ | `{ttft_ms, total_ms, request_gate_ms, scan_ms}`（对齐 DESIGN §性能预算三台门）——**背离加注 [AC-V2a-16⑤]**：v1 实现为标量 `total_ms` 语义，`{ttft_ms, request_gate_ms, scan_ms}` 四元组未实装（背离，排期未定） |
    | `findings` | array | ✅ | `{checker, threat, verdict, severity, offsets[], rule_id}` |
-   | `action_taken` | string | ✅ | `allowed` \| `warned` \| `blocked_before_forward` \| `blocked_before_deliver` \| `terminated_after_delivery` \| `degraded_observational`（末值 **@v2 起可达**：v1 无观测类 checker，verify schema 须允许该枚举但 v1 fixture 不覆盖） |
-   | `reason` | string | ❌ | 如 `checker_timeout` / `scanner_error` |
+   | `action_taken` | string | ✅ | `allowed` \| `warned` \| `blocked_before_forward` \| `blocked_before_deliver` \| `terminated_after_delivery` \| `degraded_observational`（末值 **@v2 起可达**：v1 无观测类 checker，verify schema 须允许该枚举但 v2a 起覆盖；v1 记录集内仍为 0） |
+   | `reason` | string | ❌ | 如 `checker_timeout` / `scanner_error`——**背离加注 [AC-V2a-16⑤]**：v1 契约有此可选位、实现自 v2a 起实装，词汇表 = §4.5 六值 |
    | `response_delivered` | object | ✅ | `{partial: bool, delivered_chunks: int}`（流式撤回边界的取证依据） |
    | `usage` / `cache_reported` | object | ❌ | 上游自报值原样落盘（仅取证，不判定；v1 无对账逻辑） |
    | `request_body_sha256` / `response_body_sha256` | string | ✅ | 默认仅哈希；明文受 `evidence.body_capture` 控制（DESIGN §脱敏与留痕范围） |
    | `prev_hash` / `record_hash` | string | ✅ | SHA-256 链；`record_hash = H(prev_hash ‖ canonical_json(record_minus_hashes))` |
-   | `canary` | null | ✅ | v1 恒为 `null`（字段占位，能力属 v2）——**不得**因字段存在而声称 v1 有金丝雀 |
+   | `canary` | null | ✅ | v1 恒为 `null`（字段占位，能力属 v2）——**不得**因字段存在而声称 v1 有金丝雀；**加注 [AC-V2a-16③]**：保留位（v2a 起仍恒 null，命中写 `findings[]`） |
 
    链完整性与 schema 由 `llmveto verify` 在 **v1 内**提供校验（否则 v1 写出的证据在 v1 内不可验证）。
 

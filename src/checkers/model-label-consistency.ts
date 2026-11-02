@@ -56,5 +56,6 @@ export const MODEL_LABEL_CONSISTENCY_SPEC = {
   side: "response",
   synchronous: true,
   safetyClass: false, // → policy 层 finding=warn（观测/告警类）
+  threat: "T3a",
   runNonStream: modelLabelConsistency,
 } as const;

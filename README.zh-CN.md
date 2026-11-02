@@ -8,13 +8,15 @@
 > 现有工具两极分化：观测型代理不验证不阻断，agent 执行防火墙看不见 LLM 流量。
 > **llmveto 填补的空白 = LLM 流量层的确定性验证 + fail-closed 阻断。**
 
-## v1 能做什么、不能做什么（必读）
+## v1 提供什么、v2a 新增什么（必读）
 
-| | v1（当前） |
+| | v1 基线 |
 |---|---|
 | **提供** | 出站凭据拦截（T1b，`block`）· 隐形字符检测（T2c，非流式阻断 / 流式终止）· 模型**字段一致性**告警（T3a 子集）· 受管路径过闸 · 上游故障 fail-closed（502 + 留痕，daemon 存活）· 全量 evidence 留痕 + `llmveto verify` |
-| **不提供** | 数据外泄检测（T1a，金丝雀属 v2）· tool-call **结构**判定（T2a，RCE 级，v2；注：tool-call **载荷**已进扫描面，见下）· 响应注入防护（T2b，v2）· 模型**真实性**证明（v2 指纹）· usage 对账（T4x，v2）· 旁路发现（v3）· TLS 拦截（v3） |
-| **阻断粒度** | 流式响应已开始转发的字节**不可撤回**；v1 的流式阻断 = 终止流，不是吞掉字节 |
+| **不提供** | 数据外泄检测（T1a，金丝雀属 v2a）· tool-call **结构**判定（T2a，v2a；注：tool-call **载荷**已进扫描面，见下）· 响应注入防护（T2b，v3）· 模型**真实性**证明（v2 指纹）· usage 对账（T4x，v2a 起为观测类）· 旁路发现（v3）· TLS 拦截（v3） |
+| **阻断粒度** | 流式响应已开始转发的字节**不可撤回**；流式阻断 = 终止流，不是吞掉字节 |
+
+**v2a（0.3.0）新增** —— T1a 金丝雀引擎（受管路径向末条 user 文本注入 27 字符会话 canary；跨会话回流扫描命中 → `block`；`llmveto canary rotate` 轮换）· T2a tool-call-shape（`block`：未知工具名 / 缺必需参数 / arguments 非法 JSON）· T3a thinking 签名存在性（`warn`）· T4a usage 对账（`warn`）· 按 checker 分持的流式窗口（256 KiB 硬顶）· 按 checker 的执行预算（G1/G3）· evidence 可选顶层 `reason`（schema 仍为 **v1**）。canary registry 落盘于 `stateDir/canary-registry.json`，由 `llmveto start` 自动接线。
 
 **扫描面口径（2026-09-27 修复后）**：checker 能看到 `messages[*].content` / `system` / `tools` / 自定义 `extra_headers`，
 以及**工具调用载荷** `tool_calls[*].function.arguments`（含 legacy `function_call`，请求侧与响应侧均含）。
@@ -22,7 +24,7 @@
 故**用转义写法书写隐形字符不再能绕过检测**；多重反斜杠（`\\uXXXX` 等）在还原时最内层 `\uXXXX` 成对塌缩，
 同样落入还原投影，不额外构成规避面。仍**不**覆盖：URL 编码（`%E2%80%8B`）、base64 等二次编码、
 NFKC 归一化后同形变体、自定义 PUA 编码、认证类头（`Authorization` 等 6 项按设计排除出扫描单元，见 REQ §T1b 行）。
-**tool-call 的"结构"判定**（参数形态 / 危险命令 / 越权工具名）属 v2，v1 对"用正常字符写出的恶意命令"不判定。
+**tool-call 的"结构"判定**（参数形态 / 危险命令 / 越权工具名）曾是 v1 边界；**v2a 新增 T2a 结构检查**（未知工具名 / 缺必需参数 / arguments 非法 JSON）。危险命令 allowlist 与语义意图判定仍不在范围内。
 
 完整口径见 [REQ §v1 残余风险登记表](docs/issues/1-req-threat-model.md)。**装上网关 ≠ 已被保护**：未接入客户端的流量在 v1 完全不受管。
 
@@ -120,7 +122,7 @@ llmveto stop
 
 ## CLI
 
-v1 冻结为 5 个命令（未实现的命令不留 stub）。分发物为 `dist/cli/index.js`（`llmveto`）；开发态用 `bun run llmveto <cmd>` 或 `bun run src/cli/index.ts <cmd>`：
+v2a 将命令集由 5 扩为 6（新增 `llmveto canary rotate`；未实现的命令仍不留 stub）。分发物为 `dist/cli/index.js`（`llmveto`）；开发态用 `bun run llmveto <cmd>` 或 `bun run src/cli/index.ts <cmd>`：
 
 ```bash
 llmveto start      # 启动网关（loopback-only，后台 daemon；开发态：bun run src/cli/index.ts start）
@@ -128,13 +130,14 @@ llmveto status     # 查看状态（真实探活，僵尸 pid 文件识别为 no
 llmveto stop       # 停止后台 daemon
 llmveto doctor     # 受管配置枚举的覆写/漂移断言 + 端口连通 + evidence 链；--write-managed-config 写真实配置
 llmveto verify     # evidence 链完整性 + schema 断言
+llmveto canary rotate  # 轮换 canary（在线经 daemon loopback 控制通道；离线写零字节 canary-rotate.request 哨兵）
 ```
 
-`report`（计费对账）与 `canary rotate`（金丝雀轮换）属 v2。`doctor` 的 v1 检查项为**封闭枚举**（受管配置覆写/漂移断言 + 端口连通 + `--write-managed-config` + evidence 链可验证），权威清单见 DESIGN §组件 5；TLS/CA 信任检查项随 TLS 拦截能力（v3）才引入，**v1 不注册该检查项**（不放恒空的检查项）。
+`report`（计费对账）仍属 v2b。`doctor` 检查项为**封闭枚举**，v2a 由 4 项扩为 6 项（新增 `doctor.canary-registry` 与 `doctor.coverage-counters`），权威清单见 DESIGN §组件 5；TLS/CA 信任检查项随 TLS 拦截能力（v3）才引入，**不注册恒空检查项**。
 
 ## 状态
 
-v1 产品外壳已补齐（M1–M3）：真实路径路由、adapters 真实读写配置 + doctor 真漂移、可移植 dist 分发（ADR-0001）、后台 daemon 生命周期、CLI 黑盒冒烟 + daemon 生命周期 E2E。安全内核（反代核 / checker / fail-closed / evidence 链）自 v0.1 即真实。版本 `0.2.0`。详见 [ROADMAP](docs/issues/5-roadmap.md)。
+v1 产品外壳已补齐（M1–M3）：真实路径路由、adapters 真实读写配置 + doctor 真漂移、可移植 dist 分发（ADR-0001）、后台 daemon 生命周期、CLI 黑盒冒烟 + daemon 生命周期 E2E。安全内核（反代核 / checker / fail-closed / evidence 链）自 v0.1 即真实。v2a 检测核心随 v0.3.0 落地：T1a 金丝雀回流扫描、T2a tool-call 结构、T3a thinking 签名、T4a usage 对账、按 checker 分持的流式窗口与执行预算。版本 `0.3.0`。详见 [ROADMAP](docs/issues/5-roadmap.md)。
 
 **evidence 信任声明（原样引自 [REQ](docs/issues/1-req-threat-model.md)）**：evidence 链的对抗对象是"意外损坏与廉价篡改"，不是"能读写你磁盘的进程"。声称"防篡改"即为过度承诺。
 

@@ -1,0 +1,64 @@
+name: Relay Nightly (13 Opponents)
+# SL-14: nightly evil-relay — 13 opponents in a 4-way matrix (3/3/3/4 per job),
+# port-contention fallback = serial single fork.
+# 档位依据：docs/plans/2026-09-27-v2a-requirements.md §8.4。
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      opponent_filter:
+        description: 'Regex over opponent id (empty = run the matrix shard pattern)'
+        required: false
+        default: ''
+permissions:
+  contents: read
+jobs:
+  relay-matrix:
+    runs-on: ubuntu-latest
+    # 45 = 并行档 30 + 串行回退余量（§8.4 回退档）；回退与并行同 job 内切换，
+    # 故 job 上限必须覆盖两档，不能停在 30 让回退步被 job 先杀掉。
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # opponent id 取自 testkit/evil-relay.ts 的 OpponentId（下划线命名）；
+        # 13 个对手按 4 路分片，每 job ≤4。
+        include:
+          - { shard: 1, pattern: 'honest|drift|quantized' }
+          - { shard: 2, pattern: 'swap|pin|filter_en' }
+          - { shard: 3, pattern: 'true_random|cache|partial_mimic' }
+          - { shard: 4, pattern: 'prompt_injection|data_exfiltration|model_confusion|tool_manipulation' }
+    steps:
+      - uses: actions/checkout@v4
+      # 安装面 bun（唯一锁文件 bun.lock），运行面 node（与 test.yml / 本地一致）。
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "1.4.3" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "24" }
+      - run: bun install --frozen-lockfile
+      - name: Evil-relay tests (parallel)
+        id: parallel_run
+        continue-on-error: true
+        timeout-minutes: 30
+        env:
+          SHARD_PATTERN: ${{ matrix.pattern }}
+          OPPONENT_FILTER: ${{ github.event.inputs.opponent_filter }}
+          RELAY_MATRIX: "1"
+        run: |
+          pattern="${OPPONENT_FILTER:-$SHARD_PATTERN}"
+          echo "Shard ${{ matrix.shard }} pattern: $pattern"
+          npx vitest run tests/integration/relay-detection.test.ts \
+            --testNamePattern="$pattern" --passWithNoTests=false
+      - name: Retry serial on port contention
+        if: steps.parallel_run.outcome == 'failure'
+        env:
+          SHARD_PATTERN: ${{ matrix.pattern }}
+          OPPONENT_FILTER: ${{ github.event.inputs.opponent_filter }}
+          RELAY_MATRIX: "1"
+        run: |
+          pattern="${OPPONENT_FILTER:-$SHARD_PATTERN}"
+          echo "Retrying serial execution (port contention fallback)..."
+          npx vitest run tests/integration/relay-detection.test.ts \
+            --testNamePattern="$pattern" --passWithNoTests=false \
+            --pool=forks --poolOptions.forks.singleFork=true

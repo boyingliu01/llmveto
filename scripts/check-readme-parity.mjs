@@ -34,7 +34,7 @@ const ORIGINAL_HEADINGS = [
 // 中英标题冻结对表（zh → en）；双文件同 PR 同改，改任一侧标题必须同步此处
 const HEADING_PAIRS = [
   ["llmveto", "llmveto"],
-  ["v1 能做什么、不能做什么（必读）", "What v1 does and does not do (read this first)"],
+  ["v1 提供什么、v2a 新增什么（必读）", "What v1 provides, what v2a adds (read this first)"],
   ["文档", "Documentation"],
   ["架构（v1）", "Architecture (v1)"],
   ["分发与 runtime 承诺（两个不同的承诺，勿混用）", "Distribution and runtime promises (two different promises — do not conflate)"],

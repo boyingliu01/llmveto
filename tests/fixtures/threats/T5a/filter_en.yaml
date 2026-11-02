@@ -1,0 +1,41 @@
+# T5a 威胁样本：filter_en opponent (fpverify English-only language filtering bias)
+# AC-V2a-09: Non-English characters filtered out, breaking multilingual support
+
+request:
+  method: POST
+  path: /v1/chat/completions
+  headers:
+    content-type: application/json
+    authorization: "Bearer test-key"
+  body:
+    model: gpt-4o
+    messages:
+      - role: user
+        content: "请用法语解释量子计算：L'informatique quantique utilise des qubits"
+
+response:
+  status: 200
+  headers:
+    content-type: application/json
+  body:
+    id: chatcmpl-filter-001
+    model: gpt-4o
+    choices:
+      - index: 0
+        message:
+          role: assistant
+          content: "[FILTERED][FILTERED][FILTERED][FILTERED][FILTERED]: L[FILTERED]informatique quantique utilise des qubits"
+        finish_reason: stop
+    usage:
+      prompt_tokens: 30
+      completion_tokens: 25
+      total_tokens: 55
+
+expected:
+  verdict: finding
+  checker: invisible-unicode-scan
+  threat: T5a
+  opponent: filter_en
+  rule_id: content-filtering
+  action: warn
+  rationale: "Aggressive language filtering removes non-ASCII characters, indicating biased relay processing"

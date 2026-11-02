@@ -1,0 +1,23 @@
+# @test REQ-V2a-01 / AC-V2a-01（SL-01 tracer）：T2c 载体扩展——工具调用 arguments 路径。
+# 遵循本目录既有 schema（threat_id/checker/cases[{id,chunks,expected_codepoints,cross_chunk}]）。
+# 跨帧归并样本扩展两个可选位：merge: tool-call-arguments + fragments（arguments 内容切片）
+# —— 检出矩阵 runner 据此构造完整 delta 帧喂 StreamToolCallArgsMerger 归并后再扫。
+# （切片若写成完整 JSON 帧会因冒号破坏 yaml-subset 的 list 标量解析，故以内容切片表达。）
+threat_id: T2c
+checker: invisible-unicode-scan
+cases:
+  - id: t2c-tool-call-args-inline
+    # arguments 载体单帧形态：载荷文本含真实 U+200B（逐帧扫描即可见，与 content 路径同判）
+    chunks:
+      - 'a​b.txt'
+    expected_codepoints: ['200B']
+  - id: t2c-tool-call-args-cross-chunk-merged
+    # AC given：U+200B（UTF-8 E2 80 8B）以字面转义 \u200b 书写且六字符转义被帧边界切开
+    # 藏于 delta.tool_calls[*].function.arguments —— 任一单帧均无完整命中（v1 漏检面），
+    # 必须经网关按 tool_call index 归并后再扫才检出（SL-01 闭合）。
+    merge: tool-call-arguments
+    cross_chunk: true
+    fragments:
+      - 'echo \u200'
+      - 'b.png'
+    expected_codepoints: ['200B']

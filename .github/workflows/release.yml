@@ -36,7 +36,7 @@ jobs:
       - name: Test
         run: bun run test
 
-      - name: Release gate (authoritative: pack / install-tarball / smoke with Bun-stripped PATH / publish-dry-run)
+      - name: "Release gate (authoritative: pack / install-tarball / smoke with Bun-stripped PATH / publish-dry-run)"
         run: npm run release:gate
 
       - name: Version consistency (tag vs package.json, AC-REL-06a)

@@ -4,6 +4,152 @@ All notable changes to this project are documented in this file. The format is a
 take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-11-02
+
+The v2a detection core: four new checkers (T1a canary return, T2a tool-call shape, T3a thinking
+signature, T4a usage reconciliation), the canary engine with rotation, per-checker streaming
+windows and execution budgets, and an evil-relay testkit. The evidence schema stays at **v1**
+(`canary` remains `null`); the only additive field is an optional top-level `reason`.
+
+### Added
+
+- **Canary engine (T1a)** — per-session 27-character canary (`llmveto-canary-` + 12 hex) allocated
+  on managed routes (`opencode/openai`, `opencode/anthropic`, `opencode/mock`, `delphi/default`),
+  injected into the last user text part through the six-branch pure function (append-only; no
+  user message or unparsable body → `inject_skipped`, body untouched), and scanned on responses
+  for **another session's** canary. A hit is a safety-class `finding` → `block` (stream termination
+  after delivery). Session key: `x-llmveto-session-id` (trimmed, non-empty) else
+  `sha256(length-prefixed first-user text parts)` first 16 hex chars; empty → deterministic `"0:"`.
+- **Canary registry** at `stateDir/canary-registry.json`: single-writer atomic `tmp`+`rename`,
+  lazy eviction (TTL 24 h / LRU 64, whichever first), load validation degrading to
+  `registry_unavailable` (no injection, no matching, top-level `reason`, counters — never silent).
+  The CLI daemon now passes this path, so injection and rotation are reachable from
+  `llmveto start`.
+- **Canary control channel** `POST /_llmveto/canary/rotate` (intercepted before route resolution,
+  no evidence record) and `llmveto canary rotate`: online via the loopback endpoint with
+  confirmation, offline via a zero-byte `canary-rotate.request` sentinel consumed on next start.
+  `GET /_llmveto/metrics` exposes live `inject_skipped` / `registry_unavailable` /
+  `canary_injected` counters.
+- **Tool-call-shape checker (T2a, safety class)** — response side, three rules: unknown tool name,
+  missing required arguments (both only when `declared_tools` is present), and invalid JSON
+  arguments (always). `finding` → `block`; streaming scans the accumulated tool-call arguments and
+  emits `window_overflow` past the 256 KiB hard bound.
+- **Thinking-signature-presence checker (T3a, observational)** — bidirectional consistency between
+  the request `thinking_enabled` flag and a `<think>…</think>` block in the response
+  (`thinking-missing-in-response` / `thinking-unexpected-in-response`); `finding` → `warn`, never
+  blocks.
+- **Usage-reconcile checker (T4a, observational)** — local token estimate (ASCII ÷ 4.1, CJK × 1.0)
+  against upstream `usage.total_tokens`; over-reporting (`> 1.5×` **and** `> 64` above estimate) is
+  a `finding` → `warn`; malformed usage degrades to `scanner_error` + `degraded_observational`.
+- **Evidence additions (schema stays v1)** — optional top-level `reason` from a closed vocabulary
+  (`registry_unavailable`, `inject_skipped`, `window_overflow`, `checker_timeout`, `scanner_error`,
+  `input_malformed`; key absent when clean), `verdict: "error"` entries in `findings[]` with
+  checker/threat preserved, and the `action_taken` priority order
+  (`blocked_before_forward` > `blocked_before_deliver` > `terminated_after_delivery` >
+  `degraded_observational` > `warned` > `allowed`). `action_taken` is a single summary value: when a
+  block and degradation coincide, the block wins and the degradation remains visible in the
+  persisted `findings[]`; the aggregate `degraded` counter counts only records whose final
+  `action_taken` is `degraded_observational`. Canary plaintext never enters evidence.
+- **Streaming correctness** — per-checker windows with a single cursor advance per chunk, tool-call
+  argument deltas merged across SSE frames before scanning, and UTF-16 offsets preserved across
+  chunk boundaries.
+- **Per-checker execution budgets** — G3 tiers 8/64/512 KiB → 20/50/120 ms and a 12 ms per-chunk G1
+  p99 cap from a single constant source; an over-budget checker result is rewritten to
+  `checker_timeout` after the fact (verdict surface, not preemption).
+- **Evil-relay testkit** — `testkit/evil-relay.ts`, 13 opponent profiles (fpverify 9 + 4 T2-class),
+  plus dual CI matrices: `test.yml` per PR and `relay-nightly.yml` (nightly, 4-way matrix, serial
+  retry on port contention).
+- **`doctor` closed enumeration 4 → 6** — `doctor.canary-registry` (missing = not configured,
+  malformed/unreadable = `[DEGRADED]`) and `doctor.coverage-counters` (non-zero counters carry a
+  `[DEGRADED]` prefix).
+
+### Changed
+
+- Response scan units now include `tool_calls[*].function.arguments` (and legacy
+  `function_call`) on both request and response sides, closing the T2a scan-surface blind spot.
+- CLI command set 5 → 6 (`canary rotate`); `report` remains explicitly forbidden.
+- Evidence semantics: forwarded `request_bytes` / `request_body_sha256` describe the post-injection
+  body (what the upstream actually received); request-side scanning still uses the client body.
+
+### Fixed
+
+- Streaming invisible-character false negatives when escape sequences / multi-byte characters span
+  chunk boundaries (window ownership and offsets).
+- Session-key ambiguity from naive concatenation (`["ab","c"]` vs `["a","bc"]`) via the
+  `${len}:${text}` length prefix.
+- Tool-call arguments split across SSE `delta` frames were scanned as fragments; they are now
+  merged before judgment.
+- `tool-call-shape` stream metering now uses **UTF-8 bytes** (matching the gateway window ledger)
+  and the 256 KiB hard bound applies only to tool-call argument fragments — long prose streams no
+  longer risk a spurious `window_overflow` block.
+- `tool-call-shape` no longer re-parses the whole accumulated arguments text on every frame
+  (O(n²) work could self-trip the 12 ms G1 cap as `checker_timeout` on long tool-call streams).
+- `test.yml` restores the 80 % coverage gate, dual typecheck and lint (these had been dropped),
+  and the detection / false-positive steps now point at real suites instead of `|| true`-masked
+  non-existent files. `relay-nightly.yml` installs from `bun.lock`, runs the actual relay suite in
+  a 4-way opponent-shard matrix with the serial fallback, and no longer contradicts its own
+  timeout budget.
+- Canary registry `lastSeen` refreshes are throttled (60 s) instead of a synchronous
+  write+rename on every managed request; allocation and rotation still persist immediately.
+- Offline rotation no longer destroys evidence: when the registry is `registry_unavailable`,
+  a zero-byte sentinel is left in place (no rotate, no delete) so the corrupt file stays intact
+  for forensics and the rotation applies after repair on the next start.
+- `llmveto canary rotate` gives the loopback POST a 5 s timeout and reports the offline path as
+  `rotate deferred … applies on next gateway start` instead of claiming a completed rotation.
+- Gateway-reason tie-break now keeps the first out-of-vocabulary value (stable) instead of
+  promoting the later one.
+- `relay-nightly.yml` no longer uploads a `coverage/` artifact it never generates; the PR
+  detection step no longer re-runs the 13-opponent relay suite (nightly-only by design).
+- The 13-opponent relay suite is now explicitly gated by `RELAY_MATRIX=1` in the test file
+  itself, so the PR full-suite step no longer starts 13 relay subprocesses; nightly sets the
+  variable on both the parallel and serial-fallback steps. A guard test pins the gate.
+- `doctor.canary-registry` reuses the runtime `validateRegistryFile` judgment instead of a shallow
+  `typeof` check, so a structurally invalid registry (e.g. `entries: null`) now reports
+  `[DEGRADED]` instead of a false `registry ok`.
+- The streamed tool-call merger emits a synthetic `window_overflow` error finding on overflow
+  without throwing from the SSE generator (a throw there could surface as an unhandled rejection
+  after headers were sent, turning fail-closed into a daemon-level fail-open).
+
+### Performance
+
+- G1 TTFT delta PASS (p95 0.551 ms / p99 1.533 ms against 5/12 ms).
+- G3 checker budget PASS for 7 checkers × 8/64/512 KiB (p99 ≤ 0.46 ms).
+- G2 request gate PASS at 8 KiB / 512 KiB. The 64 KiB tier exceeds the 10 ms p95 limit on local
+  Windows tail latency (p50 ≈ 1.2 ms); `ubuntu-latest` CI is the authoritative environment for that
+  gate.
+
+### Known limitations
+
+- G-CANARY's recording-based replay (finish-reason distribution, provider refusal increment, manual
+  review of 10 sessions) could not be re-run after the original recording artifact was overwritten;
+  it is registered as an accepted residual. Canary injection is covered by integration tests across
+  the six injection branches and managed-route end-to-end tests, but not by a fresh real-agent
+  replay.
+- Streaming bytes already forwarded cannot be recalled; a streaming hit terminates the stream, it
+  does not swallow delivered bytes.
+- The v2a block-mapping checkers (T1a canary, T2a tool-call shape) are default-on with no
+  runtime kill switch; the checker registry is static, so disabling one requires a code change
+  and restart. A live toggle is deliberate scope for a later release, not an oversight.
+- `package.json` declares Node `>=18`, but CI and the local verification matrix run Node 24 only;
+  a Node 18 regression would not be caught by the PR gate.
+- Post-injection evidence (`request_bytes` / `request_body_sha256` describe the forwarded body) is
+  not permanently reversible: reconstructing the client body from the chain needs the session's
+  canary, which rotation re-randomizes and TTL 24 h / LRU 64 eviction removes. After either event
+  the chain alone cannot recover the original body; retain the client-side or upstream-side body
+  when forensic reconstruction is required. AC-V2a-07 is a test-time invariant, not a
+  time-unbounded recovery guarantee.
+- The `/_llmveto/*` admin surface relies on the daemon binding to a loopback address as its only
+  security boundary (no Host/Origin/token check). Do not expose `/_llmveto/*` through a reverse
+  proxy; a proxy that forwards those paths re-exposes rotation and metrics. A token/Host guard is
+  deferred to the same later release as the checker kill switch.
+
+### Deferred to v2b
+
+- Fingerprint patrol with provider trust score (periodic llm-fingerprint-detector integration)
+- Billing reconciliation report CLI (`report` command comparing usage × official price vs relay invoices)
+- Multi-client onboarding for Claude Code / Codex / promptfoo (MANAGED_CONFIG_IDS extension)
+- Provider health monitoring dashboard (error rate / timeout trends visualization)
+
 ## [0.2.0] - 2026-10-09
 
 First public release (npm registry + GitHub Release). A local LLM traffic security gateway
@@ -58,50 +204,7 @@ fail-closed blocking, and a tamper-evident audit trail.
   without external anchoring and is registered as a negative-contract test, not silently
   claimed as coverage.
 
-## [Unreleased] — v2a detection core (in development)
-
-### Added
-
-- **Thinking-signature-presence checker** (T3a observational, SL-10): detects absence of expected reasoning/thinking markers in model responses; logs warning when signature missing but does not block.
-- **Tool-call-shape checker** (T2a security class, SL-09): validates tool-call argument structure, blocks dangerous commands (e.g., `rm -rf /`, shell injection patterns), and rejects unauthorized tool names. Verdict: `block`.
-- **Usage-reconcile checker** (T4a observational, SL-11): compares reported token usage against response length heuristics; flags significant mismatches as potential billing fraud or relay manipulation. Verdict: `warn`.
-- **Canary engine** (T1a security class, SL-08): injects unique canary tokens into outbound requests and scans upstream responses for their return; detects data exfiltration attempts. Includes `canary rotate` CLI command for token rotation. Verdict: `block`.
-- **Evil-relay simulator** (SL-13): pure TypeScript malicious upstream emulator with 13 attack opponents (credential theft, response substitution, model impersonation, usage inflation, etc.). Integrated into CI via dual-matrix workflow (`test.yml` + `relay-nightly.yml`).
-- **Evidence schema versioning**: bumped `evidence_schema_version` from 1 to 2; added `canary_token_id` and `scan_unit_offsets` fields for canary tracking and precise error localization. Backward-compatible with v1 readers.
-- **Error double-layer logging** (SL-03): top-level `reason` field (optional bitflags) + `degraded` mechanism for partial failures; preserves full error context while enabling graceful degradation.
-- **Session key derivation** (SL-06): deterministic session binding via six-branch pure function (client + provider + model + timestamp + nonce + config hash); enables per-session evidence grouping.
-- **Streaming window offsets fix** (SL-02): corrected chunk boundary calculation for invisible-unicode cross-chunk detection; eliminated false negatives on multi-byte escape sequences split across chunks.
-- **Budget gates wiring** (SL-04): REQ-V2a-12 performance budget enforcement integrated into CI; G1/G2/G3 thresholds now gate merges.
-
-### Changed
-
-- **Response scan unit enhancement** (SL-01): expanded to include `tool_calls[*].function.arguments` on both request and response sides, closing T2a blind spot in v1.
-- **Delphi-review integration**: upgraded to opencode v2.0.26 agent dispatch with three distinct example-provider models (`local-deepseek-v4-flash`, `g-qwen3.8-flash`, `local-qwen3.8-27b`) for architecture/technical/feasibility expert roles. Resolved Qoder Custom Agent model-binding limitation.
-- **xp-gate quality gates**: updated to v0.20.1 with 12-gate chain including SAST, secret scanning, complexity limits, and architecture conformance checks. Removed duplicate unscoped v0.12.10 installation.
-
-### Fixed
-
-- **Canary split JSONL reading**: switched to line-by-line streaming read with prefix-comparison stringify cache; eliminated memory spike on large evidence files.
-- **Doctor AC-02/AC-03 decoupling**: separated development machine real-environment checks from test assertions; prevented false positives in CI.
-- **Git worktree cleanup**: added `.worktrees/` to `.gitignore`; automated scratch probe exclusion (`var/probe-*.ts`, `var/negctl-*.sh`).
-
-### Documentation
-
-- **Internal trial package**: created comprehensive documentation suite for colleague testing:
-  - `docs/QUICKSTART.md`: installation, configuration, verification, troubleshooting guide
-  - `docs/FAQ.md`: frequently asked questions covering setup, security behavior, evidence privacy, performance
-  - `docs/FEEBACK.md`: structured feedback collection templates (bug reports, feature requests, evidence export procedure)
-  - `docs/KNOWN-ISSUES.md`: transparent disclosure of v1 residual risks, architectural limitations, known v2a bugs
-- **Sprint closure report**: documented v2a sprint completion metrics (15 slices, 666 tests passing, coverage ≥80%, phase 4 VERIFY via opencode v2).
-
-### Deferred to v2b
-
-- Fingerprint patrol with provider trust score (periodic llm-fingerprint-detector integration)
-- Billing reconciliation report CLI (`report` command comparing usage × official price vs relay invoices)
-- Multi-client onboarding for Claude Code / Codex / promptfoo (MANAGED_CONFIG_IDS extension)
-- Provider health monitoring dashboard (error rate / timeout trends visualization)
-
 ---
 
-[Unreleased]: https://github.com/boyingliu01/llmveto/compare/v0.2.0...HEAD
+[0.3.0]: https://github.com/boyingliu01/llmveto/releases/tag/v0.3.0
 [0.2.0]: https://github.com/boyingliu01/llmveto/releases/tag/v0.2.0

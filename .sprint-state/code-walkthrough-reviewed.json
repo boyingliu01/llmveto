@@ -2,71 +2,103 @@
   "_schema_version": 1,
   "artifact": "code-walkthrough-reviewed",
   "mode": "code-walkthrough",
-  "sprint_id": "sprint-20261008-26",
+  "sprint_id": "sprint-20260927-46",
   "phase": 4,
-  "gate": "Phase 4 VERIFY delphi code-walkthrough (release-surface executable artifacts)",
-  "review_scope": "scripts/release-gate.mjs / .github/workflows/release.yml / scripts/check-readme-parity.mjs / package.json / CHANGELOG.md（src/ 零改动属 AC-REL-05a 冻结断言，不在走查面）",
+  "gate": "Phase 4 VERIFY delphi code-walkthrough (v2a detection core + release surface)",
+  "review_scope": "origin/main...HEAD 全量 v2a 变更（src/、tests/、.github/workflows/、scripts/、CHANGELOG、KNOWN-ISSUES、architecture.yaml、design D-09），review packet var/delphi-v2a-cw/packet5.md（208,374 B / 4,017 行，gitignored scratch）",
   "verdict": "APPROVED",
-  "timestamp": "2026-10-09T01:55:00+08:00",
+  "timestamp": "2026-11-02T10:08:00Z",
   "consensus_ratio": 1.0,
   "consensus_percent": 100,
   "threshold_percent": 90,
-  "rounds_used": 3,
+  "rounds_used": 5,
   "round_budget": 5,
-  "commit": "2d27c0ce3e3df979c816ef847b0056d5c354a734",
-  "commit_note": "走查对象在 2d27c0c 树冻结（R2 处置落点）；其后仅追加文档提交不回灌评审基线",
+  "reviewed_head_commit": "21334de",
+  "post_review_commit": "131113a",
+  "commit_note": "Round 5 评审基线 = 21334de；其后 131113a 只做 round-5 minor 的文档/计数器订正（CHANGELOG、KNOWN-ISSUES、design D-09、architecture.yaml、aggregate 注释、doctor 输出、store re-export 清理），处置不回灌本轮评审基线。push 前的 Gate MW 终审证据另记于 .code-walkthrough-result.json（绑定推送分支 HEAD）。",
   "panel": {
-    "executor": "node var/delphi-r11/delphi-experts.cjs（main 仓 var/ 未跟踪 scratch）",
-    "config": "var/delphi-r11/.delphi-config.json (profile example-provider-flash)",
+    "executor": "node var/delphi-v2a-cw/delphi-experts.cjs（依赖安装于 var/delphi-r11/node_modules，均为 gitignored scratch）",
+    "config": "delphi-config.json (profile example-provider-v2a2)",
     "experts": [
-      { "id": "A", "role": "architecture", "requested_model": "g-qwen3.8-flash", "executed_echo": "qwen3.8-flash" },
-      { "id": "B", "role": "technical", "requested_model": "g-deepseek-flash", "executed_echo": "deepseek-flash" },
-      { "id": "C", "role": "feasibility", "requested_model": "local-qwen3.8-27b", "executed_echo": "Qwen3_8-27B" }
+      { "id": "A", "role": "architecture", "requested_model": "g-deepseek-v4-flash", "executed_echo": "deepseek-v4.1-flash" },
+      { "id": "B", "role": "technical", "requested_model": "g-qwen3.8-flash", "executed_echo": "qwen3.8-flash" },
+      { "id": "C", "role": "feasibility", "requested_model": "g-glm-5.3-flashx", "executed_echo": "glm-5.3-flashx" }
     ],
     "checks_final_round": {
       "all_experts_succeeded": true,
       "requested_models_distinct": true,
       "executed_models_distinct": true,
       "executed_models_match_expected_echo": true
-    }
+    },
+    "checks_note": "Round 1-3 各有一次专家未产出合法 delphi_expert_result（本地/网关模型空响应或未闭合 JSON），按 skill 规则该轮不计入共识、不降级为少数专家；Round 4 三家全部成功但未达 90% 共识；Round 5 全部四项 checks=true。"
   },
   "rounds": [
     {
       "round": 1,
-      "verdicts": { "architecture": "REQUEST_CHANGES", "technical": "FAILED(no json block)", "feasibility": "REQUEST_CHANGES" },
-      "issues_by_severity": { "critical": 2, "major": 3, "minor": 4 },
+      "date": "2026-11-02",
+      "baseline_commit": "e5837f0",
+      "verdicts": { "architecture": "FAILED(no json block)", "technical": "REQUEST_CHANGES", "feasibility": "REQUEST_CHANGES" },
+      "confidence": { "technical": 8, "feasibility": 6 },
+      "issues_by_severity": { "critical": 2, "major": 9, "minor": 9 },
       "outcome": "not_passed_expert_failure",
-      "disposition": ".sprint-state/review/rel-cw-r1-disposition.md（2C 修复 / 2M 反驳 / 3m 采纳）",
-      "fix_commit": "a5e0057",
-      "evidence": "var/delphi-r11/rel-cw-experts-r1.json",
-      "model_note": "B 角协议故障（回复无可解析 JSON 裁决块）→ 按纪律全员重跑，无单角补跑"
+      "fix_commits": ["fb155f7", "f454b58"],
+      "evidence": "var/delphi-v2a-cw/round1.json"
     },
     {
       "round": 2,
-      "verdicts": { "architecture": "APPROVED", "technical": "REQUEST_CHANGES", "feasibility": "APPROVED" },
-      "consensus_percent": 66.7,
-      "issues_by_severity": { "critical": 0, "major": 2, "minor": 4 },
-      "prior_round_issues_resolved": "9/9（B 角 disposition_assessment 对 R1 全部处置接受）",
-      "outcome": "not_passed",
-      "disposition": ".sprint-state/review/rel-cw-r2-disposition.md（T-R2-01 修复 / T-R2-02 反驳+诊断注 / 2m 采纳）",
-      "fix_commit": "2d27c0c",
-      "evidence": "var/delphi-r11/rel-cw-experts-r2.json"
+      "date": "2026-11-02",
+      "baseline_commit": "f454b58",
+      "verdicts": { "architecture": "FAILED(no json block)", "technical": "REQUEST_CHANGES", "feasibility": "REQUEST_CHANGES" },
+      "confidence": { "technical": 7, "feasibility": 7 },
+      "issues_by_severity": { "critical": 0, "major": 4, "minor": 7 },
+      "outcome": "not_passed_expert_failure",
+      "fix_commit": "ab9992a",
+      "evidence": "var/delphi-v2a-cw/round2.json"
     },
     {
       "round": 3,
+      "date": "2026-11-02",
+      "baseline_commit": "ab9992a",
+      "verdicts": { "architecture": "REQUEST_CHANGES", "technical": "FAILED(no json block)", "feasibility": "REQUEST_CHANGES" },
+      "confidence": { "architecture": 7, "feasibility": 7 },
+      "issues_by_severity": { "critical": 0, "major": 5, "minor": 7 },
+      "outcome": "not_passed_expert_failure",
+      "fix_commit": "b8e0b1e",
+      "evidence": "var/delphi-v2a-cw/round3.json"
+    },
+    {
+      "round": 4,
+      "date": "2026-11-02",
+      "baseline_commit": "b8e0b1e",
+      "verdicts": { "architecture": "APPROVED", "technical": "REQUEST_CHANGES", "feasibility": "REQUEST_CHANGES" },
+      "confidence": { "architecture": 6, "technical": 8, "feasibility": 6 },
+      "issues_by_severity": { "critical": 0, "major": 6, "minor": 10 },
+      "outcome": "not_passed_below_threshold",
+      "fix_commits": ["06e6da7", "21334de"],
+      "evidence": "var/delphi-v2a-cw/round4.json"
+    },
+    {
+      "round": 5,
+      "date": "2026-11-02",
+      "baseline_commit": "21334de",
       "verdicts": { "architecture": "APPROVED", "technical": "APPROVED", "feasibility": "APPROVED" },
-      "confidence": { "architecture": 9, "technical": 9, "feasibility": 9 },
-      "consensus_percent": 100,
-      "issues_by_severity": { "critical": 0, "major": 0, "minor": 2 },
+      "confidence": { "architecture": 8, "technical": 9, "feasibility": 7 },
+      "issues_by_severity": { "critical": 0, "major": 0, "minor": 12 },
       "outcome": "passed",
-      "evidence": "var/delphi-r11/rel-cw-experts-r3.json"
+      "consensus_percent": 100,
+      "disposition_commit": "131113a",
+      "evidence": "var/delphi-v2a-cw/round5.json"
     }
   ],
-  "residuals_after_consensus": {
-    "critical": 0,
-    "major": 0,
-    "minor": 2,
-    "note": "ARCH-N-02（Release 步错误定位，现有空节 fail-closed 守卫已覆盖静默成功面）；T-R3-N-01（副本↔detectDrift 无构建期校验，src/ 解冻后前移——后续项）。两条均专家自评不阻断"
-  },
-  "report": ".sprint-state/review/rel-cw-consensus.md"
+  "accepted_residuals": [
+    "orchestrateCanary 仍为 core.ts 自由函数并读写 core.canary/canaryMetrics —— 已声明 deferred 到 v2b（CanaryStore 内聚方法或 canary/orchestrator.ts）",
+    "canary 域 isPlainObject/isTextPart 宿主在 session-key.ts，inject.ts 跨职责复用 —— 无循环依赖，下沉到 canary/domain.ts 属 v2b 整理项",
+    "deriveSessionKey 返回类型未区分空锚 '0:' 与正常键 —— 语义目前由 KNOWN-ISSUES + 注释契约表达，品牌类型为 v2b 候选",
+    "flattenFindings 对未登记 checker 的 throw 在流式 generator 理论上可冒泡（生产不可达，extraCheckers 仅测试）—— 后续统一为合成 error finding",
+    "relay-nightly.yml 30/45 分钟预算与 PR 全量步 20 分钟上限只有本地证据，nightly 首次 cron 未实测 —— 发布后首次 workflow_dispatch 记录实测耗时，贴近 80% 即调整"
+  ],
+  "evidence_misc": {
+    "sast": "var/delphi-v2a-cw/sast-round5.json（semgrep p/security-audit，34 files，0 findings，0 errors）",
+    "gate10": "06e6da7 与 21334de 两次提交的 commit gate 均 PASS（Gate 10 Build Integrity），另有 HEAD 处手工扩展扫描"
+  }
 }

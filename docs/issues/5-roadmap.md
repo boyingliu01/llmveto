@@ -56,6 +56,14 @@ v1 先保证**受管路径流量 100% 过闸**（哪怕验证逻辑最简），v
 - 接入扩展：Claude Code / Codex / promptfoo（各自补 `MANAGED_CONFIG_IDS` + doctor 断言）
 - **验收**：TEST 五件套 `@v2` 项全部 CI 化；金丝雀回流告警 E2E 通过；T2a/T2b 在登记表中的状态由"未缓解"升为"部分/已缓解"（流式已转发字节的边界仍按 REQ §场景 4 承诺，不得回改）
 
+### v2a 登记表加注（S-DOCS 同批订正：AC-V2a-15 / AC-V2a-16⑥⑦）
+
+> 登记表本体 = [REQ] §v1 残余风险登记表；以下为逐字加注的 grep 落点，由 `tests/unit/doc-consistency.test.ts` 把守，措辞与需求文档 AC 行逐字一致。
+
+- T2c 行"缺口理由"加注（AC-V2a-15）：tool-call 参数路径 v1 实际未覆盖，v2a 起覆盖
+- T4a 行加注（AC-V2a-16⑥）：链内不落上游自报 `usage` / `cache_reported` 原值（契约 #4 可选位未实装），v2a 判定仅取 `ScanUnit.meta.usage`
+- T2c 行能力边界加注（AC-V2a-16⑦）：流式命中在 v1 的 `findings[].offsets` 不可用（网关侧游标双重推进，§5 第四处），v2a 修复后方可作定位取证
+
 ## v3 — 策略闭环
 
 - 策略引擎**可配置化**：per-checker `verdict → action` 用户可配（allow/warn/block）+ 全局配置 > 项目级优先级；**新增 `redact`**（非流式改写；流式仍不可执行）

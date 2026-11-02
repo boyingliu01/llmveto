@@ -6,10 +6,13 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { verifyEvidenceFile } from "../evidence/verify.ts";
+import { aggregateEvidence } from "../evidence/aggregate.ts";
 import { delphiAdapter } from "../adapters/delphi.ts";
 import { opencodeAdapter } from "../adapters/opencode.ts";
+import type { Adapter, Env } from "../adapters/index.ts";
 import { EvidenceWriter } from "../evidence/writer.ts";
 import { startGateway } from "../gateway/server.ts";
+import { validateRegistryFile } from "../shared/registry-file-schema.ts";
 
 /**
  * @test REQ-VETO-008
@@ -17,8 +20,8 @@ import { startGateway } from "../gateway/server.ts";
  *         AC-VETO-008-01 严禁注册 report / canary 等 stub。
  */
 
-export type CliCommand = "start" | "stop" | "status" | "doctor" | "verify";
-export const COMMANDS: readonly CliCommand[] = Object.freeze(["start", "stop", "status", "doctor", "verify"]);
+export type CliCommand = "start" | "stop" | "status" | "doctor" | "verify" | "canary";
+export const COMMANDS: readonly CliCommand[] = Object.freeze(["start", "stop", "status", "doctor", "verify", "canary"]);
 
 export interface CliResult {
   readonly exitCode: number;
@@ -65,6 +68,7 @@ export async function runCli(cmd: CliCommand | string, ctx: CliCtx = {}): Promis
       case "status": return cmdStatus(ctx);
       case "doctor": return await cmdDoctor(ctx, args.includes("--write-managed-config"));
       case "verify": return cmdVerify(ctx, args);
+      case "canary": return await cmdCanary(ctx, args);
       default:
         return { exitCode: 2, stdout: "", stderr: `unknown command: ${cmd}\n` };
     }
@@ -143,7 +147,9 @@ async function cmdStartDaemon(ctx: CliCtx, env: Readonly<Record<string, string |
   }
   const modelsSnapshotPath = env.LLMVETO_MODELS_SNAPSHOT;
   const port = env.LLMVETO_PORT !== undefined ? Number(env.LLMVETO_PORT) : 8787;
-  const gw = await startGateway({ port, config: { upstreamBaseUrl, evidenceWriter: writer, ...(upstreams ? { upstreams } : {}), ...(modelsSnapshotPath ? { modelsSnapshotPath } : {}) } });
+  // D-02：registry 与 gateway.pid 同级；缺省此路径 = canary 域整体关闭（rotate 503 / 不注入）。
+  const canaryRegistryPath = join(dir, "canary-registry.json");
+  const gw = await startGateway({ port, config: { upstreamBaseUrl, evidenceWriter: writer, canaryRegistryPath, ...(upstreams ? { upstreams } : {}), ...(modelsSnapshotPath ? { modelsSnapshotPath } : {}) } });
   writeFileSync(pidFile(ctx), String(process.pid), "utf8");
   writeFileSync(urlFile(ctx), gw.url, "utf8");
   // 优雅收尾：SIGTERM/SIGINT → 关 server + 清理 pid/url（Windows 下 stop 直接删文件，不依赖此路）。
@@ -192,31 +198,53 @@ function isAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
+interface DoctorCheck { readonly id: string; readonly ok: boolean; readonly message: string }
+
+/** ③ 写托管配置：先写盘，后续漂移检测才能反映写入后真实状态。
+ *  写失败仅告警（AC-VETO-008-03），本项恒 PASS。 */
+function writeManagedConfigs(env: Env, baseUrl: string, adapters: readonly Adapter[]): DoctorCheck {
+  const results: string[] = [];
+  let failures = 0;
+  for (const a of adapters) {
+    try {
+      results.push(`${a.name}→${a.applyManagedConfig(env, baseUrl)}`);
+    } catch (e) {
+      failures += 1;
+      results.push(`${a.name} write failed: ${(e as Error).message}`);
+    }
+  }
+  // AC-VETO-008-03：写失败仅告警。本项恒 PASS，故消息必须显式标注失败计数，
+  // 避免运维把 [PASS] 读成"配置已生效"；未写入的漂移由 doctor.config-drift 如实报 FAIL。
+  const warn = failures > 0 ? ` [WARN: ${failures}/${adapters.length} write failed — warn-only per AC-VETO-008-03; see doctor.config-drift]` : "";
+  return { id: "doctor.write-managed-config", ok: true, message: (results.join("; ") || "no adapters") + warn };
+}
+
+/** ⑤ canary-registry（D-14）：文件可解析 → PASS；缺失 = 未配置（PASS）；损坏 → DEGRADED。 */
+function checkCanaryRegistry(ctx: CliCtx): DoctorCheck {
+  const registryPath = join(stateDir(ctx), "canary-registry.json");
+  if (!existsSync(registryPath)) {
+    return { id: "doctor.canary-registry", ok: true, message: "registry not configured (no file)" };
+  }
+  try {
+    const raw = JSON.parse(readFileSync(registryPath, "utf8")) as unknown;
+    const checked = validateRegistryFile(raw);
+    if (typeof checked === "string") {
+      return { id: "doctor.canary-registry", ok: false, message: `[DEGRADED] registry ${checked}` };
+    }
+    return { id: "doctor.canary-registry", ok: true, message: "registry ok" };
+  } catch {
+    return { id: "doctor.canary-registry", ok: false, message: "[DEGRADED] registry unreadable" };
+  }
+}
+
 async function cmdDoctor(ctx: CliCtx, writeManaged: boolean): Promise<CliResult> {
   // AC-VETO-008-02 检查项封闭枚举：① 受管配置漂移 ② 端口连通 ③（可选）写托管 ④ evidence 链
   const env = ctx.env ?? process.env;
-  const adapters = [opencodeAdapter, delphiAdapter] as const;
-  const checks: { id: string; ok: boolean; message: string }[] = [];
+  const adapters: readonly Adapter[] = [opencodeAdapter, delphiAdapter];
+  const checks: DoctorCheck[] = [];
   const baseUrl = env.LLMVETO_GATEWAY_URL ?? "http://127.0.0.1:8787";
   // ③ 写托管配置（--write-managed-config）：先写盘，后续漂移检测才能反映写入后真实状态。
-  //    写失败仅告警（AC-VETO-008-03），不影响本检查项 ok。
-  if (writeManaged) {
-    const results: string[] = [];
-    let failures = 0;
-    for (const a of adapters) {
-      try {
-        const p = a.applyManagedConfig(env, baseUrl);
-        results.push(`${a.name}→${p}`);
-      } catch (e) {
-        failures += 1;
-        results.push(`${a.name} write failed: ${(e as Error).message}`);
-      }
-    }
-    // AC-VETO-008-03：写失败仅告警。本项恒 PASS，故消息必须显式标注失败计数，
-    // 避免运维把 [PASS] 读成"配置已生效"；未写入的漂移由 doctor.config-drift 如实报 FAIL。
-    const warn = failures > 0 ? ` [WARN: ${failures}/${adapters.length} write failed — warn-only per AC-VETO-008-03; see doctor.config-drift]` : "";
-    checks.push({ id: "doctor.write-managed-config", ok: true, message: (results.join("; ") || "no adapters") + warn });
-  }
+  if (writeManaged) checks.push(writeManagedConfigs(env, baseUrl, adapters));
   // ① 漂移：真实读取每个适配器的受管配置文件（缺失 / 不可解析 → 全漂移）
   const drift: { id: string }[] = [];
   const seen: string[] = [];
@@ -244,6 +272,16 @@ async function cmdDoctor(ctx: CliCtx, writeManaged: boolean): Promise<CliResult>
     ok: verifyResult.ok || verifyResult.kind === "no_file", // 无文件视为空链 OK
     message: verifyResult.ok ? `chain ok (${verifyResult.records} records)` : `chain: ${verifyResult.kind}`,
   });
+  // ⑤ canary-registry（D-14 doctor 扩枚举 4→6）：registry 文件存在且可解析 → PASS；缺失/损坏 → [DEGRADED]
+  checks.push(checkCanaryRegistry(ctx));
+  // ⑥ coverage-counters（D-14）：从 evidence 链聚合计数；链缺失/损坏 → [DEGRADED]
+  const agg = aggregateEvidence(evidenceFile(ctx));
+  if (agg.status === "ok") {
+    const c = agg.counts;
+    checks.push({ id: "doctor.coverage-counters", ok: true, message: `total=${c.total} allowed=${c.allowed} blocked=${c.blocked} warned=${c.warned} terminated=${c.terminated} degraded=${c.degraded}` });
+  } else {
+    checks.push({ id: "doctor.coverage-counters", ok: false, message: `[DEGRADED] counters unavailable: ${agg.reason}` });
+  }
   const failing = checks.filter((c) => !c.ok);
   const exit = failing.length === 0 ? 0 : 1;
   const lines = checks.map((c) => `[${c.ok ? "PASS" : "FAIL"}] ${c.id}: ${c.message}`);
@@ -263,9 +301,49 @@ function cmdVerify(ctx: CliCtx, args: readonly string[]): CliResult {
   }
 }
 
-/** v1 无金丝雀（AC-VETO-007-05）：CLI 不注册 canary/report。 */
+/** canary 子命令分派：未知动词 → exit 2（AC-V2a-08）。 */
+async function cmdCanary(ctx: CliCtx, args: readonly string[]): Promise<CliResult> {
+  const sub = args[0];
+  if (sub !== "rotate") {
+    return { exitCode: 2, stdout: "", stderr: `unknown canary verb: ${sub ?? "(none)"}\nvalid: rotate\n` };
+  }
+  return await cmdCanaryRotate(ctx);
+}
+
+/** canary rotate 双路径（AC-V2a-08）：在线 → POST loopback 等确认；离线 → 写零字节哨兵。 */
+const ROTATE_REQUEST_TIMEOUT_MS = 5_000;
+
+async function cmdCanaryRotate(ctx: CliCtx): Promise<CliResult> {
+  const env = ctx.env ?? process.env;
+  const baseUrl = env.LLMVETO_GATEWAY_URL ?? "http://127.0.0.1:8787";
+  const reachable = await probeReachable(baseUrl, 1000);
+  if (reachable) {
+    try {
+      const resp = await fetch(`${baseUrl}/_llmveto/canary/rotate`, {
+        method: "POST",
+        signal: AbortSignal.timeout(ROTATE_REQUEST_TIMEOUT_MS), // 网关卡死时不无限挂起
+      });
+      if (!resp.ok) {
+        const body = await resp.text();
+        return { exitCode: 1, stdout: "", stderr: `rotate failed (${resp.status}): ${body}\n` };
+      }
+      const data = await resp.json() as { rotation_count: number; last_rotated_at: string };
+      return { exitCode: 0, stdout: `rotated online: rotation_count=${data.rotation_count} at=${data.last_rotated_at}\n`, stderr: "" };
+    } catch (e) {
+      return { exitCode: 1, stdout: "", stderr: `rotate online failed: ${(e as Error).message}\n` };
+    }
+  }
+  // 离线路径：写零字节哨兵标记文件（同 SL-07 sentinelPathFor 定位）。
+  // 此处只登记待办，轮换发生在网关下次启动——不得宣称“已轮换”。
+  const sentinel = join(stateDir(ctx), "canary-rotate.request");
+  const dir = stateDir(ctx);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(sentinel, "", "utf8");
+  return { exitCode: 0, stdout: `rotate deferred (gateway unreachable at ${baseUrl}): sentinel written ${sentinel}; applies on next gateway start\n`, stderr: "" };
+}
+
+/** v2a：CLI 注册 canary 控制通道（AC-V2a-08）；report 仍禁（AC-VETO-008-01 冻结）。 */
 export function assertNoV2Stubs(): void {
-  if ((COMMANDS as readonly string[]).includes("canary")) throw new Error("v1 must not register canary");
   if ((COMMANDS as readonly string[]).includes("report")) throw new Error("v1 must not register report");
 }
 

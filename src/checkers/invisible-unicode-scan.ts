@@ -101,6 +101,7 @@ export const INVISIBLE_UNICODE_SCAN_SPEC = {
   side: "response",
   synchronous: true,
   safetyClass: true,
+  threat: "T2c",
   runNonStream: invisibleUnicodeScanNonStream,
   runStream: invisibleUnicodeScanStream,
 } as const;

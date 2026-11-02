@@ -1,104 +1,117 @@
 {
   "alignment_status": "PASS",
-  "phase": "4",
-  "score": 96.8,
-  "sprint_id": "sprint-20260927-46",
-  "head_commit": "c5fe4a25c8be553ea2ac1f80663923d89d118428",
-  "specification_sha256": "bd4bb40_spec_v2a_frozen",
-  "spec_hash": "v2a-frozen-at-bd4bb40",
-  "generated_at": "2026-10-15T11:53:00+08:00",
-  "hash_note": "v2a specification frozen at bd4bb40 (SPEC-V2A-001, 15 REQ / 27 AC); current HEAD c5fe4a2 includes post-v2a release sprint merges but v2a BUILD artifacts remain intact in src/",
-  "note_vs_previous_run": "This report replaces the sprint-20261008-26 report (SPEC-REL-001). v2a BUILD completed all 15 slices (SL-01 through SL-15) with full ralph-loop TDD verification; each slice passed xp-gate pre-commit gates (12/12). Test suite grew from baseline 394 to 666 tests (+272 new across 15 slices), coverage maintained ≥80%.",
+  "phase": "2",
+  "score": 95.5,
+  "sprint_id": "sprint-20260914-49",
+  "head_commit": "2ddff28a95a7800c5fac0f823ca3c7d6029cc8c3",
+  "specification_sha256": "7c50d41ec17288d89bbaff3002da9de9b2891334ffabfbc9c2daaa7432f620ba",
+  "spec_hash": "7c50d41ec17288d89bbaff3002da9de9b2891334ffabfbc9c2daaa7432f620ba",
+  "generated_at": "2026-09-27T09:30:00Z",
+  "note_vs_previous_run": "本报告取代 2026-09-15 版（HEAD 5947e8b / spec a51d2504）。期间 specification.yaml 因 AC-VETO-013-04 回退分位数由 p95 改 p50（ADR-0002 补遗三）而变更 hash；测试面由 25 文件/146 用例增至 34 文件/280 用例。",
   "summary": {
-    "total_requirements": 15,
-    "requirements_requiring_tests": 15,
-    "requirements_covered": 15,
-    "requirement_coverage_pct": 100,
-    "total_acceptance_criteria": 27,
-    "acceptance_criteria_requiring_tests": 27,
-    "acceptance_criteria_with_verification_form": 27,
-    "acceptance_criteria_coverage_pct": 100,
-    "test_files": 52,
-    "test_cases": 666,
-    "test_cases_passing": 666,
-    "test_cases_skipped_conditional": 0,
-    "note": "All 15 REQs have unit + integration test coverage per ralph-loop TDD discipline. New checkers: tool-call-shape (T2a, 3 sub-rules), canary-return-scan (T1a), thinking-signature-presence (T3a), usage-reconcile (T4a). Gateway wiring: D-03 admin dispatch, D-04 evidence semantics, D-06 session key derivation, D-09 budget gate, D-10/D-11 error double-layer chain. CI: dual-matrix workflows (.github/workflows/test.yml) + nightly evil-relay (relay-nightly.yml, 13 opponents)."
+    "total_requirements": 14,
+    "requirements_requiring_tests": 13,
+    "requirements_covered": 13,
+    "requirement_coverage_pct": 100.0,
+    "total_acceptance_criteria": 59,
+    "acceptance_criteria_requiring_tests": 56,
+    "acceptance_criteria_covered": 56,
+    "acceptance_criteria_coverage_pct": 100.0,
+    "test_files": 34,
+    "test_cases": 280,
+    "test_cases_passing": 277,
+    "test_cases_skipped_conditional": 3
   },
   "dimension_scores": [
     {
       "dimension": "Requirement Coverage",
-      "score_pct": 100,
+      "score_pct": 100.0,
       "weight_pct": 30,
-      "weighted": 30,
-      "note": "All 15 REQs (REQ-V2a-01 through REQ-V2a-15) have dedicated test suites via ralph-loop TDD. Each slice produced tests before implementation (RED phase), ensuring requirement-to-test traceability."
+      "weighted": 30.0,
+      "note": "tests/ 面 12/13 REQ 有 @test；REQ-VETO-013 的 @test/@covers 全量落在 bench/（AC-013-01..05 逐条在标注），合并后 13/13；REQ-VETO-001 按 test_coverage_requirements 全 false 豁免"
     },
     {
       "dimension": "Acceptance Criteria Coverage",
-      "score_pct": 100,
+      "score_pct": 100.0,
       "weight_pct": 25,
-      "weighted": 25,
-      "note": "27/27 ACs verified: AC-V2a-01 (tool-call extraction fix), AC-V2a-02/03/13 (tool-call-shape T2a), AC-V2a-04 (thinking-signature T3a), AC-V2a-05 (usage-reconcile T4a), AC-V2a-06/07 (canary inject/session-key), AC-V2a-08 (evil-relay 13 opponents), AC-V2a-09 (evil-relay action enforcement), AC-V2a-10 (budget gate D-09), AC-V2a-11 (error double-layer D-10/D-11), AC-V2a-12 (CLI canary control), AC-V2a-14/15 (CI dual-matrix + nightly relay). All ACs have explicit test fixtures in tests/fixtures/threats/ and tests/fixtures/false-positives.json."
+      "weighted": 25.0,
+      "note": "51/56 AC 在 tests/ 有 @covers，AC-VETO-013-01..05 在 bench/ 标注补齐；AC-VETO-001-01..03 豁免（文档+工具门禁）"
     },
     {
       "dimension": "Test Intent Correctness",
-      "score_pct": 98,
+      "score_pct": 92.5,
       "weight_pct": 20,
-      "weighted": 19.6,
-      "note": "TDD discipline enforced: tests written before implementation for all 15 slices. Test intent aligns with AC given/when/then clauses. Minor deduction: 2 deviation records (ROOT path fix in architecture-boundaries, TWIN_EXCLUDED_FIELDS expansion for D-04 fields) required post-hoc test adjustments but maintain semantic correctness."
+      "weighted": 18.5,
+      "note": "2 个后增文件无 @intent 文件头（tests/unit/backlog-integrity.test.ts、tests/unit/toolchain-smoke.test.ts）；两者不在任何 REQ 映射内，属守卫/工具面，不构成规格缺口"
     },
     {
       "dimension": "Edge Case Coverage",
-      "score_pct": 95,
+      "score_pct": 90.0,
       "weight_pct": 15,
-      "weighted": 14.25,
-      "note": "Comprehensive edge case coverage: §4.4 six-branch injection paths (content string/parts array/no text part/empty/role=tool backtrack/unparseable-no-user), window overflow detection (>256KiB → reason='window_overflow'), streaming delta accumulation, exactOptionalPropertyTypes conditional spread pattern, canary sentinel retry-3 logic, zero-byte sentinel consumption at startup. Deduction: evil-relay port contention fallback tested in CI (parallel → serial retry) but not in local dev environment due to resource constraints."
+      "weighted": 13.5,
+      "note": "跨 chunk UTF-8 切分 / malformed SSE / 空链 / 篡改 seq / 非回环 host / 认证头 benign 集 / >512KB 回退 — 全部在册"
     },
     {
       "dimension": "Test Data Validity",
-      "score_pct": 100,
+      "score_pct": 85.0,
       "weight_pct": 10,
-      "weighted": 10,
-      "note": "666/666 tests passing, 0 skipped. False-positive matrix extended with 6 relay-specific negative samples (FP-T5a-RELAY-001 through FP-T5a-RELAY-006). Fixture structure validated: 13 opponent YAML files in tests/fixtures/threats/T5a/ with explicit expected.verdict and expected.action declarations. No test.skip/xit hard skips, no empty expect anti-patterns."
+      "weighted": 8.5,
+      "note": "威胁 fixture（T1b/T2c/T3a）+ benign ≥50 + 跨 chunk 对抗样本在册；bench/baseline.json 为实测"
     }
   ],
   "misaligned_tests": [],
-  "exempt_requirements": [],
+  "exempt_requirements": [
+    {
+      "id": "REQ-VETO-001",
+      "reason": "specification.yaml.test_coverage_requirements = { unit: false, integration: false, e2e: false }; 前置决策门 G-LIC/G-FP/G-BENCH 为文档+工具门禁",
+      "evidence": "docs/licenses.md + bench/baseline.json"
+    }
+  ],
   "anti_pattern_detected": false,
   "anti_pattern_notes": [
-    "Zero test.skip/xit hard skips — all 666 tests execute normally",
-    "No empty expect() calls detected",
-    "Gate 5a @no-test-required annotations used sparingly for new src files pointing to actual test locations (sanctioned escape valve)"
+    "3 个 skip 全部为环境条件门（cli-smoke 的 CAN_BUN/DIST_READY 套、daemon-lifecycle 的 runtime driver 探测、bench out-path-guard 的 runIf(win32)），非掩盖失败；本次 dist 构建后重跑 tests/e2e 相应套件已实跑全绿",
+    "无 test.skip/xit 硬跳过，无空 expect"
   ],
   "errors": [],
   "phase2_execution": {
     "status": "PASS",
-    "test_command": "npx vitest run (full suite, 666 tests)",
+    "test_command": "COVERAGE_ALL=1 bunx vitest run --coverage",
     "exit_code": 0,
-    "tests_passed": 666,
-    "tests_skipped": 0,
+    "tests_passed": 277,
+    "tests_skipped": 3,
     "tests_failed": 0,
     "coverage": {
-      "statements_pct": 87.3,
-      "branches_pct": 82.5,
-      "functions_pct": 91.2,
-      "lines_pct": 90.8,
+      "statements_pct": 86.87,
+      "branches_pct": 80.03,
+      "functions_pct": 91.89,
+      "lines_pct": 90.22,
       "threshold_pct": 80,
-      "all_above_threshold": true,
-      "note": "Coverage maintained ≥80% across all dimensions after adding 272 new tests for 15 slices. src/checkers/*.ts (new checkers) and src/gateway/*.ts (wiring changes) fully covered. One transient flaky failure in daemon-lifecycle test resolved on immediate rerun (666/666 pass)."
+      "all_above_threshold": true
     },
-    "typecheck": {
-      "command": "bun run typecheck && bun run typecheck:dist",
-      "exit_code": 0
-    },
+    "typecheck": { "command": "bun run typecheck && bun run typecheck:dist", "exit_code": 0 },
     "freeze_status": {
       "pre_phase2_locked": true,
       "violations_during_phase2": 0,
       "post_phase2_unlocked": true,
-      "note": "v2a specification SPEC-V2A-001 frozen at bd4bb40; all 15 slices implemented against frozen contract. Deviations documented: ROOT path fix in architecture-boundaries (假绿→真扫描), LAYER_ALLOW updates for gateway layer, reason vocab extensions for D-10/D-11, TWIN_EXCLUDED_FIELDS expansion for D-04 fields (request_bytes/request_body_sha256/prev_hash/record_hash excluded from semantic twin comparison)."
+      "note": "Phase 2 期间零 tests/** 文件修改（工作区 git status 核验）"
     }
   },
   "gate_367_verdict": {
     "status": "PASS",
-    "reason": "alignment_score 96.8% >= 80%; 15/15 REQs fully covered with unit + integration tests; 27/27 ACs verified via explicit test fixtures; 666/666 tests passing; coverage四项 >= 80%; xp-gate pre-commit gates passed 12/12 for all 15 slices"
+    "reason": "alignment_score 95.5% >= 80%; REQ/AC 硬映射完整（tests+bench 合并面）; 277/280 通过 + 3 条件 skip; 覆盖率四项 >= 80%"
+  },
+  "v1_deployment_acceptance": {
+    "date": "2026-09-27",
+    "artifact": "dist/cli/index.js（bun run build 于 2ddff28）",
+    "items": {
+      "accept-1-managed-paths": "PASS — doctor 遍历 MANAGED_CONFIG_IDS 无漂移 + e2e 探测过闸断言（AC-014-01/02）实跑绿",
+      "accept-2-delphi-path": "PASS — e2e client=\"delphi\" 用例绿",
+      "accept-3-checker-effectiveness": "PASS — fixture 回归全绿（检出 100%、阻断类 FP=0 断言在册）",
+      "accept-4-fail-closed-e2e": "PASS — 本机黑盒：含凭据探测 → 502 llmveto:rejected + evidence action_taken=blocked_before_forward（上游 59999 不可达仍阻断 = 零出境）；流式 veto-mid-stream e2e 绿",
+      "accept-5-evidence-verifiable": "PASS — 本机黑盒：verify ok(rc0) → 篡改 action_taken 后 first_bad_seq=0 (record_hash_mismatch) rc1；daemon 重启纯追加",
+      "accept-6-perf-gates": "PASS — CI run 36308227620（2ddff28, linux）G1/G2/G3 + 回归对比步全绿，46s"
+    },
+    "cli_5frozen_no_stub": "PASS — 未知命令拒绝并枚举 start/stop/status/doctor/verify",
+    "daemon_lifecycle": "PASS — start/status/stop 真后台进程，隔离 LLMVETO_STATE_DIR=var/acceptance-state，未触碰用户真实配置"
   }
 }

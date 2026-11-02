@@ -1,4 +1,5 @@
 import type { ScanUnit, Transport } from "../shared/types.ts";
+import { STREAM_WINDOW_OVERFLOW_LIMIT } from "../shared/types.ts";
 
 /**
  * @test REQ-VETO-002
@@ -97,6 +98,26 @@ function pushArguments(args: unknown, out: string[]): void {
   else if (args && typeof args === "object") out.push(JSON.stringify(args));
 }
 
+/** content 投影：string 直取；多模态分段数组取 seg.text。请求侧 messages 与响应侧 choices 共用。 */
+function pushContentParts(content: unknown, out: string[]): void {
+  if (typeof content === "string") {
+    out.push(content);
+  } else if (Array.isArray(content)) {
+    for (const seg of content) {
+      if (seg && typeof seg === "object" && "text" in seg) out.push(String((seg as { text: unknown }).text));
+    }
+  }
+}
+
+/** 请求侧单条 message 投影：content + 工具调用载荷（助手历史里的 arguments 同为 T2a 载体）。 */
+function collectMessageParts(m: unknown, out: string[]): void {
+  if (!m || typeof m !== "object") return;
+  const mm = m as Record<string, unknown>;
+  if ("content" in mm) pushContentParts(mm.content, out);
+  if (Array.isArray(mm.tool_calls)) for (const tc of mm.tool_calls) collectToolCallParts(tc, out);
+  if (mm.function_call) collectToolCallParts(mm.function_call, out);
+}
+
 /** 抽 choices[*] 里 message/delta 的文本 + 工具调用载荷；同时回填结构性 meta。 */
 function collectChoiceParts(parsed: Record<string, unknown>, out: string[]): Record<string, unknown> {
   const meta: Record<string, unknown> = {};
@@ -109,18 +130,19 @@ function collectChoiceParts(parsed: Record<string, unknown>, out: string[]): Rec
       const box = c0[key];
       if (!box || typeof box !== "object") continue;
       const b = box as Record<string, unknown>;
-      // 文本内容（含多模态分段）
-      if (typeof b.content === "string") out.push(b.content);
-      else if (Array.isArray(b.content)) {
-        for (const seg of b.content) {
-          if (seg && typeof seg === "object" && "text" in seg) {
-            out.push(String((seg as { text: unknown }).text));
-          }
-        }
-      }
+      pushContentParts(b.content, out);
       // 工具调用载荷（T2a 载体）
-      if (Array.isArray(b.tool_calls)) for (const tc of b.tool_calls) collectToolCallParts(tc, out);
-      if (b.function_call) collectToolCallParts(b.function_call, out);
+      // has_tool_call_payload 让流式 checker 区分“本片是 arguments 片段”与“本片是
+      // content/reasoning 文本”：256KiB 单笔硬顶只约束前者（G-WINDOW §4.2 计量口径），
+      // 否则一段超长正文会被误判 window_overflow 而阻断。
+      if (Array.isArray(b.tool_calls) && b.tool_calls.length > 0) {
+        meta.has_tool_call_payload = true;
+        for (const tc of b.tool_calls) collectToolCallParts(tc, out);
+      }
+      if (b.function_call) {
+        meta.has_tool_call_payload = true;
+        collectToolCallParts(b.function_call, out);
+      }
       if (typeof b.reasoning_content === "string") out.push(b.reasoning_content);
     }
     if (typeof c0.finish_reason === "string") meta.finish_reason = c0.finish_reason;
@@ -138,30 +160,23 @@ export function buildRequestScanUnit(
   const meta: Record<string, unknown> = {};
   if (parsed && typeof parsed === "object") {
     if (typeof parsed.model === "string") meta.model_requested = parsed.model;
-    // messages 展平为 text；跳过 auth 头（不在 body 中，但 extra_headers 也可能带 auth）
+    // messages 展平为 text；extra_headers 里的 auth 头跳过（AC-VETO-002-06）
     const parts: string[] = [];
     const msgs = parsed.messages;
     if (Array.isArray(msgs)) {
-      for (const m of msgs) {
-        if (m && typeof m === "object" && "content" in m) {
-          const c = (m as { content: unknown }).content;
-          if (typeof c === "string") parts.push(c);
-          else if (Array.isArray(c)) {
-            for (const seg of c) {
-              if (seg && typeof seg === "object" && "text" in seg) parts.push(String((seg as { text: unknown }).text));
-            }
-          }
-        }
-        // 助手历史里的工具调用：arguments 是请求侧同样存在的 T2a 载体
-        if (m && typeof m === "object") {
-          const mm = m as Record<string, unknown>;
-          if (Array.isArray(mm.tool_calls)) for (const tc of mm.tool_calls) collectToolCallParts(tc, parts);
-          if (mm.function_call) collectToolCallParts(mm.function_call, parts);
-        }
-      }
+      for (const m of msgs) collectMessageParts(m, parts);
     }
     if (typeof parsed.system === "string") parts.push(parsed.system);
-    if (Array.isArray(parsed.tools)) parts.push(JSON.stringify(parsed.tools));
+    if (Array.isArray(parsed.tools)) {
+      parts.push(JSON.stringify(parsed.tools));
+      // D-12（SL-01/REQ-V2a-01）：声明面进请求 meta，经 core 下传给响应侧扫描单元
+      // （非流式 / 流式逐帧 / 归并单元三处同参）—— SL-09 tool-call-shape 的
+      // "未知工具名 / 缺 required" 判定源；declared_tools 为空时两子规则不适用
+      // （无声明即漏检，#C 登记）。
+      const declared = extractDeclaredTools(parsed.tools);
+      if (declared.declared_tools.length > 0) meta.declared_tools = declared.declared_tools;
+      if (Object.keys(declared.declared_required).length > 0) meta.declared_required = declared.declared_required;
+    }
     const extra = parsed.extra_headers;
     if (extra && typeof extra === "object") {
       for (const [k, v] of Object.entries(extra as Record<string, unknown>)) {
@@ -175,14 +190,56 @@ export function buildRequestScanUnit(
   return withDecoded({ direction: "request", transport, text: body, meta, malformed: true });
 }
 
+/**
+ * D-12：请求体 tools 声明面提取。declared_tools = tools[*].function.name
+ * （扁平形态退化为 tools[*].name）；declared_required = 工具名 → parameters.required
+ * （仅收字符串项；未声明 required 的工具不进表 —— "缺 required" 子规则只对
+ * 已声明 required 的工具适用）。
+ */
+function extractDeclaredTools(tools: readonly unknown[]): {
+  declared_tools: string[];
+  declared_required: Record<string, string[]>;
+} {
+  const names: string[] = [];
+  const required: Record<string, string[]> = {};
+  for (const t of tools) {
+    if (!t || typeof t !== "object") continue;
+    const to = t as Record<string, unknown>;
+    const fn = to.function && typeof to.function === "object" ? (to.function as Record<string, unknown>) : null;
+    const name = fn && typeof fn.name === "string" ? fn.name : typeof to.name === "string" ? to.name : null;
+    if (name === null) continue;
+    names.push(name);
+    const params = fn ? fn.parameters : to.parameters;
+    if (params && typeof params === "object") {
+      const reqRaw = (params as Record<string, unknown>).required;
+      if (Array.isArray(reqRaw)) {
+        const req = reqRaw.filter((x): x is string => typeof x === "string");
+        if (req.length > 0) required[name] = req;
+      }
+    }
+  }
+  return { declared_tools: names, declared_required: required };
+}
+
+/** core 据此把请求 meta 里的声明面键喂给响应侧扫描单元（只挑 declared_*，不夹带其他 meta）。 */
+export function declaredToolsMeta(meta: Readonly<Record<string, unknown>>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (meta.declared_tools !== undefined) out.declared_tools = meta.declared_tools;
+  if (meta.declared_required !== undefined) out.declared_required = meta.declared_required;
+  return out;
+}
+
 /** 响应侧：SSE data 或 body 文本 → 扫描单元；已解析 JSON 时提取 model / usage / finish_reason。 */
 export function buildResponseScanUnit(
   text: string,
   parsed: Record<string, unknown> | null,
   requestedModel: string | null,
   transport: Transport,
+  declaredMeta?: Readonly<Record<string, unknown>>,
 ): ScanUnit {
-  const meta: Record<string, unknown> = {};
+  // SL-01/D-12：声明面（declared_tools/declared_required）随单元下传；先展开，
+  // 让下方解析出的结构性字段（model/usage/finish_reason）保持优先。
+  const meta: Record<string, unknown> = { ...declaredMeta };
   if (requestedModel) meta.model_requested = requestedModel;
   if (!parsed) {
     return withDecoded({ direction: "response", transport, text, meta, malformed: true });
@@ -194,6 +251,114 @@ export function buildResponseScanUnit(
   const choiceMeta = collectChoiceParts(parsed, parts);
   if (choiceMeta.finish_reason !== undefined) meta.finish_reason = choiceMeta.finish_reason;
   return withDecoded({ direction: "response", transport, text: parts.join(""), meta });
+}
+
+// ── SL-01（AC-V2a-01）：流式 tool-call arguments 跨 chunk 归并 ─────────────────
+
+/**
+ * 流式 delta.tool_calls arguments 归并器（AC-V2a-01）。
+ *
+ * v1 缺陷：流式管线逐帧扫描，而 OpenAI 兼容协议把 arguments 按**任意切点**分片进
+ * 不同 SSE 帧（`delta.tool_calls[*].function.arguments` 增量拼接）。隐形字符的
+ * 字面转义（如六字符的 `\u200b`）被帧边界切开时，任一单帧均无完整命中——
+ * invisible-unicode-scan 的参数覆盖面从声明落空为事实漏检。
+ *
+ * 修法：同一 response 内按 tool_call index 累积片段，**归并完成后再进扫描域**
+ * （不能逐 chunk 扫碎片）；不丢字节 = 任意切分点下重组结果与原始字符串逐字符
+ * 相等（纯字符串拼接，零归一化）。归并只覆盖流式 delta 增量；非流式
+ * message.tool_calls 与"流式传输但整段 JSON"的载体在单帧内载荷完整，
+ * 由 buildResponseScanUnit 的逐帧提取直接覆盖，无需归并。
+ */
+export interface ToolCallArgsMerger {
+  /** 吸收一帧的 parsed JSON（SSE data 解析结果；null / 非 chat 帧为 no-op）。 */
+  feed(parsed: Record<string, unknown> | null): void;
+  /**
+   * 归并文本：各 tool_call 的片段按到达序拼接；**工具之间以 \n 分隔**——
+   * 防止工具 A 尾部的半个转义与工具 B 开头的字符跨桶拼出原文里不存在的伪转义（FP 面）。
+   * 工具顺序 = 首次到达序，不保证 index 序；判定不依赖工具顺序（只做逐行结构校验）。
+   */
+  mergedText(): string;
+  /** 已累积的 tool_call 数（0 = 本流未出现工具调用载荷）。 */
+  readonly toolCallCount: number;
+  /** AC-V2a-14：arguments 累积是否越过 256 KiB 硬顶（越顶后不再增长）。 */
+  readonly overflowed: boolean;
+}
+
+interface MergerState {
+  readonly acc: Map<string, string>;
+  bytes: number;
+  overflowed: boolean;
+}
+
+export function createToolCallArgsMerger(): ToolCallArgsMerger {
+  const state: MergerState = { acc: new Map(), bytes: 0, overflowed: false };
+  return {
+    get toolCallCount() {
+      return state.acc.size;
+    },
+    get overflowed() {
+      return state.overflowed;
+    },
+    feed(parsed) {
+      if (!parsed || typeof parsed !== "object") return;
+      const choices = parsed.choices;
+      if (!Array.isArray(choices)) return;
+      for (let ci = 0; ci < choices.length; ci++) feedChoiceDelta(state, ci, choices[ci]);
+    },
+    mergedText() {
+      let out = "";
+      for (const v of state.acc.values()) out = out === "" ? v : out + "\n" + v;
+      return out;
+    },
+  };
+}
+
+/** 吸收单条 choice 的 delta：tool_calls 数组按 index 分桶，旧式 function_call 单独一桶。 */
+function feedChoiceDelta(state: MergerState, ci: number, choice: unknown): void {
+  if (!choice || typeof choice !== "object") return;
+  const delta = (choice as Record<string, unknown>).delta;
+  if (!delta || typeof delta !== "object") return;
+  const d = delta as Record<string, unknown>;
+  if (Array.isArray(d.tool_calls)) {
+    for (let ti = 0; ti < d.tool_calls.length; ti++) {
+      const t = d.tool_calls[ti];
+      if (!t || typeof t !== "object") continue;
+      const to = t as Record<string, unknown>;
+      // 键 = choice 序 + tool_call index（协议字段；缺省退化为帧内数组位）——
+      // 跨帧稳定，保证同一 tool_call 的片段落进同一桶按到达序拼接。
+      const key = `${ci}:${typeof to.index === "number" ? to.index : ti}`;
+      const fn = to.function;
+      if (fn && typeof fn === "object") appendFragment(state, key, (fn as Record<string, unknown>).arguments);
+      else if (!fn) appendFragment(state, key, to.arguments); // 扁平形态（无 function 包裹）
+    }
+  }
+  if (d.function_call && typeof d.function_call === "object") {
+    appendFragment(state, `${ci}:fc`, (d.function_call as Record<string, unknown>).arguments);
+  }
+}
+
+/** arguments 协议为 string 且流式分片只对 string 有意义；对象形态直发由逐帧单元覆盖（非字符串不归并）。
+ *  累积按 UTF-8 字节封顶 256 KiB（AC-V2a-14 同口径）：越顶即停，防止无界内存与越顶后的重扫。 */
+function appendFragment(state: MergerState, key: string, args: unknown): void {
+  if (typeof args !== "string" || args.length === 0 || state.overflowed) return;
+  const add = Buffer.byteLength(args, "utf8");
+  if (state.bytes + add > STREAM_WINDOW_OVERFLOW_LIMIT) {
+    state.overflowed = true;
+    return;
+  }
+  state.bytes += add;
+  const prev = state.acc.get(key);
+  state.acc.set(key, prev === undefined ? args : prev + args);
+}
+
+/**
+ * 归并文本 → 扫描单元（AC-V2a-01）：与逐帧单元同一套转义还原投影（withDecoded），
+ * 使 `\u200b` 跨帧切开的字面转义在归并后经 decoded 投影命中。meta 只携带下传的
+ * 声明面（declared_tools/declared_required）——不携带 model_*，避免喂出
+ * model-label-consistency 的结构性噪声 finding。
+ */
+export function buildMergedToolCallScanUnit(text: string, declaredMeta?: Readonly<Record<string, unknown>>): ScanUnit {
+  return withDecoded({ direction: "response", transport: "stream", text, meta: { ...declaredMeta } });
 }
 
 /**

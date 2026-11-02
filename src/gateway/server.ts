@@ -1,12 +1,14 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { GatewayCore, handleChatCompletions, sha256Hex } from "./core.ts";
 import type { GatewayConfig } from "./core.ts";
 import { redactSink } from "../evidence/redact-sink.ts";
 import type { EvidenceFinding } from "../evidence/schema.ts";
 import type { ActionTaken, Transport } from "../shared/types.ts";
+import type { CanaryStore } from "../canary/store.ts";
 
 /**
  * @test REQ-VETO-002
@@ -20,12 +22,57 @@ export interface StartOptions {
   readonly config: GatewayConfig;
 }
 
-export async function startGateway(opts: StartOptions): Promise<{ server: ReturnType<typeof createServer>; url: string; close: () => Promise<void> }> {
+/** D-03 哨兵消费结果（#B 拍板收窄：CLI 离线轮换标记 = 零字节文件；doctor 展示属 SL-12）。删除失败 = 序内重试 3 次后放弃留痕——轮换幂等，标记留存下次启动重放安全。registry 不可用时哨兵不消费（保留待人工修复后重放）。 */
+export type CanarySentinelOutcome = "rotated" | "rotated_delete_failed" | "corrupt_ignored" | "corrupt_delete_failed" | "skipped_registry_unavailable" | "absent";
+
+/** 哨兵 IO 注入点（TEST 契约 #1）：删除失败路径经此跨平台可观测；默认 stderr + unlink。 */
+export interface SentinelIo { unlink(path: string): void; log(line: string): void; }
+
+const SENTINEL_NAME = "canary-rotate.request";
+const SENTINEL_UNLINK_ATTEMPTS = 4 as const; // 初次 + 序内重试 3 次（D-03）
+
+const SENTINEL_STD_IO: SentinelIo = { unlink: (path) => rmSync(path), log: (line) => process.stderr.write(line) };
+
+/** 哨兵定位：与 registry 同目录（stateDir 语义），固定名。 */
+export const sentinelPathFor = (registryPath: string): string => join(dirname(registryPath), SENTINEL_NAME);
+
+/** 启动序哨兵消费：零字节 → rotate + 删除；非零 → 忽略不轮换 + 删除；缺失 → 不动。
+ *  rotate 恒先于删除（删除失败不回滚已确认的轮换）。registry 不可用时既不轮换也不删除：
+ *  persist() 会用空内存态覆盖损坏文件、销毁取证现场（§4.3 要求损坏必须显式暴露），
+ *  标记保留到人工修复 registry 后的下一次启动重放。 */
+export function consumeRotateSentinel(store: CanaryStore, sentinelPath: string, io: SentinelIo = SENTINEL_STD_IO): CanarySentinelOutcome {
+  let size: number;
+  try { size = statSync(sentinelPath).size; } catch { return "absent"; } // 无文件：启动序无离线待办
+  const zero = size === 0;
+  if (zero) {
+    if (store.loadStatus.status !== "ok") {
+      io.log(`[llmveto] canary rotate sentinel skipped: registry unavailable (${store.loadStatus.cause}); ${sentinelPath} kept for retry after repair\n`);
+      return "skipped_registry_unavailable";
+    }
+    store.rotate(); // 幂等：重放安全（rotation_count 只增）
+  }
+  else io.log(`[llmveto] canary rotate sentinel ignored: ${sentinelPath} is corrupt (expected zero-byte marker, got ${size} bytes)\n`);
+  for (let attempt = 1; attempt <= SENTINEL_UNLINK_ATTEMPTS; attempt += 1) {
+    try { io.unlink(sentinelPath); return zero ? "rotated" : "corrupt_ignored"; }
+    catch (err) {
+      if (attempt === SENTINEL_UNLINK_ATTEMPTS) {
+        io.log(`[llmveto] canary rotate sentinel delete failed after ${SENTINEL_UNLINK_ATTEMPTS} attempts: ${sentinelPath} (${err instanceof Error ? err.message : String(err)})\n`);
+      }
+    }
+  }
+  return zero ? "rotated_delete_failed" : "corrupt_delete_failed"; // 重试耗尽：放弃（哨兵留存，下次启动重放）
+}
+
+export async function startGateway(opts: StartOptions): Promise<{ server: ReturnType<typeof createServer>; url: string; close: () => Promise<void>; canarySentinel?: CanarySentinelOutcome }> {
   const host = opts.host ?? "127.0.0.1";
   if (host !== "127.0.0.1" && host !== "localhost") {
     throw new Error(`AC-VETO-002-01: gateway MUST bind to 127.0.0.1; got '${host}'. Loopback-only is a security invariant.`);
   }
   const core = new GatewayCore(opts.config);
+  // D-03：哨兵消费在 listen 之前（启动序内），admin/请求路径看到轮换后状态；结果经返回值 carry。
+  const canarySentinel = core.canary !== null && opts.config.canaryRegistryPath !== undefined
+    ? consumeRotateSentinel(core.canary, sentinelPathFor(opts.config.canaryRegistryPath))
+    : undefined;
   // fail-closed 的边界（REQ-VETO-002）：dispatch 是 async，而其内部会 await 上游 fetch。
   // 上游失败（ECONNRESET / 超时 / DNS）会抛出——若不在**这里**兜住，异常会冒泡成
   // unhandledRejection 并杀死整个 daemon 进程：客户端拿不到任何响应、该次交互不落 evidence、
@@ -44,7 +91,23 @@ export async function startGateway(opts: StartOptions): Promise<{ server: Return
     server,
     url,
     close: () => new Promise<void>((resolve, reject) => server.close((e) => e ? reject(e) : resolve())),
+    ...(canarySentinel !== undefined ? { canarySentinel } : {}), // D-03：哨兵消费结果 carry（键缺席 = canary 未配置）
   };
+}
+
+/** D-03 admin 控制通道（仅回环可达）：rotate 确认（同步持久化完成）后 200；未配置 503（不误报成功）；metrics 恒可用（未配置全零，观测面不随配置降级）；未知 404。 */
+function handleAdminRoute(pathname: string, method: string, res: ServerResponse, core: GatewayCore): void {
+  const adminJson = (status: number, payload: Record<string, unknown>): void => {
+    res.statusCode = status; res.setHeader("content-type", "application/json"); res.end(JSON.stringify(payload));
+  };
+  if (pathname === "/_llmveto/canary/rotate" && method === "POST") {
+    if (core.canary === null) { adminJson(503, { error: { code: "llmveto:canary-not-configured" } }); return; }
+    adminJson(200, core.canary.rotate());
+  } else if (pathname === "/_llmveto/metrics" && method === "GET") {
+    adminJson(200, { ...core.canaryMetrics }); // D-14 live p50/p95/max 属 SL-12 handoff，本切片只接计数面
+  } else {
+    adminJson(404, { error: { code: "llmveto:not-found" } });
+  }
 }
 
 /** 路径路由解析结果：`/<client>/<provider>/<rest...>`；api-only 路径（/v1/...）两段为空。 */
@@ -126,36 +189,17 @@ async function dispatch(
 ): Promise<void> {
   const t0 = Date.now();
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
+  // D-03 admin 控制通道：/_llmveto/* 在路由解析前拦截（否则落 catch-all 502 + evidence 污染）；不进 checker/policy、不产 evidence（零旁路）。
+  if (url.pathname.startsWith("/_llmveto/")) { handleAdminRoute(url.pathname, req.method ?? "GET", res, core); return; }
   const route = parseRoute(req.url ?? "/");
 
-  // P1 缓解：GET /opencode/models → 本地模型目录快照（不转发、不留面）
-  if (cfg.modelsSnapshotPath && route.client === "opencode" && route.providerId === null && route.rest === "/models" && req.method === "GET") {
-    try {
-      const snapshot = readFileSync(cfg.modelsSnapshotPath, "utf8");
-      res.statusCode = 200;
-      res.setHeader("content-type", "application/json");
-      res.end(snapshot);
-    } catch {
-      res.statusCode = 502; // 快照丢失 = models URL 锁死失效，fail-closed 不回落真源
-      res.end(JSON.stringify({ error: { code: "llmveto:models-snapshot-missing" } }));
-    }
-    return;
-  }
+  if (maybeServeModelsSnapshot(route, req.method, res, cfg)) return;
 
   const chunks: Buffer[] = [];
   for await (const c of req) chunks.push(c as Buffer);
-  const bodyBuf = Buffer.concat(chunks);
-  const bodyText = bodyBuf.toString("utf8");
+  const bodyText = Buffer.concat(chunks).toString("utf8");
   const headers = normalizeHeaders(req.headers);
-  // 身份识别：路径段优先，x-llmveto-* 头作 fallback（兼容 legacy 直连 /v1 与测试 harness）。
-  // 信任边界：网关硬绑 127.0.0.1，本机客户端视为同一信任域，故身份头不做认证——它们只影响
-  // evidence 归属与（catch-all 路径下的）路由条目选择，不改变转发目标；唯一能改变目标的是
-  // x-llmveto-upstream-url，由 allowUpstreamHeaderOverride 门控（默认关闭，生产不开启）。
-  const client = route.client ?? headers["x-llmveto-client"] ?? "unknown";
-  const providerId = route.providerId ?? headers["x-llmveto-provider"] ?? cfg.providerId ?? "unknown";
-  const requestId = headers["x-llmveto-request-id"] ?? randomUUID();
-  const sessionId = headers["x-llmveto-session-id"] ?? "s-" + requestId.slice(0, 8);
-  const turnId = headers["x-llmveto-turn-id"] ?? "t-" + requestId.slice(0, 8);
+  const id = resolveIdentity(route, headers, cfg);
 
   const resolution = resolveUpstream(route, headers, cfg);
   // 查询串随路径一并转发（如受管 Delphi endpoint 的 `?stream=1`、Azure 风格 api-version）
@@ -164,16 +208,7 @@ async function dispatch(
 
   // fail-closed：无任何路由可解析 → 502，不转发，evidence 记录 router finding
   if (!upstreamUrl) {
-    const body = JSON.stringify({ error: { code: "llmveto:no-upstream-route" } });
-    res.statusCode = 502;
-    res.setHeader("content-type", "application/json");
-    res.end(body);
-    const routerFinding: EvidenceFinding = {
-      checker: "router", threat: "T0", verdict: "error", severity: "high", rule_id: "no-upstream-route",
-    };
-    writeEvidence(cfg, { sessionId, turnId, requestId, client, providerId, endpointHost,
-      bodyText, bodyBuf, respText: body, stream: false, findings: [routerFinding],
-      actionTaken: "blocked_before_forward", deliveredChunks: 0, partial: false, t0 });
+    respondNoUpstreamRoute(res, cfg, id, { bodyText, endpointHost, t0 });
     return;
   }
 
@@ -191,40 +226,125 @@ async function dispatch(
     body: bodyText,
     headers,
     upstreamUrl,
-    requestId,
-    sessionId,
-    turnId,
-    client,
-    providerId,
+    requestId: id.requestId,
+    sessionId: id.sessionId,
+    turnId: id.turnId,
+    client: id.client,
+    providerId: id.providerId,
     endpointHost,
     transport,
   });
 
-  const respText = outcome.body;
-  res.statusCode = outcome.status;
-  // content-type 以实际响应形态为准：stream 判定为真但无 sse（如上游非 2xx 走错误分支）时
-  // 交付的是 JSON 体，若仍标 text/event-stream 会令流式客户端解析失败（R2 评审 A-N-1）。
-  res.setHeader("content-type", outcome.sse ? "text/event-stream" : "application/json");
-  if (outcome.sse) {
-    for await (const chunk of outcome.sse) {
-      res.write(chunk);
-      fwd.chunks++; // 兜底路径据此如实记 delivered_chunks（PWR1-B-M3）
-    }
-    res.end();
-  } else {
-    res.end(respText);
-  }
-  writeEvidence(cfg, { sessionId, turnId, requestId, client, providerId, endpointHost,
-    bodyText, bodyBuf, respText, stream, findings: outcome.findings,
+  await deliverOutcome(res, outcome, fwd);
+  writeEvidence(cfg, { sessionId: id.sessionId, turnId: id.turnId, requestId: id.requestId,
+    client: id.client, providerId: id.providerId, endpointHost,
+    bodyText, respText: outcome.body, stream, findings: outcome.findings,
     actionTaken: outcome.actionTaken, deliveredChunks: outcome.deliveredChunks,
+    forwardedBody: outcome.forwardedBody, // D-04：链上 sha/bytes 记上游实收体
+    ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}), // SL-07：顶层 reason 落链（key-absent）
     partial: outcome.actionTaken === "terminated_after_delivery", t0 });
+}
+
+/** P1 缓解：GET /opencode/models → 本地模型目录快照（不转发、不留面）。返回 true = 已响应。 */
+function maybeServeModelsSnapshot(
+  route: RouteInfo,
+  method: string | undefined,
+  res: ServerResponse,
+  cfg: GatewayConfig,
+): boolean {
+  if (method !== "GET" || route.client !== "opencode" || route.providerId !== null || route.rest !== "/models") return false;
+  if (!cfg.modelsSnapshotPath) return false;
+  try {
+    const snapshot = readFileSync(cfg.modelsSnapshotPath, "utf8");
+    res.statusCode = 200;
+    res.setHeader("content-type", "application/json");
+    res.end(snapshot);
+  } catch {
+    res.statusCode = 502; // 快照丢失 = models URL 锁死失效，fail-closed 不回落真源
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ error: { code: "llmveto:models-snapshot-missing" } }));
+  }
+  return true;
+}
+
+/** 请求身份五元组：路径段优先，x-llmveto-* 头 fallback（兼容 legacy 直连 /v1 与测试 harness）。
+ *  信任边界：网关硬绑 127.0.0.1，本机客户端视为同一信任域，故身份头不做认证——它们只影响
+ *  evidence 归属与（catch-all 路径下的）路由条目选择，不改变转发目标；唯一能改变目标的是
+ *  x-llmveto-upstream-url，由 allowUpstreamHeaderOverride 门控（默认关闭，生产不开启）。 */
+interface RequestIdentity {
+  readonly client: string;
+  readonly providerId: string;
+  readonly requestId: string;
+  readonly sessionId: string;
+  readonly turnId: string;
+}
+
+/** 取第一个非 null/undefined 的候选值；命中即返回，保持 `a ?? b ?? c` 的短路语义。 */
+function firstDefined(...candidates: readonly (string | undefined | null)[]): string | undefined {
+  for (const c of candidates) if (c !== undefined && c !== null) return c;
+  return undefined;
+}
+
+function resolveIdentity(route: RouteInfo, headers: Readonly<Record<string, string>>, cfg: GatewayConfig): RequestIdentity {
+  const requestId = headers["x-llmveto-request-id"] ?? randomUUID();
+  return {
+    client: firstDefined(route.client, headers["x-llmveto-client"]) ?? "unknown",
+    providerId: firstDefined(route.providerId, headers["x-llmveto-provider"], cfg.providerId) ?? "unknown",
+    requestId,
+    sessionId: firstDefined(headers["x-llmveto-session-id"]) ?? "s-" + requestId.slice(0, 8),
+    turnId: firstDefined(headers["x-llmveto-turn-id"]) ?? "t-" + requestId.slice(0, 8),
+  };
+}
+
+/** fail-closed：无任何路由可解析 → 502，不转发，evidence 记录 router finding。 */
+function respondNoUpstreamRoute(
+  res: ServerResponse,
+  cfg: GatewayConfig,
+  id: RequestIdentity,
+  p: { readonly bodyText: string; readonly endpointHost: string; readonly t0: number },
+): void {
+  const body = JSON.stringify({ error: { code: "llmveto:no-upstream-route" } });
+  res.statusCode = 502;
+  res.setHeader("content-type", "application/json");
+  res.end(body);
+  const routerFinding: EvidenceFinding = {
+    checker: "router", threat: "T0", verdict: "error", severity: "high", rule_id: "no-upstream-route",
+  };
+  writeEvidence(cfg, { sessionId: id.sessionId, turnId: id.turnId, requestId: id.requestId,
+    client: id.client, providerId: id.providerId, endpointHost: p.endpointHost,
+    bodyText: p.bodyText, respText: body, stream: false, findings: [routerFinding],
+    actionTaken: "blocked_before_forward", deliveredChunks: 0, partial: false, t0: p.t0 });
+}
+
+/** 响应交付：content-type 以实际响应形态为准（stream 判定为真但无 sse——如上游非 2xx 走错误
+ *  分支——交付的是 JSON 体，若仍标 text/event-stream 会令流式客户端解析失败，R2 评审 A-N-1）；
+ *  SSE 逐帧写并计数进 fwd，兜底路径据此如实记 delivered_chunks（PWR1-B-M3）。 */
+async function deliverOutcome(
+  res: ServerResponse,
+  outcome: Awaited<ReturnType<typeof handleChatCompletions>>,
+  fwd: DeliveryState,
+): Promise<void> {
+  res.statusCode = outcome.status;
+  res.setHeader("content-type", outcome.sse ? "text/event-stream" : "application/json");
+  if (!outcome.sse) {
+    res.end(outcome.body);
+    return;
+  }
+  for await (const chunk of outcome.sse) {
+    res.write(chunk);
+    fwd.chunks++;
+  }
+  res.end();
 }
 
 interface EvidenceWriteParams {
   readonly sessionId: string; readonly turnId: string; readonly requestId: string;
   readonly client: string; readonly providerId: string; readonly endpointHost: string;
-  readonly bodyText: string; readonly bodyBuf: Buffer; readonly respText: string;
-  readonly stream: boolean; readonly findings: readonly EvidenceFinding[];
+  readonly bodyText: string; readonly respText: string;
+  /** D-04：实际转发给 upstream 的请求体（受管路径 = 注入后体）；缺席 = 与 bodyText 一致。 */
+  readonly forwardedBody?: string;
+  /** D-10 顶层 reason（gateway 值优先，checker error 重放为底）；无异常时缺席（键不落盘，非 null）。 */
+  readonly reason?: string; readonly stream: boolean; readonly findings: readonly EvidenceFinding[];
   readonly actionTaken: ActionTaken;
   readonly deliveredChunks: number;
   /** 客户端是否已拿到**部分**响应字节。此前由 actionTaken 间接推导，兜底路径在
@@ -234,6 +354,9 @@ interface EvidenceWriteParams {
 }
 
 function writeEvidence(cfg: GatewayConfig, p: EvidenceWriteParams): void {
+  // D-04/#A：request_bytes/request_body_sha256 记**实际到达 upstream 的外部事实**（受管路径 = 注入后体）；
+  // bodyText 仍为客户端原文，注入成功时二者有意不同，同为离境文本面各自过喉。
+  const forwarded = p.forwardedBody ?? p.bodyText;
   const parsedReq = safeParse(p.bodyText);
   const modelReq = parsedReq && typeof parsedReq.model === "string" ? parsedReq.model : null;
   const parsedResp = safeParse(p.respText);
@@ -242,18 +365,20 @@ function writeEvidence(cfg: GatewayConfig, p: EvidenceWriteParams): void {
   // 咽喉点（AC-VETO-002-05）：文本写盘前必须过 redactSink。v1 evidence 只落 sha256 + 模式标记
   // （见 evidence/schema.ts），无原文落盘，故返回值不参与落盘；保留调用作为文本 sink 的强制入口。
   redactSink(bodyCapture, p.bodyText);
+  if (forwarded !== p.bodyText) redactSink(bodyCapture, forwarded);
   cfg.evidenceWriter.append({
     session_id: p.sessionId, turn_id: p.turnId, request_id: p.requestId,
     client: p.client, provider_id: p.providerId, endpoint_host: p.endpointHost,
     model_requested: modelReq, model_responded: modelResp,
     transport: p.stream ? "stream" : "non-stream",
-    request_bytes: p.bodyBuf.byteLength, response_bytes: Buffer.byteLength(p.respText, "utf8"),
+    request_bytes: Buffer.byteLength(forwarded, "utf8"), response_bytes: Buffer.byteLength(p.respText, "utf8"),
     chunk_count: p.deliveredChunks,
     latency: Date.now() - p.t0,
     findings: p.findings,
     action_taken: p.actionTaken,
+    ...(p.reason !== undefined ? { reason: p.reason } : {}), // 可选位：未传时键整体缺席（§14.4-4），v1 记录形状零扰动
     response_delivered: { partial: p.partial, delivered_chunks: p.deliveredChunks },
-    request_body_sha256: sha256Hex(p.bodyText),
+    request_body_sha256: sha256Hex(forwarded),
     response_body_sha256: sha256Hex(p.respText),
     body_capture: bodyCapture,
   });
@@ -317,7 +442,6 @@ function handleDispatchFailure(
       providerId: headers["x-llmveto-provider"] ?? cfg.providerId ?? "unknown",
       endpointHost: headers["x-llmveto-endpoint-host"] ?? "unknown",
       bodyText: "",
-      bodyBuf: Buffer.alloc(0),
       // headers 已出时并未把 JSON body 交付给客户端——evidence 不虚报交付内容（respText 与
       // response_body_sha256 描述"实际交付面"），失败原因由 findings 承载。
       respText: forwarded ? "" : body,

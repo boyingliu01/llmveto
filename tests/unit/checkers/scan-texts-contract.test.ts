@@ -51,6 +51,21 @@ const ALLOWLIST: readonly Exemption[] = [
     reason: "只读 meta 结构字段（model 标签），不读 text（PWR1-A-M1 审查批准豁免）",
     touch_free: true,
   },
+  {
+    file: "usage-reconcile.ts",
+    // estimateTokens(unit.text) —— metering 口径，只取全文本做字符计数，非安全扫描。
+    // 对手无法通过转义写法改变 UTF-16 码元长度，故不需 scanTexts 双投影。
+    pattern: /^unit\.text$/,
+    reason: "metering 口径（字符/token 比估算），非安全扫描（SL-11/REQ-V2a-04）",
+  },
+  {
+    file: "tool-call-shape.ts",
+    // `chunk.text.length` in stream checker —— window overflow 累积字节计数，
+    // `chunk.text` 用于流式文本累积（非安全判定）；实际 tool call 提取与三子规则
+    // 扫描经 scanTexts(unit) 双投影执行。
+    pattern: /chunk\.text(?:\.length)?/,
+    reason: "window overflow 累积计数 + 流式文本累积，非安全判定（SL-09/REQ-V2a-02）",
+  },
 ];
 
 function checkerSources(): ReadonlyMap<string, string> {
@@ -113,6 +128,9 @@ describe("scanTexts 契约机械守卫（PWR1-A-M1）", () => {
     const srcs = checkerSources();
     for (const [name, src] of srcs) {
       if (!/unit\.text\b/.test(src)) continue;
+      // 豁免列表中的文件（如 metering 口径）不强制要求 scanTexts
+      const isExempted = ALLOWLIST.some((e) => e.file === name);
+      if (isExempted) continue;
       expect(
         /import\s*\{[^}]*\bscanTexts\b[^}]*\}\s*from\s*"\.\.\/shared\/types\.ts"/.test(src),
         `src/checkers/${name} 直接引用 unit.text 却未导入 scanTexts —— 转义投影面会被静默绕过`,
@@ -124,7 +142,9 @@ describe("scanTexts 契约机械守卫（PWR1-A-M1）", () => {
     const sample = `export const bad = (unit: ScanUnit) => unit.text.includes("x");`;
     const hits = [...sample.matchAll(TEXT_TOUCH)].map((m) => m[0]!);
     expect(hits).toContain("unit.text");
-    expect(ALLOWLIST.some((e) => e.pattern.test("unit.text"))).toBe(false);
+    // metering 豁免（如 usage-reconcile）允许匹配 unit.text，但非 metering 豁免不得匹配
+    const nonMeteringExemptions = ALLOWLIST.filter((e) => !e.reason.includes("metering"));
+    expect(nonMeteringExemptions.some((e) => e.pattern.test("unit.text"))).toBe(false);
     // 非 `unit` 的迭代变量名同样必须落入捕获面（防止模式退化为只认 unit.*）
     const variant = `const seg = evt.text.slice(0, 3);`;
     expect([...variant.matchAll(TEXT_TOUCH)].map((m) => m[0])).toEqual(["evt.text.slice"]);

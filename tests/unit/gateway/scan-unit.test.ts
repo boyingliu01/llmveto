@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { decodeEscapes, isAuthHeader, buildRequestScanUnit, buildResponseScanUnit } from "../../../src/gateway/scan-unit.ts";
+import { decodeEscapes, isAuthHeader, buildRequestScanUnit, buildResponseScanUnit, createToolCallArgsMerger, buildMergedToolCallScanUnit } from "../../../src/gateway/scan-unit.ts";
 import { encodeVetoEvent, parseSseFrames, tryParseJson } from "../../../src/gateway/sse-tee.ts";
+import { GatewayCore } from "../../../src/gateway/core.ts";
+import { EvidenceWriter } from "../../../src/evidence/writer.ts";
+import { STREAM_WINDOW_OVERFLOW_LIMIT, type ScanWindow } from "../../../src/shared/types.ts";
 import { invisibleUnicodeScanNonStream } from "../../../src/checkers/invisible-unicode-scan.ts";
 import { egressSecretScan } from "../../../src/checkers/egress-secret-scan.ts";
 
@@ -124,6 +127,188 @@ describe("SL-09 gateway: scan-unit + sse-tee", () => {
     const text = JSON.stringify({ choices: [null, 42, { delta: { content: "ok" } }] });
     const u = buildResponseScanUnit(text, JSON.parse(text), null, "stream");
     expect(u.text).toBe("ok");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SL-01（REQ-V2a-01 / D-12）：declared_tools / declared_required 从请求体提取。
+// v1 缺陷：请求体 tools 声明面从未进 meta —— SL-09 tool-call-shape 的
+// "未知工具名 / 缺 required" 子规则没有判定源。下传链：请求 meta → core →
+// 响应 meta（非流式单元 / 流式逐帧单元 / 归并单元三处同参）。
+// ─────────────────────────────────────────────────────────────────────────────
+describe("SL-01 gateway: declared_tools / declared_required 提取与下传（D-12）", () => {
+  it("buildRequestScanUnit: tools[*].function.name → meta.declared_tools；parameters.required → meta.declared_required（非字符串项剔除）", () => {
+    const body = JSON.stringify({
+      model: "m",
+      messages: [{ role: "user", content: "hi" }],
+      tools: [
+        { type: "function", function: { name: "run_shell", parameters: { type: "object", required: ["cmd", "cwd", 42] } } },
+        { type: "function", function: { name: "search_web" } },
+      ],
+    });
+    const u = buildRequestScanUnit(body, JSON.parse(body), {}, "non-stream");
+    expect(u.meta.declared_tools).toEqual(["run_shell", "search_web"]);
+    expect(u.meta.declared_required).toEqual({ run_shell: ["cmd", "cwd"] });
+  });
+
+  it("buildRequestScanUnit: 无 tools → meta 不含 declared 键（declared_tools 为空即两子规则不适用的判定源）", () => {
+    const body = JSON.stringify({ model: "m", messages: [{ role: "user", content: "hi" }] });
+    const u = buildRequestScanUnit(body, JSON.parse(body), {}, "non-stream");
+    expect(u.meta.declared_tools).toBeUndefined();
+    expect(u.meta.declared_required).toBeUndefined();
+  });
+
+  it("buildResponseScanUnit: declaredMeta 参数下传进响应单元 meta（非流式与流式同参）", () => {
+    const text = JSON.stringify({ choices: [{ message: { content: "ok" } }] });
+    const declared = { declared_tools: ["run_shell"], declared_required: { run_shell: ["cmd"] } };
+    const u1 = buildResponseScanUnit(text, JSON.parse(text), null, "non-stream", declared);
+    const u2 = buildResponseScanUnit(text, JSON.parse(text), null, "stream", declared);
+    expect(u1.meta.declared_tools).toEqual(["run_shell"]);
+    expect(u2.meta.declared_required).toEqual({ run_shell: ["cmd"] });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SL-01（AC-V2a-01）：流式 delta.tool_calls 跨 chunk 归并。
+// v1 缺陷：流式管线逐帧扫描，arguments 按任意切点分片进不同 SSE 帧，隐形字符的
+// 字面转义（\u200b 六字符）被帧边界切开时任一单帧均无完整命中——invisible-unicode
+// 参数覆盖面从声明落空为事实。修法：同一 response 内按 tool_call index 累积片段，
+// 归并完成后再进扫描域（不能逐 chunk 扫碎片）；不丢字节 = 任意切分点下重组结果
+// 与原始字符串逐字符相等（纯字符串拼接，零归一化）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 构造一帧流式 delta.tool_calls 的 SSE data JSON；首帧带 name/id，续帧只有 index+arguments。 */
+function toolCallFrame(args: string, index = 0, withName = false): string {
+  const tc: Record<string, unknown> = { index, function: withName ? { name: "run_shell", arguments: args } : { arguments: args } };
+  if (withName) { tc.id = "call_" + index; tc.type = "function"; }
+  return JSON.stringify({ choices: [{ delta: { tool_calls: [tc] } }] });
+}
+
+describe("SL-01 gateway: 流式 delta.tool_calls 跨 chunk 归并（AC-V2a-01）", () => {
+  it("RED 基准：转义序列跨帧切开的 U+200B 藏于 arguments，逐帧扫描均 clean（v1 漏检面本体）", () => {
+    const f1 = toolCallFrame('{"cmd":"echo \\u200', 0, true);
+    const f2 = toolCallFrame('b.png"}');
+    for (const f of [f1, f2]) {
+      const u = buildResponseScanUnit(f, JSON.parse(f), null, "stream");
+      expect(invisibleUnicodeScanNonStream(u).verdict).toBe("clean");
+    }
+  });
+
+  it("归并后检出：跨帧切开的 \\u200b → finding（invisible-unicode-escaped），归并文本逐字符还原", () => {
+    const m = createToolCallArgsMerger();
+    m.feed(JSON.parse(toolCallFrame('{"cmd":"echo \\u200', 0, true)));
+    m.feed(JSON.parse(toolCallFrame('b.png"}')));
+    expect(m.mergedText()).toBe('{"cmd":"echo \\u200b.png"}'); // 字面 6 字符转义完整重组
+    expect(m.toolCallCount).toBe(1);
+    const r = invisibleUnicodeScanNonStream(buildMergedToolCallScanUnit(m.mergedText()));
+    expect(r.verdict).toBe("finding");
+    expect(r.evidence[0]!.rule_id).toBe("invisible-unicode-escaped");
+  });
+
+  it("真实 U+200B 经归并 → finding 且 offsets 可定位（原始投影命中）", () => {
+    const m = createToolCallArgsMerger();
+    m.feed(JSON.parse(toolCallFrame('{"p":"a\u200Bb"}', 0, true)));
+    const r = invisibleUnicodeScanNonStream(buildMergedToolCallScanUnit(m.mergedText()));
+    expect(r.verdict).toBe("finding");
+    expect(r.evidence[0]!.rule_id).toBe("invisible-unicode");
+    expect(r.evidence[0]!.offsets).toHaveLength(1);
+  });
+
+  it("不丢字节：arguments 在任意切分点切成两帧 + 空片段帧，归并结果与原始字符串逐字符相等", () => {
+    const ARGS = '{"cmd":"echo \\u200bhi","path":"a\u200Bb","n":42}'; // 字面转义 + 真实字符混合形态
+    for (let cut = 1; cut < ARGS.length; cut++) {
+      const m = createToolCallArgsMerger();
+      m.feed(JSON.parse(toolCallFrame(ARGS.slice(0, cut), 0, true)));
+      m.feed(JSON.parse(toolCallFrame(ARGS.slice(cut))));
+      m.feed(JSON.parse(toolCallFrame("", 0))); // 空片段续帧不得引入噪声
+      expect(m.mergedText(), `cut=${cut}`).toBe(ARGS);
+    }
+  });
+
+  it("按 tool_call index 独立累积：跨工具片段以分隔符隔断，不得拼出伪转义（防 FP）", () => {
+    const m = createToolCallArgsMerger();
+    m.feed(JSON.parse(toolCallFrame('{"a":"x\\u200', 0, true))); // 工具0 尾部留半个转义
+    m.feed(JSON.parse(toolCallFrame('{"b":"y', 1)));            // 工具1 首片段恰为转义后半的 b
+    m.feed(JSON.parse(toolCallFrame('b"}', 1)));
+    const r = invisibleUnicodeScanNonStream(buildMergedToolCallScanUnit(m.mergedText()));
+    expect(r.verdict).toBe("clean"); // 工具0 的 \u200 与工具1 的 b 之间有分隔 → 不构成 \u200b
+    // 同工具内仍逐字节拼接
+    const m2 = createToolCallArgsMerger();
+    m2.feed(JSON.parse(toolCallFrame('{"b":"y', 1)));
+    m2.feed(JSON.parse(toolCallFrame('\\u200z"}', 1)));
+    expect(m2.mergedText()).toBe('{"b":"y\\u200z"}');
+  });
+
+  it("legacy delta.function_call.arguments 与扁平 tool_calls 形态同样归并", () => {
+    const legacyFrame = (args: string, withName = false) =>
+      JSON.stringify({ choices: [{ delta: { function_call: withName ? { name: "legacy", arguments: args } : { arguments: args } } }] });
+    const m = createToolCallArgsMerger();
+    m.feed(JSON.parse(legacyFrame('{"x":"LE', true)));
+    m.feed(JSON.parse(legacyFrame('GACY"}')));
+    expect(m.mergedText()).toBe('{"x":"LEGACY"}');
+    // 扁平形态（无 function 包裹，部分网关直发）
+    const flatFrame = (args: string, withName = false) =>
+      JSON.stringify({ choices: [{ delta: { tool_calls: [withName ? { index: 0, name: "flat", arguments: args } : { index: 0, arguments: args }] } }] });
+    const m2 = createToolCallArgsMerger();
+    m2.feed(JSON.parse(flatFrame('{"f":"FL', true)));
+    m2.feed(JSON.parse(flatFrame('AT"}')));
+    expect(m2.mergedText()).toBe('{"f":"FLAT"}');
+  });
+
+  it("feed(null)（malformed 帧）/ 非 chat 帧为 no-op；无工具调用 → mergedText 空串", () => {
+    const m = createToolCallArgsMerger();
+    m.feed(null);
+    m.feed({ ok: 1 });
+    m.feed(JSON.parse('{"choices":[null,42,{"delta":{"content":"hi"}}]}'));
+    expect(m.mergedText()).toBe("");
+    expect(m.toolCallCount).toBe(0);
+    expect(buildMergedToolCallScanUnit(m.mergedText()).text).toBe("");
+  });
+
+  it("AC-V2a-14 归并硬顶：恰满 256 KiB 允许（overflowed=false），再多 1 字节即越顶且不再增长", () => {
+    const exact = "a".repeat(STREAM_WINDOW_OVERFLOW_LIMIT);
+    const m = createToolCallArgsMerger();
+    m.feed(JSON.parse(toolCallFrame(exact, 0, true)));
+    expect(m.overflowed).toBe(false);
+    expect(Buffer.byteLength(m.mergedText(), "utf8")).toBe(STREAM_WINDOW_OVERFLOW_LIMIT);
+    m.feed(JSON.parse(toolCallFrame("b")));
+    expect(m.overflowed).toBe(true);
+    expect(m.mergedText()).toBe(exact); // 越顶片段整段丢弃，不发生半截写入
+  });
+
+  it("AC-V2a-14 字节口径：多字节字符按 UTF-8 计（CJK 3 字节），越顶后后续帧全部不再吸收", () => {
+    // 87381 个「中」= 262143 字节（未过半字节边界也按整字符计入，不得截断字符）
+    const cjk = "中".repeat(87381);
+    const m = createToolCallArgsMerger();
+    m.feed(JSON.parse(toolCallFrame(cjk, 0, true)));
+    expect(m.overflowed).toBe(false);
+    m.feed(JSON.parse(toolCallFrame("a"))); // 262144 恰好等于硬顶 → 仍允许
+    expect(m.overflowed).toBe(false);
+    expect(Buffer.byteLength(m.mergedText(), "utf8")).toBe(STREAM_WINDOW_OVERFLOW_LIMIT);
+    m.feed(JSON.parse(toolCallFrame("b"))); // 262145 → 越顶
+    expect(m.overflowed).toBe(true);
+    expect(m.mergedText()).toBe(cjk + "a");
+  });
+
+  it("benign 工具调用流（含可还原的良性转义）经归并零误报", () => {
+    const m = createToolCallArgsMerger();
+    m.feed(JSON.parse(toolCallFrame('{"cmd":"ls \\\\u0041.tmp"}', 0, true)));
+    m.feed(JSON.parse(toolCallFrame(',"cwd":"/tmp"}')));
+    expect(invisibleUnicodeScanNonStream(buildMergedToolCallScanUnit(m.mergedText())).verdict).toBe("clean");
+  });
+
+  it("GatewayCore.scanResponseStreamUnit: 归并单元走全量响应 checker 分派（流式+非流式），advance:false 零推进", () => {
+    const core = new GatewayCore({ upstreamBaseUrl: "http://127.0.0.1:9", evidenceWriter: new EvidenceWriter("unused-sl01-evidence.jsonl") });
+    const u = buildMergedToolCallScanUnit('{"cmd":"a\u200Bb"}');
+    const base: ScanWindow = { pendingBytes: new Uint8Array([7]), cursor: 5 };
+    const windows = new Map<string, ScanWindow>([["invisible-unicode-scan", base]]);
+    // D-07 落地后：归并单元是已消费内容的重投影 → advance:false，窗口零推进
+    // （cursor 保持 5，pendingBytes 原样透传）；重投影 meta 由 core 统一打标。
+    const { inputs, nextWindows } = core.scanResponseStreamUnit(windows, u, { advance: false });
+    expect(inputs.find((i) => i.checkerId === "invisible-unicode-scan")?.result.verdict).toBe("finding");
+    const w = nextWindows.get("invisible-unicode-scan");
+    expect(w?.cursor).toBe(5);
+    expect(w?.pendingBytes).toBe(base.pendingBytes);
   });
 });
 

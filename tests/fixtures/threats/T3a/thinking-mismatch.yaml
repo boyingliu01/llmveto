@@ -1,0 +1,25 @@
+# @test REQ-V2a-03 T3a thinking-signature-presence fixtures
+# Consumed by detection-matrix.test.ts (T3a-thinking section) and
+# tests/unit/checkers/thinking-signature-presence.test.ts.
+threat_id: T3a
+cases:
+  - id: t3a-thinking-on-has-block
+    checker: thinking-signature-presence
+    thinking_enabled: true
+    response_text: "<think>reasoning</think>The answer is 42"
+    expected: clean
+  - id: t3a-thinking-on-no-block
+    checker: thinking-signature-presence
+    thinking_enabled: true
+    response_text: "The answer is 42"
+    expected: finding
+  - id: t3a-thinking-off-has-block
+    checker: thinking-signature-presence
+    thinking_enabled: false
+    response_text: "<think>leaked reasoning</think>answer"
+    expected: finding
+  - id: t3a-thinking-off-no-block
+    checker: thinking-signature-presence
+    thinking_enabled: false
+    response_text: "The answer is 42"
+    expected: clean

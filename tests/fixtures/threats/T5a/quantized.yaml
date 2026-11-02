@@ -1,0 +1,41 @@
+# T5a 威胁样本：quantized opponent (fpverify reduced precision/truncation)
+# AC-V2a-09: Truncated responses simulate quantization attacks
+
+request:
+  method: POST
+  path: /v1/chat/completions
+  headers:
+    content-type: application/json
+    authorization: "Bearer test-key"
+  body:
+    model: gpt-4o
+    messages:
+      - role: user
+        content: "Write a complete Python function to calculate fibonacci numbers"
+
+response:
+  status: 200
+  headers:
+    content-type: application/json
+  body:
+    id: chatcmpl-quantized-001
+    model: gpt-4o
+    choices:
+      - index: 0
+        message:
+          role: assistant
+          content: "def fibonacci(n):\n    if n <="
+        finish_reason: length
+    usage:
+      prompt_tokens: 20
+      completion_tokens: 15
+      total_tokens: 35
+
+expected:
+  verdict: finding
+  checker: thinking-signature-presence
+  threat: T5a
+  opponent: quantized
+  rule_id: truncated-response
+  action: warn
+  rationale: "Abrupt truncation suggests quantization attack reducing response fidelity"

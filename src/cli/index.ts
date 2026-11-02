@@ -278,7 +278,7 @@ async function cmdDoctor(ctx: CliCtx, writeManaged: boolean): Promise<CliResult>
   const agg = aggregateEvidence(evidenceFile(ctx));
   if (agg.status === "ok") {
     const c = agg.counts;
-    checks.push({ id: "doctor.coverage-counters", ok: true, message: `total=${c.total} allowed=${c.allowed} blocked=${c.blocked} warned=${c.warned} terminated=${c.terminated}` });
+    checks.push({ id: "doctor.coverage-counters", ok: true, message: `total=${c.total} allowed=${c.allowed} blocked=${c.blocked} warned=${c.warned} terminated=${c.terminated} degraded=${c.degraded}` });
   } else {
     checks.push({ id: "doctor.coverage-counters", ok: false, message: `[DEGRADED] counters unavailable: ${agg.reason}` });
   }

@@ -66,3 +66,9 @@ layers:
   - name: cli
     paths: ["src/cli/**", "src/index.ts"]
     allowed_imports: [shared, checkers, policy, evidence, adapters, gateway, cli]
+
+# ── 安全边界不变量（非分层规则，Gate 6 不自动执行；与 docs/KNOWN-ISSUES.md 互引）──
+# admin 面（POST /_llmveto/canary/rotate、GET /_llmveto/metrics）的唯一边界 =
+#   daemon 绑定 loopback；v0.3.0 无 Host/Origin/token 校验。这是刻意设计（威胁模型 =
+#   本机回环网关），不是漏配：不得把 /_llmveto/* 置于反向代理之后；若将来代理化，
+#   必须先补来源校验并同步修订本不变量。

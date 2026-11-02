@@ -26,10 +26,12 @@
 - **Admin boundary**: `POST /_llmveto/canary/rotate` and `GET /_llmveto/metrics` are protected only
   by the daemon binding to loopback. Do not expose `/_llmveto/*` through a reverse proxy; v0.3.0
   has no Host/Origin/token check on the admin surface.
-- **Empty-anchor sessions**: a request with no user text or an unparsable body derives a shared
-  deterministic session anchor and is assigned a canary, but injection is skipped, so that canary
-  never leaves the gateway. It can appear as a candidate in other sessions' snapshots yet cannot be
-  legitimately returned by an upstream.
+- **Shared empty anchor**: requests whose first user message has no text part (empty string, missing
+  content, or only image/file parts), requests with no user message, and unparsable bodies all derive
+  the same fallback anchor (`"0:"`). Their handling differs: no-user/unparsable requests skip
+  injection, while empty-string or non-text user content is injected through branches 3/4 and **is**
+  forwarded with that shared canary. Normal sessions can therefore see the empty-anchor canary as a
+  snapshot candidate; it can only be returned by an upstream that echoed a degenerate request.
 - **Single-writer assumption**: the registry is designed for one gateway process per `stateDir`.
   Running two daemons against the same state directory is not detected or locked; the last writer
   wins and the other process's session state can be silently dropped.

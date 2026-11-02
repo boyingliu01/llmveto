@@ -32,7 +32,7 @@ function isToolCall(obj: unknown): obj is ToolCallShape {
 function extractToolCalls(text: string): ToolCallShape[] {
   // 廉价前置：ToolCallShape 必然同时含 "name" 与 "arguments" 两个键。
   // 流式 arguments 片段（本 checker 逐帧累积的主体）通常一个都没有，跳过
-  // JSON.parse + 全文正则，避免 O(n²) 重扫在 G1 5ms/片预算里超时误阻断。
+  // JSON.parse + 全文正则，避免 O(n²) 重扫在 G1 12ms/片预算里超时误阻断。
   if (!text.includes('"name"') || !text.includes('"arguments"')) return [];
   try {
     const obj = JSON.parse(text);
@@ -131,7 +131,7 @@ export const checkToolCallShapeStream: StreamChecker = (window, chunk) => {
   const prev = typeof window.extra?.accumulatedText === "string" ? window.extra.accumulatedText : "";
   const acc = prev + chunk.text;
   // 只有可能闭合一个结构时才重扫累积文本：未闭合片段逐帧全文 JSON.parse 是
-  // O(n²)，在 G1 5ms/片预算下长 arguments 流会自超时（checker_timeout 误阻断）。
+  // O(n²)，在 G1 12ms/片预算下长 arguments 流会自超时（checker_timeout 误阻断）。
   const next = {
     pendingBytes: window.pendingBytes, cursor: window.cursor + chunk.text.length,
     extra: { ...window.extra, accumulatedText: acc, [ACCUMULATED_BYTES_KEY]: curBytes },

@@ -9,9 +9,10 @@ import type { EvidenceRecord } from "./schema.ts";
  */
 
 /**
- * degraded 是附加标记，不是与 allowed/blocked/warned/terminated 互斥的分桶：
- * allowed+blocked+warned+terminated+degraded 一般不等于 total（一条记录可同时 degraded 且 blocked）。
- * total 是记录数上界；组合场景以各计数并列读，勿用恒等式反推。
+ * degraded 与 allowed/blocked/warned/terminated 互斥：它统计 action_taken 恰为
+ * degraded_observational 的记录，五桶之和 = total。action_taken 优先级保证 block 胜过
+ * degraded，因此「block ∧ degraded」只体现为 blocked（最终动作）+ findings[] 里的观察类
+ * error 条目，不计入 degraded。
  */
 export interface AggregateCounts {
   readonly total: number;

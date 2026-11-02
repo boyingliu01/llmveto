@@ -5,10 +5,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   CANARY_LRU_CAPACITY,
   CANARY_TTL_MS,
-  REGISTRY_VERSION,
   type RegistryLoadStatus,
   CanaryStore,
 } from "../../../src/canary/store.ts";
+import { REGISTRY_VERSION } from "../../../src/shared/registry-file-schema.ts";
 
 // @test REQ-V2a-07
 // @intent canary registry 存储四族（分配 / 轮换 / 淘汰 / 损坏）+ 快照族（D-05）。

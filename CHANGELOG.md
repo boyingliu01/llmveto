@@ -102,13 +102,13 @@ windows and execution budgets, and an evil-relay testkit. The evidence schema st
   (`blocked_before_forward` > `blocked_before_deliver` > `terminated_after_delivery` >
   `degraded_observational` > `warned` > `allowed`). `action_taken` is a single summary value: when a
   block and degradation coincide, the block wins and the degradation remains visible in the
-  persisted `findings[]` and in the aggregate `degraded` counter. Canary plaintext never enters
-  evidence.
+  persisted `findings[]`; the aggregate `degraded` counter counts only records whose final
+  `action_taken` is `degraded_observational`. Canary plaintext never enters evidence.
 - **Streaming correctness** — per-checker windows with a single cursor advance per chunk, tool-call
   argument deltas merged across SSE frames before scanning, and UTF-16 offsets preserved across
   chunk boundaries.
-- **Per-checker execution budgets** — G3 tiers 8/32/512 KiB → 20/50/120 ms and a 5 ms per-chunk G1
-  budget from a single constant source; an over-budget checker result is rewritten to
+- **Per-checker execution budgets** — G3 tiers 8/64/512 KiB → 20/50/120 ms and a 12 ms per-chunk G1
+  p99 cap from a single constant source; an over-budget checker result is rewritten to
   `checker_timeout` after the fact (verdict surface, not preemption).
 - **Evil-relay testkit** — `testkit/evil-relay.ts`, 13 opponent profiles (fpverify 9 + 4 T2-class),
   plus dual CI matrices: `test.yml` per PR and `relay-nightly.yml` (nightly, 4-way matrix, serial
@@ -137,7 +137,7 @@ windows and execution budgets, and an evil-relay testkit. The evidence schema st
   and the 256 KiB hard bound applies only to tool-call argument fragments — long prose streams no
   longer risk a spurious `window_overflow` block.
 - `tool-call-shape` no longer re-parses the whole accumulated arguments text on every frame
-  (O(n²) work could self-trip the 5 ms G1 budget as `checker_timeout` on long tool-call streams).
+  (O(n²) work could self-trip the 12 ms G1 cap as `checker_timeout` on long tool-call streams).
 - `test.yml` restores the 80 % coverage gate, dual typecheck and lint (these had been dropped),
   and the detection / false-positive steps now point at real suites instead of `|| true`-masked
   non-existent files. `relay-nightly.yml` installs from `bun.lock`, runs the actual relay suite in

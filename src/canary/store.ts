@@ -9,8 +9,6 @@ import {
   type RegistryUnavailableCause,
 } from "../shared/registry-file-schema.ts";
 
-export { REGISTRY_VERSION, validateRegistryFile } from "../shared/registry-file-schema.ts";
-
 /**
  * @test REQ-V2a-07
  * @intent canary registry 存储与会话状态（D-02/DD-V2A-02 + D-05/DD-V2A-05）。

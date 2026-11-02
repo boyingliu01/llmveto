@@ -305,6 +305,15 @@ describe("SL-07 integration ④: 哨兵启动消费（rotate.request 生命周�
     expect(logs[0]).toContain("delete failed");
     expect(existsSync(sentinel)).toBe(true); // 放弃后哨兵留存 → 下次启动重放（轮换幂等，不丢标记）
     expect(store.rotationCount).toBe(1); // 轮换已发生：删除失败不回滚
+    // 重放安全（D-03 幂等契约）：第二次消费再轮换一次，旧串整体失效、rotation_count 只增
+    const firstCanary = registryRead(registryPath).entries["seed-sess"]!.canary;
+    const replay = consumeRotateSentinel(store, sentinel, {
+      unlink: () => { throw new Error("EPERM: simulated"); },
+      log: (line) => logs.push(line),
+    });
+    expect(replay).toBe("rotated_delete_failed");
+    expect(store.rotationCount).toBe(2);
+    expect(registryRead(registryPath).entries["seed-sess"]!.canary).not.toBe(firstCanary);
   });
 
   it("⑤ 损坏哨兵 + 删除失败：忽略不轮换（canarySentinel=corrupt_delete_failed）", () => {
@@ -321,5 +330,27 @@ describe("SL-07 integration ④: 哨兵启动消费（rotate.request 生命周�
     expect(store.rotationCount).toBe(0); // 损坏 → 不轮换
     expect(logs.some((l) => l.includes("corrupt"))).toBe(true); // stderr 携带成因
     expect(unlinkCalls).toBe(4); // 删除侧同样重试后放弃
+  });
+
+  it("⑥ registry 不可用：零字节哨兵不消费（不轮换、不删除、损坏文件字节不变）", () => {
+    const subDir = join(dir, "s6");
+    mkdirSync(subDir, { recursive: true });
+    const registryPath = join(subDir, "canary-registry.json");
+    const corrupt = '{"version": 1, "entries": { // truncated';
+    writeFileSync(registryPath, corrupt, "utf8");
+    const sentinel = join(subDir, "canary-rotate.request");
+    writeFileSync(sentinel, "", "utf8");
+    const store = new CanaryStore(registryPath);
+    expect(store.loadStatus.status).toBe("registry_unavailable");
+    const logs: string[] = [];
+    const outcome = consumeRotateSentinel(store, sentinel, {
+      unlink: () => { throw new Error("must not unlink"); },
+      log: (line) => logs.push(line),
+    });
+    expect(outcome).toBe("skipped_registry_unavailable");
+    expect(store.rotationCount).toBe(0); // 不得「空内存态轮换」覆盖损坏文件
+    expect(readFileSync(registryPath, "utf8")).toBe(corrupt); // 取证现场保留
+    expect(existsSync(sentinel)).toBe(true); // 修复 registry 后下次启动重放
+    expect(logs[0]).toContain("registry unavailable");
   });
 });

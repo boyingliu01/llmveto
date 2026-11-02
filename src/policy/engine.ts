@@ -121,16 +121,22 @@ function checkerReasonRank(reason: string): number {
   return idx >= 0 ? idx : CHECKER_ERROR_REASON_ORDER.length;
 }
 
+/** gateway 候选的比较键：词表内按固定序排位，词表外排位垫底（与 checker 侧同口径，仍可选出）。 */
+function gatewayReasonRank(reason: string): number {
+  const idx = GATEWAY_REASON_PRIORITY.indexOf(reason);
+  return idx >= 0 ? idx : GATEWAY_REASON_PRIORITY.length;
+}
+
 export function pickTopReasonWinner(params: PickTopReasonParams): ReasonWinner | undefined {
   const gateway = params.gatewayReasons ?? [];
   if (gateway.length > 0) {
     // gateway 值无条件胜出（R2 修正：gateway 描述符比任何 checker error 都更"上游"）；
-    // 多值并存按 GATEWAY_REASON_PRIORITY 内部排序取最前，词表外值垫底、词表外并列取先见。
+    // 多值并存按 GATEWAY_REASON_PRIORITY 内部排序取最前，词表外值并列取先见。
     let bestIdx = gateway[0]!;
-    let bestRank = GATEWAY_REASON_PRIORITY.indexOf(bestIdx);
+    let bestRank = gatewayReasonRank(bestIdx);
     for (const g of gateway.slice(1)) {
-      const r = GATEWAY_REASON_PRIORITY.indexOf(g);
-      if (bestRank < 0 || (r >= 0 && r < bestRank)) {
+      const r = gatewayReasonRank(g);
+      if (r < bestRank) {
         bestIdx = g;
         bestRank = r;
       }

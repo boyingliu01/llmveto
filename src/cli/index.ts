@@ -307,13 +307,18 @@ async function cmdCanary(ctx: CliCtx, args: readonly string[]): Promise<CliResul
 }
 
 /** canary rotate 双路径（AC-V2a-08）：在线 → POST loopback 等确认；离线 → 写零字节哨兵。 */
+const ROTATE_REQUEST_TIMEOUT_MS = 5_000;
+
 async function cmdCanaryRotate(ctx: CliCtx): Promise<CliResult> {
   const env = ctx.env ?? process.env;
   const baseUrl = env.LLMVETO_GATEWAY_URL ?? "http://127.0.0.1:8787";
   const reachable = await probeReachable(baseUrl, 1000);
   if (reachable) {
     try {
-      const resp = await fetch(`${baseUrl}/_llmveto/canary/rotate`, { method: "POST" });
+      const resp = await fetch(`${baseUrl}/_llmveto/canary/rotate`, {
+        method: "POST",
+        signal: AbortSignal.timeout(ROTATE_REQUEST_TIMEOUT_MS), // 网关卡死时不无限挂起
+      });
       if (!resp.ok) {
         const body = await resp.text();
         return { exitCode: 1, stdout: "", stderr: `rotate failed (${resp.status}): ${body}\n` };
@@ -324,12 +329,13 @@ async function cmdCanaryRotate(ctx: CliCtx): Promise<CliResult> {
       return { exitCode: 1, stdout: "", stderr: `rotate online failed: ${(e as Error).message}\n` };
     }
   }
-  // 离线路径：写零字节哨兵标记文件（同 SL-07 sentinelPathFor 定位）
+  // 离线路径：写零字节哨兵标记文件（同 SL-07 sentinelPathFor 定位）。
+  // 此处只登记待办，轮换发生在网关下次启动——不得宣称“已轮换”。
   const sentinel = join(stateDir(ctx), "canary-rotate.request");
   const dir = stateDir(ctx);
   mkdirSync(dir, { recursive: true });
   writeFileSync(sentinel, "", "utf8");
-  return { exitCode: 0, stdout: `rotated offline: sentinel written ${sentinel}\n`, stderr: "" };
+  return { exitCode: 0, stdout: `rotate deferred (gateway unreachable at ${baseUrl}): sentinel written ${sentinel}; applies on next gateway start\n`, stderr: "" };
 }
 
 /** v2a：CLI 注册 canary 控制通道（AC-V2a-08）；report 仍禁（AC-VETO-008-01 冻结）。 */

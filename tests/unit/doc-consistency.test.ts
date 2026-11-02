@@ -16,6 +16,8 @@ import { describe, expect, it } from "vitest";
  *     守其不被回退；#D（doctor 封闭枚举 4→6 的 v1 文字订正）属 BUILD 期 doc-consistency
  *     断言域，订正文本以 v2a 设计 D-03 / D-08 / D-12 / D-14 定案为准。
  *
+ * @test REQ-V2a-10
+ * @covers AC-V2a-15
  * 断言风格与 `backlog-integrity.test.ts` 同族：读文件 → 断言包含/不包含。
  * 每条断言的失败信息点名"哪一处订正漂移了"（订正点编号 + 文件 + 期望短语）。
  *

@@ -60,10 +60,3 @@ jobs:
           npx vitest run tests/integration/relay-detection.test.ts \
             --testNamePattern="$pattern" --passWithNoTests=false \
             --pool=forks --poolOptions.forks.singleFork=true
-      - name: Upload results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: nightly-shard-${{ matrix.shard }}
-          path: coverage/
-          if-no-files-found: warn

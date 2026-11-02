@@ -34,7 +34,7 @@ describe("SL-12 canary rotate (AC-V2a-08)", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("canary rotate 离线路径：网关未运行 → 写零字节哨兵文件", async () => {
+  it("canary rotate 离线路径：网关未运行 → 写零字节哨兵并如实说明延后生效", async () => {
     const dir = mkdtempSync(join(tmpdir(), "llmveto-canary-offline-"));
     const r = await runCli("canary", {
       stateDir: dir,
@@ -42,14 +42,15 @@ describe("SL-12 canary rotate (AC-V2a-08)", () => {
       env: { LLMVETO_GATEWAY_URL: "http://127.0.0.1:1" }, // 不可能有网关在端口 1
     });
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("rotated offline");
+    expect(r.stdout).toContain("rotate deferred");
+    expect(r.stdout).toContain("applies on next gateway start");
     const sentinel = join(dir, "canary-rotate.request");
     expect(existsSync(sentinel)).toBe(true);
     expect(readFileSync(sentinel).length).toBe(0); // 零字节
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("canary rotate 在线路径：网关返回非 200 → exit 1", async () => {
+  it("canary rotate 不可达目标不挂起：仍走离线登记路径", async () => {
     // 无法在单测中启动真实网关（需要完整配置），此处验证 fetch 失败路径
     const dir = mkdtempSync(join(tmpdir(), "llmveto-canary-online-err-"));
     // 指向一个不可达地址但 TCP 可达（用本机端口 0 不可达 → 走离线）

@@ -142,6 +142,15 @@ windows and execution budgets, and an evil-relay testkit. The evidence schema st
   timeout budget.
 - Canary registry `lastSeen` refreshes are throttled (60 s) instead of a synchronous
   write+rename on every managed request; allocation and rotation still persist immediately.
+- Offline rotation no longer destroys evidence: when the registry is `registry_unavailable`,
+  a zero-byte sentinel is left in place (no rotate, no delete) so the corrupt file stays intact
+  for forensics and the rotation applies after repair on the next start.
+- `llmveto canary rotate` gives the loopback POST a 5 s timeout and reports the offline path as
+  `rotate deferred … applies on next gateway start` instead of claiming a completed rotation.
+- Gateway-reason tie-break now keeps the first out-of-vocabulary value (stable) instead of
+  promoting the later one.
+- `relay-nightly.yml` no longer uploads a `coverage/` artifact it never generates; the PR
+  detection step no longer re-runs the 13-opponent relay suite (nightly-only by design).
 
 ### Performance
 
@@ -160,6 +169,11 @@ windows and execution budgets, and an evil-relay testkit. The evidence schema st
   replay.
 - Streaming bytes already forwarded cannot be recalled; a streaming hit terminates the stream, it
   does not swallow delivered bytes.
+- The v2a block-mapping checkers (T1a canary, T2a tool-call shape) are default-on with no
+  runtime kill switch; the checker registry is static, so disabling one requires a code change
+  and restart. A live toggle is deliberate scope for a later release, not an oversight.
+- `package.json` declares Node `>=18`, but CI and the local verification matrix run Node 24 only;
+  a Node 18 regression would not be caught by the PR gate.
 
 ### Deferred to v2b
 

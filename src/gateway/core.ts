@@ -161,6 +161,8 @@ export class GatewayCore {
    * 响应侧流式 checker 分派（逐帧与 SL-01 归并单元共用）—— D-07/ADR-0005 窗口归属：
    *
    *   - 窗口按 checkerId 分持（`windows` map，逐帧路径传 WindowStore，账本随分派自记）。
+   *     注意：ledger 在场时 `windows` 本身被就地推进（账本即状态），返回的 nextWindows 是
+   *     同内容的视图；调用方可继续用原 store，也可换用返回值，两者不得各推一份。
    *   - R2 A-M1（最高优先）：checker 收到的是**推进前**窗口（AC-VETO-004-02 冻结语义：
    *     cursor = 本片之前已消费的 UTF-16 code unit 数）；网关在 checker 返回后的重组点
    *     单点推进（旧值 + unit.text.length），回传 cursor 一律忽略、回传 extra 原样保留。

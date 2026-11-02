@@ -204,6 +204,15 @@ describe("SL-03 D-10：顶层 reason 单值选择（GATEWAY_REASON_PRIORITY / CH
     expect(winner).toEqual({ source: "gateway", reason: GATEWAY_REASON_PRIORITY[0], checker: undefined });
   });
 
+  it("两个词表外 gateway 值并存 → 保持先见（不得被后见顶替）", () => {
+    const winner = pickTopReasonWinner({
+      gatewayReasons: ["mystery_a", "mystery_b"],
+      checkerErrors: [],
+      checkerDeclarationOrder: DECL,
+    });
+    expect(winner).toEqual({ source: "gateway", reason: "mystery_a", checker: undefined });
+  });
+
   it("同级并列：同一 reason 来自多个 checker → 注册表声明序在前的胜（输入顺序无关，稳定）", () => {
     const later = DECL[2]!; // model-label-consistency
     const earlier = DECL[0]!; // egress-secret-scan

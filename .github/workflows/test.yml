@@ -15,9 +15,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      # 安装面 = bun（仓库只有 bun.lock）；测试运行面 = node（vitest.config 注释：
-      # 测试跑在 Node 上，顺带验证 “兼容 Node >= 18”）。两处都钉版本，避免
-      # CI 与本地验证面漂移导致红灯归因失真。
+      # 安装面 = bun（仓库只有 bun.lock）；测试运行面 = node。两处都钉版本，避免
+      # CI 与本地验证面漂移导致红灯归因失真。CI 只验证 Node 24；engines 声明的
+      # >=18 支持面不在 PR 门禁内执行（低版本回归需手动矩阵，见 VERIFY 报告）。
       - uses: oven-sh/setup-bun@v2
         with: { bun-version: "1.4.3" }
       - uses: actions/setup-node@v4
@@ -32,9 +32,10 @@ jobs:
       - name: Lint
         run: npx oxlint bench tests src
       # 全量步已覆盖以下两个套件；独立成步只把“矩阵红了”从整仓红里分离出来，
-      # 便于归因。任何一步失败都必须红——不得添 `|| true`。
+      # 便于归因。任何一步失败都必须红——不得用吞错后缀把红灯变绿。
+      # 13 对手 evil-relay 只在 nightly 跑（relay-nightly.yml），PR 档不重复消费。
       - name: Detection matrix (threat fixtures)
-        run: npx vitest run tests/integration/detection-matrix.test.ts tests/integration/relay-detection.test.ts
+        run: npx vitest run tests/integration/detection-matrix.test.ts
       - name: False-positive matrix (benign traffic)
         run: npx vitest run tests/integration/false-positive-matrix.test.ts
       - name: Upload coverage summary (audit trail)

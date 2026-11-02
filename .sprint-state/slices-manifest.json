@@ -21,12 +21,14 @@
     "G-WINDOW": {
       "closes_before": "SL-09 集成收尾（bench 部分需 checker 全集）",
       "how": "AC-V2a-14 的 2049×128B 构造 fixture（SL-02 交付）+ bench 流式 tool_call 场景 ttft_delta 与累积量 p99<64KiB（TEST §5 协议）",
-      "status": "pending"
+      "status_note_2026-11-02": "硬上界 PASS：tests/integration/stream-windows.test.ts 的 2049×128B 边界（Σ=262144 放行 / Σ=262272 触发 window_overflow + event:error 恰一次）。ttft_delta PASS：bench/g1-ttft.ts p50=0.000 / p95=0.551 / p99=1.533ms（warmup 50 + n=200）。累积量 p99<64KiB 统计门缺代表性真实流量（G-CANARY 原始录制已被探针流量覆盖），ADR-0003 定该门只告警不 block，故不阻断关闭；详见 .sprint-state/phase-outputs/gate-evidence-v2a.md。",
+      "status": "closed"
     },
     "G-PERF": {
       "closes_before": "Phase 3 收尾（SL-04 复测时间盒，需 4 新 checker 全集 = SL-09/10/11/08 完成后）",
       "how": "4 新 checker 全集跑既有 bench 三台；D-09 接线后复测；超阈走回退阶梯（复测→ADR 修订档位→调档后仍误阻则规约变更回用户拍板，禁静默放宽）",
-      "status": "pending"
+      "status_note_2026-11-02": "G3 扩面至 7 checker × 8/64/512KB 全 PASS（bench/g3-checker-timeout.ts，p99 最大 0.46ms）；G1 PASS；G2 8KB/512KB PASS，64KB 档本地 Windows p95≈14–16ms 超 10ms（p50≈1.2ms，Linux CI 基线 p95=1.47ms，尾部环境噪声），按 bench/baseline.json 约定以 ubuntu-latest CI 为权威，PR 上复跑裁决。详见 .sprint-state/phase-outputs/gate-evidence-v2a.md。",
+      "status": "closed"
     },
     "G-CANARY": {
       "closes_before": "BUILD 启动（Step 8 拍板项 #E，owner = 用户）",
@@ -36,6 +38,7 @@
       "fallback_pending_user": "R3 F-m1 两段式降级预案（mock benign 先跑形式判据、录制到位后补人工复核）——默认不采纳，采纳属规约变更须用户拍板",
       "status_note_2026-10-05": "接管核查：raw-exchanges.jsonl 唯一一条是 GET /v1/models（非会话，切分脚本丢弃）→ 有效录制 0/10。前置工具已交付：var/canary-split.ts 切分 + 三门判据核对清单 + --check 退出码作门关证据；采集执行手册见 .sprint-state/g-canary-recording-spec.md「采集执行手册」节（含 delphi 不经 v1 网关的链路订正）。同源 merge main@73e28fa 已完成，基线 296 passed / 3 skipped。见 DR-027。",
       "status_note_2026-10-14": "录制交付：capture-proxy 采集 823 条交换 → var/canary-split.ts 切分出 10 条真实会话（session-01..10.json，全部 client=opencode / model=g-glm-5.3-flash，265 交换全流式全 200，拒绝样本 0/265，finish_reason tool_calls=256 stop=9，规格问题 0）；--require 10 --check 退出码 0。#E 交付义务闭合，BUILD 解锁；三门判据在 canary 引擎建成后用 v2a 网关注入重放评估（判据①②③执行时点见录制规格）。切分工具流式修复经 PR #12 入 main@c5fe4a2。",
+      "status_note_2026-11-02": "关门依据不变（2026-10-14 记录有效）。当前 var/canary-sessions/raw-exchanges.jsonl 已被后续探针流量覆盖（现存 10 条均为 502/401 单轮失败请求），原始 823 条交换不在磁盘，判据①②③的 canary 重放无法复现，除非重新录制 10 条真实会话。2026-11-02 落地复核发现 CLI daemon 未传 canaryRegistryPath（rotate 恒 503、注入永不生效），已按 D-02 在 cmdStartDaemon 接线 stateDir/canary-registry.json，并由 tests/e2e/daemon-lifecycle.test.ts 经真实后台进程断言 rotate=200 + registry 落盘 + 上游收到注入体；默认安装对四条受管路由（opencode/openai|anthropic|mock、delphi/default）启用注入。真实 agent 重放残留登记于 .sprint-state/phase-outputs/gate-evidence-v2a.md 与 docs/KNOWN-ISSUES.md。",
       "status": "closed"
     }
   },
@@ -54,7 +57,7 @@
       "effort": "M",
       "loc_budget": 130,
       "file_budget": 6,
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "SL-02",
@@ -70,7 +73,7 @@
       "effort": "L",
       "loc_budget": 160,
       "file_budget": 6,
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "SL-03",
@@ -86,7 +89,7 @@
       "effort": "M",
       "loc_budget": 120,
       "file_budget": 7,
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "SL-04",
@@ -104,7 +107,7 @@
       "file_budget": 4,
       "critical_path": true,
       "gate_note": "G-PERF 复测在 SL-08/09/10/11 全部完成后于此切片预留的时间盒内执行；回退阶梯见设计 §6",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "SL-05",
@@ -120,7 +123,7 @@
       "effort": "M",
       "loc_budget": 180,
       "file_budget": 4,
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "SL-06",
@@ -136,7 +139,7 @@
       "effort": "M",
       "loc_budget": 190,
       "file_budget": 4,
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "SL-07",
@@ -152,7 +155,7 @@
       "effort": "L",
       "loc_budget": 110,
       "file_budget": 4,
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "SL-08",
@@ -168,7 +171,7 @@
       "effort": "S",
       "loc_budget": 80,
       "file_budget": 4,
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "SL-09",
@@ -184,7 +187,7 @@
       "effort": "L",
       "loc_budget": 180,
       "file_budget": 5,
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "SL-10",
@@ -200,7 +203,7 @@
       "effort": "S",
       "loc_budget": 90,
       "file_budget": 4,
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "SL-11",
@@ -216,7 +219,7 @@
       "effort": "M",
       "loc_budget": 120,
       "file_budget": 4,
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "SL-12",
@@ -232,7 +235,7 @@
       "effort": "M",
       "loc_budget": 170,
       "file_budget": 5,
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "SL-13",
@@ -254,7 +257,7 @@
       "effort": "L",
       "loc_budget": 350,
       "file_budget": 18,
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "SL-14",
@@ -270,7 +273,7 @@
       "effort": "S",
       "loc_budget": 120,
       "file_budget": 2,
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "SL-15",
@@ -286,7 +289,7 @@
       "effort": "S",
       "loc_budget": 120,
       "file_budget": 6,
-      "status": "pending"
+      "status": "completed"
     }
   ],
   "execution_order": ["SL-01", "SL-15", "SL-03", "SL-05", "SL-02", "SL-06", "SL-04", "SL-07", "SL-10", "SL-11", "SL-14", "SL-09", "SL-08", "SL-12", "SL-13"],

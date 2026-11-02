@@ -3,6 +3,10 @@ import { performance } from "node:perf_hooks";
 import { egressSecretScan } from "../src/checkers/egress-secret-scan.ts";
 import { invisibleUnicodeScanNonStream } from "../src/checkers/invisible-unicode-scan.ts";
 import { modelLabelConsistency } from "../src/checkers/model-label-consistency.ts";
+import { CANARY_RETURN_SCAN_SPEC } from "../src/checkers/canary-return-scan.ts";
+import { THINKING_SIGNATURE_PRESENCE_SPEC } from "../src/checkers/thinking-signature-presence.ts";
+import { TOOL_CALL_SHAPE_SPEC } from "../src/checkers/tool-call-shape.ts";
+import { USAGE_RECONCILE_SPEC } from "../src/checkers/usage-reconcile.ts";
 import type { NonStreamChecker, ScanUnit } from "../src/shared/types.ts";
 import { G3_THRESHOLDS, percentile } from "./regression-formula.ts";
 
@@ -50,10 +54,18 @@ interface TierReport {
 }
 
 export function sampleG3(): TierReport[] {
+  // v2a 四个新 checker 的 non-stream 面纳入同一采样（G-PERF：新 checker 全集跑既有三台）。
+  const v2aCheckers = [
+    CANARY_RETURN_SCAN_SPEC,
+    THINKING_SIGNATURE_PRESENCE_SPEC,
+    TOOL_CALL_SHAPE_SPEC,
+    USAGE_RECONCILE_SPEC,
+  ].flatMap((s) => (s.runNonStream ? [{ name: s.id, fn: s.runNonStream }] : []));
   const checkers: { name: string; fn: NonStreamChecker }[] = [
     { name: "egress-secret-scan", fn: egressSecretScan },
     { name: "invisible-unicode-scan", fn: invisibleUnicodeScanNonStream },
     { name: "model-label-consistency", fn: modelLabelConsistency },
+    ...v2aCheckers,
   ];
   const out: TierReport[] = [];
   for (const c of checkers) {

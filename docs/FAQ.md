@@ -1,6 +1,6 @@
 # Frequently Asked Questions (FAQ)
 
-> For internal trial users of llmveto v1/v2a. Last updated: 2026-10-16
+> For internal trial users of llmveto v0.3.0. Last updated: 2026-11-02
 
 ---
 
@@ -237,11 +237,12 @@ For major changes, open an issue first to discuss design.
 
 See [ROADMAP](issues/5-roadmap.md) for full timeline.
 
-### Q: Should I use v1 or wait for v2b?
+### Q: Should I use v0.3.0 or wait for v2b?
 
-**A**: Use v1 now if:
+**A**: Use v0.3.0 now if:
 - You need immediate protection against credential leaks and invisible character attacks
-- You're using OpenCode or Delphi
+- You're using OpenCode or Delphi (canary injection applies to the four managed routes)
+- You want tool-call shape blocking and observational usage/thinking checks
 - You want to audit LLM traffic with evidence trails
 
 Wait for v2b if:
@@ -249,4 +250,4 @@ Wait for v2b if:
 - You want automated billing reconciliation
 - You need fingerprint-based model authenticity proof
 
-v2a is stable for internal testing but lacks some v2b features.
+v0.3.0 is the v2a detection core release; it is stable for internal use but lacks the v2b features above.

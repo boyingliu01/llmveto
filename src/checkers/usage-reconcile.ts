@@ -15,7 +15,6 @@ const ASCII_CHARS_PER_TOKEN = 4.1;
 const CJK_CHARS_PER_TOKEN = 1.0;
 const OVER_REPORT_MULTIPLIER = 1.5;
 const OVER_REPORT_ABSOLUTE_DIFF = 64;
-const UNDER_REPORT_MULTIPLIER = 0.7;
 
 function isCJK(char: string): boolean {
   const code = char.codePointAt(0) ?? 0;
@@ -72,7 +71,7 @@ export const checkUsageReconcile: NonStreamChecker = (unit: ScanUnit): CheckerRe
     }
 
     return { verdict: "clean", evidence: [] };
-  } catch (_error) {
+  } catch {
     return {
       verdict: "error",
       reason: "scanner_error",

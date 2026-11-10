@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { EvidenceWriter } from "../../src/evidence/writer.ts";
 import { startGateway } from "../../src/gateway/server.ts";
-import type { CheckerSpec, ScanUnit } from "../../src/shared/types.ts";
 import { startMockUpstream, type MockUpstream } from "../utils/mock-upstream.ts";
 
 // @test REQ-V2a-05 / SL-08

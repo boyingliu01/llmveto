@@ -18,6 +18,7 @@ import { describe, expect, it } from "vitest";
  *
  * @test REQ-V2a-10
  * @covers AC-V2a-15
+ * @intent 文档订正的 grep 型守卫：把冻结契约里拍板的逐字短语钉住，防止后续改文档时表述漂移悄悄回退（只守"短语在不在"，不冒充语义评审）。
  * 断言风格与 `backlog-integrity.test.ts` 同族：读文件 → 断言包含/不包含。
  * 每条断言的失败信息点名"哪一处订正漂移了"（订正点编号 + 文件 + 期望短语）。
  *

@@ -4,7 +4,6 @@ import type {
   Finding,
   NonStreamChecker,
   ScanUnit,
-  ScanWindow,
   StreamChecker,
 } from "../shared/types.ts";
 import { scanTexts, STREAM_WINDOW_OVERFLOW_LIMIT } from "../shared/types.ts";

@@ -7,9 +7,8 @@ import { invisibleUnicodeScanNonStream } from "../../src/checkers/invisible-unic
 import { modelLabelConsistency } from "../../src/checkers/model-label-consistency.ts";
 import { checkThinkingSignaturePresence } from "../../src/checkers/thinking-signature-presence.ts";
 import { checkToolCallShapeNonStream } from "../../src/checkers/tool-call-shape.ts";
-import { buildResponseScanUnit } from "../../src/gateway/scan-unit.ts";
 import type { ScanUnit, CheckerResult } from "../../src/shared/types.ts";
-import { parseYamlSubset, type YamlValue } from "../utils/yaml-subset.ts";
+import { parseYamlSubset } from "../utils/yaml-subset.ts";
 
 // @test REQ-V2a-08 AC-V2a-09
 // @intent Dual matrix validation for evil-relay 13 opponents:
@@ -50,25 +49,6 @@ function loadFixtures(): Map<OpponentId, RelayFixture> {
   }
 
   return fixtures;
-}
-
-function unitFromResponse(response: Record<string, unknown>, meta: Record<string, unknown> = {}): ScanUnit {
-  const bodyObj = response.body as Record<string, unknown> || response;
-  const body = JSON.stringify(bodyObj);
-  
-  // Extract model info if available
-  const modelRequested = (response as any).request?.body?.model 
-    || (bodyObj as any).model 
-    || "gpt-4o";
-  const modelResponded = (bodyObj as any).model || modelRequested;
-  
-  const enrichedMeta: Record<string, unknown> = {
-    model_requested: modelRequested,
-    model_responded: modelResponded,
-    ...meta,
-  };
-  
-  return buildResponseScanUnit(body, bodyObj as any, null, "non-stream", enrichedMeta);
 }
 
 describe.skipIf(!RELAY_MATRIX)("SL-13 relay detection matrix (REQ-V2a-08 AC-V2a-09)", () => {

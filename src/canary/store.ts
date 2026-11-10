@@ -4,7 +4,6 @@ import { dirname } from "node:path";
 import {
   REGISTRY_VERSION,
   validateRegistryFile,
-  type RegistryEntry,
   type RegistryFile,
   type RegistryUnavailableCause,
 } from "../shared/registry-file-schema.ts";

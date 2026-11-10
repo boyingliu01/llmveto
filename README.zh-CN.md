@@ -37,7 +37,7 @@ NFKC 归一化后同形变体、自定义 PUA 编码、认证类头（`Authoriza
 | [docs/issues/3-reuse-list.md](docs/issues/3-reuse-list.md) | 复用与集成清单（含许可核实状态与运行时依赖） |
 | [docs/issues/4-test-validation.md](docs/issues/4-test-validation.md) | 验证方案 — 可测试性契约 + 五件套（逐项 `@v1/@v2/@v3`）+ evidence 字段表 |
 | [docs/issues/5-roadmap.md](docs/issues/5-roadmap.md) | v1/v2/v3 分期路线；**v1 验收条目的唯一权威清单** |
-| [docs/delphi-panel.md](docs/delphi-panel.md) | 评审专家团配置（opencode + example-provider 三模型） |
+| [docs/delphi-panel.md](docs/delphi-panel.md) | 评审专家团配置（opencode + 三个不同评审模型） |
 
 ## 架构（v1）
 

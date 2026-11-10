@@ -51,15 +51,18 @@ bun install
 
 ## 3. 配置上游 LLM
 
-设置你的 example-provider API endpoint：
+设置你的上游 LLM endpoint（任何 OpenAI / Anthropic 兼容上游均可）：
 
 ```bash
-# 方式 1：环境变量（推荐）
-export LLMVETO_UPSTREAM_BASE_URL=https://internal-gateway.invalid/redacted
+# 方式 1：catch-all（推荐起步）——所有请求都转发到这一个上游
+export LLMVETO_UPSTREAM_BASE_URL=https://api.openai.com
 
-# 方式 2：多路由表（高级用户）
-export LLMVETO_UPSTREAMS='[{"provider":"openai","baseURL":"https://api.openai.com"},{"provider":"anthropic","baseURL":"https://api.anthropic.com"}]'
+# 方式 2：路径路由表（多上游）——键为 "<client>/<provider>" 或 "<client>/*" 的 JSON 对象
+export LLMVETO_UPSTREAMS='{"opencode/openai":"https://api.openai.com","opencode/anthropic":"https://api.anthropic.com"}'
 ```
+
+**注意**：`LLMVETO_UPSTREAMS` 必须是 JSON **对象**；写成数组或非法 JSON 会在启动时
+fail-fast 退出（不会静默降级）。
 
 ---
 

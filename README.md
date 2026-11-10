@@ -43,7 +43,7 @@ For the full statement see [REQ §v1 residual-risk register](docs/issues/1-req-t
 | [docs/issues/3-reuse-list.md](docs/issues/3-reuse-list.md) | Reuse and integration list (incl. license verification status and runtime dependencies) |
 | [docs/issues/4-test-validation.md](docs/issues/4-test-validation.md) | Validation plan — testability contracts + the five-piece suite (item-by-item `@v1/@v2/@v3`) + evidence field table |
 | [docs/issues/5-roadmap.md](docs/issues/5-roadmap.md) | v1/v2/v3 phasing roadmap; **the sole authoritative list of v1 acceptance items** |
-| [docs/delphi-panel.md](docs/delphi-panel.md) | Review panel configuration (opencode + three example-provider models) |
+| [docs/delphi-panel.md](docs/delphi-panel.md) | Review panel configuration (opencode + three distinct reviewer models) |
 
 ## Architecture (v1)
 

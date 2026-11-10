@@ -14,14 +14,25 @@ SHA，执行时若本 sprint worktree 仍存在则随之作废——必须 merge
 - `git filter-repo`：Python 工具。WSL 内 `pip install git-filter-repo`（推荐），或 Git-Bash +
   Windows Python ≥3.5 后 `pip install git-filter-repo`；`git filter-repo --version` 可执行为准
 - 替换规则文件 `replacements.txt`（**UTF-8、无 BOM、LF 换行**——CRLF 会导致 blob 匹配失败），
-  置于仓库目录**之外**：
+  置于仓库目录**之外**。下表中的 `REDACTED_*` 是本文档的占位记法，实际执行时替换为
+  真实内部标识（域名 / 路由 / 组织名的大小写变体）：
 
   ```
-  internal-gateway.invalid/redacted==>https://internal-gateway.invalid/redacted
-  internal-gateway.invalid==>https://internal-gateway.invalid/redacted
+  https://REDACTED_HOST/REDACTED_ROUTE==>https://internal-gateway.invalid/redacted
+  REDACTED_HOST/REDACTED_ROUTE==>internal-gateway.invalid/redacted
+  REDACTED_HOST==>internal-gateway.invalid
+  REDACTED_ORG_UPPER_API_KEY==>EXAMPLE_PROVIDER_API_KEY
+  REDACTED_ORG==>examplecorp
+  REDACTED_ORG_TITLE==>ExampleProvider
+  REDACTED_ORG_UPPER==>EXAMPLE_PROVIDER
+  REDACTED_ORG_LOWER==>example-provider
+  REDACTED_ROUTE==>gateway
   ```
 
   长串在前（先精确端点、后裸域名）；`.invalid` 为保留域，占位符无重指向风险。
+  **带 scheme 的形式必须单独一条**：只写 `REDACTED_HOST==>placeholder` 会把
+  `https://REDACTED_HOST/x` 改写成 `https://https://placeholder/x`。组织名按大小写
+  变体逐条列出——filter-repo 的替换区分大小写。
 
 ## 1. 07a — gitleaks 全历史 + 工作区扫描（AC-REL-07a）
 
@@ -61,7 +72,7 @@ grep -E "^var/" ../tracked.txt                            # 仅 canary-split.ts 
 ### 3.0 前置确认：动态导出替换对象集合（R1 A-MN-01）
 
 ```bash
-git log -p --all | grep -F "internal-gateway.invalid" | grep -oE "^diff --git a/[^ ]+" | sort -u
+git log -p --all | grep -F "REDACTED_HOST" | grep -oE "^diff --git a/[^ ]+" | sort -u
 ```
 
 **集合以执行时点实测为准，不硬编码**。已知基线（设计冻结时点）= 4 文件
@@ -93,9 +104,9 @@ git filter-repo --replace-text ../replacements.txt --force
 审查判据（全部通过才进第三段）：
 
 ```bash
-git log -p --all | grep -cF "internal-gateway.invalid"          # 必须 = 0
+git log -p --all | grep -cF "REDACTED_HOST"                # 必须 = 0（原标识已清零）
 git log -p --all | grep -cF "internal-gateway.invalid"     # 必须 > 0（占位符确已写入）
-ls .git/filter-repo/commit-map                              # 旧→新 SHA 映射存在（§5 用）
+ls filter-repo/commit-map                                  # 旧→新 SHA 映射存在（§5 用；bare mirror 下无 .git/ 前缀）
 ```
 
 filter-repo 出于安全会移除本 clone 的 origin remote——第三段重加。
@@ -129,8 +140,10 @@ git push --force --tags origin
 ## 4. 07d — 提交信息扫描（AC-REL-07d · 对象明含 commit 与 tag message）
 
 ```bash
-git log --all --format="%H%n%s%n%b%n---" | grep -inE "examplecorp|lab\.|gateway" # commit message 侧
-git tag -l --format="%(refname:short)%(contents)" | grep -inE "examplecorp|gateway"  # tag message 侧
+git log --all --format="%H%n%s%n%b%n---" \
+  | grep -inE "REDACTED_HOST|REDACTED_ORG|REDACTED_ROUTE"        # commit message 侧
+git tag -l --format="%(refname:short)%(contents)" \
+  | grep -inE "REDACTED_HOST|REDACTED_ORG|REDACTED_ROUTE"        # tag message 侧
 ```
 
 口径：内部域名/内部人名/内部邮箱/工单号——执行时按当时清单扩展 pattern。**过闸判据 =
@@ -146,17 +159,29 @@ git filter-repo --replace-message ../replacements.txt --force
 
 ## 5. SHA 映射表模板（并入本 runbook 留档）
 
-数据源 = `../llmveto-mirror.git/.git/filter-repo/commit-map`（旧 SHA → 新 SHA 全表）。
-对证据文件记录的每个 head_commit 逐条登记：
+数据源 = `../llmveto-mirror.git/filter-repo/commit-map`（旧 SHA → 新 SHA 全表）。
+**已执行填表（2026-11-10）**，以下 post-SHA 均为 main 的祖先，可直接 `git show` 复核：
 
 | 证据文件（main 路径） | 记录的 pre-SHA | post-SHA（commit-map 查得） |
 |---|---|---|
-| .sprint-state/delphi-reviewed.json | `<旧 40 位>` | `<新 40 位>` |
-| .sprint-state/phase-outputs/requirements-reviewed.json | `<旧 40 位>` | `<新 40 位>` |
-| .sprint-state/review/rel-*.md（走查/共识记录内引用的 HEAD） | `<旧 40 位>` | `<新 40 位>` |
-| test-alignment-report.json（head_commit 字段） | `<旧 40 位>` | `<新 40 位>` |
+| .sprint-state/sprint-state.json（`merge_base_sha`） | d5b9be87e2366f4046d08f120033741955d2d4a7 | 1ef9e5038b10d9ed731e3c581f36fe7b54a818a9 |
+| .sprint-state/delphi-reviewed.json（`reviewed_head_commit`） | ab08cc1c53950fe5b8b3d6872c171bf7e6bb82e6 | 80f5216f4c37bc44f4fd1d95f4450875208b52c2 |
+| .sprint-state/phase-outputs/requirements-reviewed.json（`head_commit`） | fe43a5eb6f21a734e0717031aa5728ebfe8b3149 | 348a0e63cbcbe9884826377957308a4bf1f22d5f |
+| .sprint-state/phase-outputs/requirements-reviewed.json（嵌套 `head_commit`） | 539487afcae71e4084adce2c782cd24886727a04 | 1a628ed81c3364868a125922de55fb00bab558f0 |
+| .sprint-state/test-alignment-report.json + phase-outputs 同名副本 | 5808e079ad84666c87d31c1103bad86b702fd947 | a33711f667e51c787c0380de3d1f558cec103766 |
+| .sprint-state/code-walkthrough-reviewed.json（`reviewed_head_commit`） | 21334defcc4697aeeb51275a498bb14a5a1177e5 | e74ba4d52b995a9d03acffbd4278cb1f6c7b0669 |
+| .sprint-state/code-walkthrough-reviewed.json（`post_review_commit`） | 131113a71dc4062dfe82bc4e8dcc23280984a074 | 1ddb22a918ed97093b686b805067549a6b53d563 |
+| .sprint-state/review/rel-cw-consensus.md（评审 HEAD） | 2d27c0ce3e3df979c816ef847b0056d5c354a734 | 9559edb9cdd09761188db5873d76cb8c71db4745 |
+| .sprint-state/review/v2a-r1-requirements-consensus.md | 539487afcae71e4084adce2c782cd24886727a04 | 1a628ed81c3364868a125922de55fb00bab558f0 |
+| .sprint-state/review/v2a-r2-design-consensus.md | ab08cc1c53950fe5b8b3d6872c171bf7e6bb82e6 | 80f5216f4c37bc44f4fd1d95f4450875208b52c2 |
+| .sprint-state/review/r3-expert-A.md / r3-expert-C.md | 9af9633186fd5d0e618b302136e733ab2b4a327d | 09f090e0cfb66687c06657b58218631d4c9deaf3 |
+| .sprint-state/phase-outputs/phase-4-summary.md（`head_commit`） | 131113a71dc4062dfe82bc4e8dcc23280984a074 | 1ddb22a918ed97093b686b805067549a6b53d563 |
 
-查询：`grep "^<pre-SHA>" ../llmveto-mirror.git/.git/filter-repo/commit-map`。
+查询：`grep "^<pre-SHA>" ../llmveto-mirror.git/filter-repo/commit-map`。
+
+> **已知一处口径差异**：`d5b9be8` 的 post-SHA `1ef9e50` 主题与 pre-SHA 仅差在正文引用的
+> 一个短 SHA（同一 doc-refresh 事件在改写前的两个分支版本上各存在一份）。该 SHA 只作
+> `merge_base_sha` 统计锚点使用，不承载评审绑定；上表其余行 pre/post 主题逐字一致。
 
 ## 6. 公开化 checklist（visibility 翻转前逐项打勾）
 
@@ -169,4 +194,24 @@ git filter-repo --replace-message ../replacements.txt --force
 | 5 | tag 保护 ruleset | Settings → Rulesets：`v*` Restrict deletions + Restrict updates，bypass 空 | publishing.md §5 |
 | 6 | 开源卫生件就位 | README 双语 / SECURITY / CONTRIBUTING / CHANGELOG 已在 main | 本迭代 S5–S8 |
 | 7 | **维护者确认扣扳机** | repo visibility 翻转（private → public） | 验收口径 3 |
-| 8 | 首次发布 | 打 `v0.2.0` tag → release.yml 首跑 → npm + GitHub Release | publishing.md §1 |
+| 8 | 首次发布 | 打 `v0.3.1` tag → release.yml → npm + GitHub Release | publishing.md §1 |
+
+## 7. 执行记录（2026-11-10）
+
+| 段 | 结果 | 留档 |
+|---|---|---|
+| 07a gitleaks（改写后复扫） | `gitleaks git --log-opts=main` → 152 commits / 0 findings；`gitleaks dir .` → 13.20 MB / 0 findings | `../gitleaks-{history,worktree}-postrewrite.json` |
+| 07b 公开面核查 | §2 清单全空（`var/` 仅 3 个 `.ts`）；`.gitignore` 增补 `.sprint-history/`、`.archlint-cache/`、`delphi-config.json` | §2 |
+| 07c 改写 | bundle 备份 → 本地 bare mirror 两轮（`--replace-text` → `--replace-message`）→ force-push all + tags | `../llmveto-pre-rewrite.bundle`、`../llmveto-mirror.git` |
+| 07c 三重复扫 | 内部域名 / 组织名 / 内部路由三个 pattern 在 main + tags 全历史 = 0，占位符命中 > 0 | §5 |
+| 07d message 扫描 | 追加轮后 commit / tag message 命中 = 0 | §5 |
+| 可见性翻转 | private → public；翻转前删除 4 个已合并的残留远端分支 | 本节 |
+| 改写后 refs | `main` = `1b0fa5e`、`v0.3.0` = `1136a62`、`v0.3.1` = `67cbc37` | `git ls-remote origin` |
+
+**未闭合项**
+
+1. **GitHub PR 引用不受改写影响**：服务端 `refs/pull/6..14/head` 仍指向改写前 SHA。
+   `filter-repo` 与 force-push 都覆盖不到这些引用，删除 PR 也不移除它们——彻底清除只有
+   重建仓库一条路。处置方式待维护者拍板，本 runbook 不预设结论。
+2. **npm 发布未完成**：仓库尚无 `NPM_TOKEN` secret，tag 触发的 `release.yml` 在 publish 步
+   fail-closed；GitHub Release v0.3.1 已手工创建。补上 secret 后重跑 tag 工作流即可。

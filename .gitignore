@@ -38,6 +38,11 @@ var/negctl-*.sh
 # Agent harness residue (local run continuation state, not project state)
 .omo/
 
+# Local reviewer configuration (contains internal endpoints / personal model choices)
+delphi-config.json
+.delphi-config.json
+var/delphi-*/
+
 # Editor / OS
 .DS_Store
 Thumbs.db

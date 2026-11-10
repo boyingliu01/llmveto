@@ -206,13 +206,17 @@ git filter-repo --replace-message ../replacements.txt --force
 | 07c 三重复扫 | 内部域名 / 组织名 / 内部路由三个 pattern 在 main + tags 全历史 = 0，占位符命中 > 0 | §5 |
 | 07d message 扫描 | 追加轮后 commit / tag message 命中 = 0 | §5 |
 | 可见性翻转 | private → public；翻转前删除 4 个已合并的残留远端分支 | 本节 |
-| 改写后 refs | `main` = `1b0fa5e`、`v0.3.0` = `1136a62`、`v0.3.1` = `67cbc37` | `git ls-remote origin` |
+| 改写后 refs（重建前） | `main` = `1b0fa5e`、`v0.3.0` = `1136a62`、`v0.3.1` = `67cbc37` | `git ls-remote origin` |
+| 仓库重建 | 维护者删除并重建 `boyingliu01/llmveto`；推 clean main + 两个 tag（tag 期间临时停用 `release.yml`，避免旧 lockfile 在 tag 上重演 install 红叉），随后恢复 description、8 个 topics、`protect-release-tags` ruleset、`NPM_TOKEN` secret，并按存档正文重建两个 Release（`v0.3.1` 置为 Latest） | 本节、`../llmveto-release-archive/` |
+| 重建后公开面复扫 | `git ls-remote` 仅 `refs/heads/main` + `refs/tags/v0.3.{0,1}`，`refs/pull/*` = 0；匿名 clone 工作区与全历史内部标识命中 = 0；`Tests` / `bench` 在新 main 上均绿 | 本节 |
 
 **未闭合项**
 
-1. **GitHub PR 引用不受改写影响**：服务端 `refs/pull/6..14/head` 仍指向改写前 SHA。
-   `filter-repo` 与 force-push 都覆盖不到这些引用，删除 PR 也不移除它们——彻底清除只有
-   重建仓库一条路。处置方式待维护者拍板，本 runbook 不预设结论。
+1. ~~GitHub PR 引用不受改写影响~~ **已闭合（2026-11-10，仓库重建）**：服务端
+   `refs/pull/6..14/head` 无法被 `filter-repo` 或 force-push 覆盖，删除 PR 也不移除，
+   唯一清除路径是删库重建。已按维护者授权执行，重建后 `refs/pull/*` = 0。代价：原 9 个 PR
+   与 5 个 issue 的时间线不可恢复，正文与评论已存档于 `../llmveto-release-archive/`
+   （`prs.json` / `issues.json`），编号不再复用。
 2. **npm 发布已完成（2026-11-10）**，但走的不是 CI 路径：`NPM_TOKEN` 已入仓为 secret，
    tag 触发的 `release.yml` 两次在 install 步失败——`v0.3.1` 的 `bun.lock` 把 tarball URL
    钉在区域镜像（`registry.npmmirror.com`），该镜像在 GitHub runner 上间歇 504。`main` 已把

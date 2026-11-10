@@ -213,5 +213,9 @@ git filter-repo --replace-message ../replacements.txt --force
 1. **GitHub PR 引用不受改写影响**：服务端 `refs/pull/6..14/head` 仍指向改写前 SHA。
    `filter-repo` 与 force-push 都覆盖不到这些引用，删除 PR 也不移除它们——彻底清除只有
    重建仓库一条路。处置方式待维护者拍板，本 runbook 不预设结论。
-2. **npm 发布未完成**：仓库尚无 `NPM_TOKEN` secret，tag 触发的 `release.yml` 在 publish 步
-   fail-closed；GitHub Release v0.3.1 已手工创建。补上 secret 后重跑 tag 工作流即可。
+2. **npm 发布已完成（2026-11-10）**，但走的不是 CI 路径：`NPM_TOKEN` 已入仓为 secret，
+   tag 触发的 `release.yml` 两次在 install 步失败——`v0.3.1` 的 `bun.lock` 把 tarball URL
+   钉在区域镜像（`registry.npmmirror.com`），该镜像在 GitHub runner 上间歇 504。`main` 已把
+   lockfile 改回官方 registry，但已打的 tag 内容改不动（且 tag 已受 ruleset 保护），因此最终
+   在 tag 的 worktree 上本地跑 `release:gate` 10/10 后直接 `npm publish`。**该 tag 的 CI 红叉
+   属基础设施问题，不构成发布失败**；下一次发版起 CI 路径应可自洽。

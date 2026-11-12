@@ -221,5 +221,8 @@ git filter-repo --replace-message ../replacements.txt --force
    tag 触发的 `release.yml` 两次在 install 步失败——`v0.3.1` 的 `bun.lock` 把 tarball URL
    钉在区域镜像（`registry.npmmirror.com`），该镜像在 GitHub runner 上间歇 504。`main` 已把
    lockfile 改回官方 registry，但已打的 tag 内容改不动（且 tag 已受 ruleset 保护），因此最终
-   在 tag 的 worktree 上本地跑 `release:gate` 10/10 后直接 `npm publish`。**该 tag 的 CI 红叉
-   属基础设施问题，不构成发布失败**；下一次发版起 CI 路径应可自洽。
+   在 tag 的 worktree 上本地跑 `release:gate` 10/10 后直接 `npm publish`。
+   **现状（2026-11-12）**：仓库重建后 `v0.3.1` tag 上没有任何 release run，不存在遗留红叉；
+   `release.yml` 的 install 步已加 3 次重试（间隔 15s），吸收 registry/镜像的瞬时 5xx。
+   该 tag 的 `bun.lock` 仍指向区域镜像且不可变，**不要以它的 workflow 重跑作为发布门禁依据**；
+   从 main 打出的后续 tag 使用官方 registry 的 lockfile，CI 路径自洽。

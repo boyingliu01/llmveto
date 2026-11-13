@@ -41,9 +41,12 @@ MVP 版本: v0.3.1 (v2a detection core)
 
 ## 发布面遗留（用户触发）
 
-1. **npm publish 未完成**：仓库未配置 `NPM_TOKEN` secret，release workflow 在 publish 步
+1. ~~**npm publish 未完成**：仓库未配置 `NPM_TOKEN` secret，release workflow 在 publish 步
    fail-closed（release gate 与版本一致性均已通过）。配置 token 后重跑 tag workflow 或手动
-   `npm publish` 即可；GitHub Release v0.3.1 已手工创建。
+   `npm publish` 即可；GitHub Release v0.3.1 已手工创建。~~
+   **已解决（2026-11-10）**：`npm llmveto@0.3.1` 已发布并成为 `latest`，doctor 烟测通过。
+   发布通过 tag worktree 本地执行 `release:gate` 后 `npm publish`（CI 路径当时因 tag 的
+   lockfile 钉在区域镜像而不可用，详见 `docs/release/publication-runbook.md`）。
 2. **v0.3.0 的 tag workflow 失败**：原因即 0.3.1 修复的 Linux bin 符号链接缺陷；v0.3.0
    Release 仍存在，0.3.1 为推荐版本。
 3. **G-CANARY 判据①②③**：原始录制已被覆盖，重放登记为接受残差（见 `docs/KNOWN-ISSUES.md`）。

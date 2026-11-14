@@ -1,10 +1,10 @@
 // @no-test-required: CI 入口脚本（含内联解析/守卫逻辑，异常即 fail-loud 抛出并在 CI 日志直接可见）；核心判定由 regression-formula.test.ts 覆盖、可比性前置门由 env-gate.test.ts 覆盖。
-import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { isRegression } from "./regression-formula.ts";
 import { currentEnvironment, environmentMatches, isCiCalibrated, samplingMatches } from "./env-gate.ts";
 import { BENCH_SAMPLING, medianOf, minOf } from "./repeat.ts";
 import { G1_LINE_RE, g2LineRe } from "./runner-format.ts";
+import { runRunner } from "./runner-exec.ts";
 
 /**
  * @test REQ-VETO-013
@@ -58,15 +58,6 @@ function finite(value: unknown, what: string): number {
 function parseStat(log: string, labelRe: RegExp, group: number, label: string): number {
   const raw = log.match(labelRe)?.[group];
   return finite(raw === undefined ? NaN : Number(raw), `${label} in runner log (pattern: ${labelRe.source})`);
-}
-
-function runRunner(file: string): string {
-  // 使用 spawnSync + argv 数组而非 shell 字符串，避免任何 shell 元字符解析面。
-  const res = spawnSync("bun", ["run", file], { encoding: "utf8" });
-  if (res.status !== 0) {
-    throw new Error(`runner ${file} exited ${res.status}: ${res.stderr ?? ""}`);
-  }
-  return res.stdout;
 }
 
 interface Stat {

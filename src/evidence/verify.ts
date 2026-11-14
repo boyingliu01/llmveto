@@ -21,6 +21,7 @@ import { validateEvidence, type EvidenceRecord } from "./schema.ts";
 export type VerifyResult =
   | { ok: true; records: number }
   | { ok: false; kind: "no_file"; message: string }
+  | { ok: false; kind: "io_error"; message: string }
   | { ok: false; kind: "unsupported_version"; evidence_version: unknown }
   | { ok: false; kind: "schema_violation"; seq: number; errors: readonly string[] }
   | { ok: false; kind: "chain_broken"; first_bad_seq: number; reason: string };
@@ -63,7 +64,17 @@ export function verifyEvidenceFile(path: string): VerifyResult {
   if (!existsSync(path)) {
     return { ok: false, kind: "no_file", message: `evidence file not found: ${path}` };
   }
-  const raw = readFileSync(path, "utf8");
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch (err) {
+    // existsSync 与读取之间的窗口（被删）仍按 no_file 报；其余读失败是新的失败面，单列 io_error，
+    // 不与"链坏了"混为一谈——调用方据此给出"文件存在但读不了"的诊断。
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return { ok: false, kind: "no_file", message: `evidence file not found: ${path}` };
+    }
+    return { ok: false, kind: "io_error", message: `evidence file unreadable: ${path} (${err instanceof Error ? err.message : String(err)})` };
+  }
   const lines = raw.split("\n").filter((l) => l.length > 0);
   // 空文件/仅空白 = 链被整体清空。这不是"0 条记录的合法链"：writer 从不产出空文件，
   // 故它与尾部截断同族（AC-VETO-010-05）。

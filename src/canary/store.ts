@@ -175,10 +175,14 @@ export class CanaryStore {
       last_rotated_at: this.isoRotatedAt(),
       entries: Object.fromEntries(this.entries),
     };
-    mkdirSync(dirname(this.filePath), { recursive: true });
     const tmp = `${this.filePath}.tmp`;
-    writeFileSync(tmp, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-    renameSync(tmp, this.filePath);
+    try {
+      mkdirSync(dirname(this.filePath), { recursive: true });
+      writeFileSync(tmp, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+      renameSync(tmp, this.filePath);
+    } catch (err) {
+      throw new Error(`canary registry persist failed: ${this.filePath} (${err instanceof Error ? err.message : String(err)})`);
+    }
     this.lastPersistAt = this.now();
   }
 }

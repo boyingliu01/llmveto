@@ -21,9 +21,7 @@
  *   - tool_manipulation: malformed tool call structures (T2)
  */
 
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { spawn, type ChildProcess } from "node:child_process";
-import type { AddressInfo } from "node:net";
 
 export type OpponentId =
   | "honest"
@@ -78,11 +76,17 @@ export async function startEvilRelay(spec: EvilRelaySpec): Promise<EvilRelayInst
     throw new Error(`Unknown opponent: ${spec.opponent}. Must be one of: ${[...OPPONENTS].join(", ")}`);
   }
 
-  const child = spawn(
-    process.execPath,
-    ["--eval", buildChildScript(spec)],
-    { stdio: ["pipe", "pipe", "pipe"] },
-  );
+  let child: ReturnType<typeof spawn>;
+  try {
+    child = spawn(
+      process.execPath,
+      ["--eval", buildChildScript(spec)],
+      { stdio: ["pipe", "pipe", "pipe"] },
+    );
+  } catch (err) {
+    // 同步抛（参数非法 / 无法解析 execPath）在此带出对手名，异步失败仍由 waitForPort 的 error 监听收。
+    throw new Error(`failed to spawn evil relay child (${spec.opponent}): ${err instanceof Error ? err.message : String(err)}`, { cause: err });
+  }
 
   // Wait for child to signal ready with port number
   const port = await waitForPort(child);
@@ -94,15 +98,15 @@ export async function startEvilRelay(spec: EvilRelaySpec): Promise<EvilRelayInst
   };
 }
 
-function buildChildScript(spec: EvilRelaySpec): string {
-  const script = `
+/** 子进程脚本的静态前段（config 三行由 buildChildScript 注入，见下）。 */
+const CHILD_SCRIPT_HEAD = `
     const http = require('node:http');
     const crypto = require('node:crypto');
 
-    const OPPONENT = ${JSON.stringify(spec.opponent)};
-    const SEED = ${spec.seed ?? Math.floor(Math.random() * 10000)};
-    const INTERCEPT_PATH = ${JSON.stringify(spec.interceptPath ?? null)};
+`;
 
+/** 子进程脚本的静态主体：对手 handler 表 + HTTP relay。 */
+const CHILD_SCRIPT_BODY = `
     // Simple seeded PRNG for deterministic opponents
     function seededRandom(seed) {
       let s = seed;
@@ -287,7 +291,16 @@ function buildChildScript(spec: EvilRelaySpec): string {
       process.stdout.write('READY:' + addr.port + '\\n');
     });
   `;
-  return script;
+
+function buildChildScript(spec: EvilRelaySpec): string {
+  // 外部字符串一律经 JSON.stringify 注入（OPPONENT / INTERCEPT_PATH），数值直出；拼在脚本文本之前。
+  const config = [
+    `    const OPPONENT = ${JSON.stringify(spec.opponent)};`,
+    `    const SEED = ${spec.seed ?? Math.floor(Math.random() * 10000)};`,
+    `    const INTERCEPT_PATH = ${JSON.stringify(spec.interceptPath ?? null)};`,
+    "",
+  ].join("\n");
+  return `${CHILD_SCRIPT_HEAD}${config}${CHILD_SCRIPT_BODY}`;
 }
 
 async function waitForPort(child: ChildProcess): Promise<number> {

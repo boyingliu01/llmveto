@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
@@ -42,10 +42,17 @@ function pidFile(ctx: CliCtx): string { return join(stateDir(ctx), "gateway.pid"
 function evidenceFile(ctx: CliCtx): string { return join(stateDir(ctx), "evidence.jsonl"); }
 function urlFile(ctx: CliCtx): string { return join(stateDir(ctx), "gateway.url"); }
 
-/** 读 pid 文件为整数；缺失 / 非法内容 → null。 */
+/** 读 pid 文件为整数；缺失 / 不可读 / 非法内容 → null。 */
 function readPid(ctx: CliCtx): number | null {
-  if (!existsSync(pidFile(ctx))) return null;
-  const pid = Number(readFileSync(pidFile(ctx), "utf8").trim());
+  const path = pidFile(ctx);
+  let raw: string;
+  try {
+    if (!existsSync(path)) return null;
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return null; // 读取失败等同于状态不可用：按"未运行"处理，不因状态文件崩溃
+  }
+  const pid = Number(raw.trim());
   return Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
@@ -88,43 +95,80 @@ async function cmdStart(ctx: CliCtx): Promise<CliResult> {
 /** 父：spawn detached 后端子进程，握手等待其写出 gateway.url 后返回。 */
 async function cmdStartSpawn(ctx: CliCtx, env: Readonly<Record<string, string | undefined>>): Promise<CliResult> {
   const dir = stateDir(ctx);
-  mkdirSync(dir, { recursive: true });
-  const script = process.argv[1];
-  if (!script) return { exitCode: 1, stdout: "", stderr: "start: cannot resolve CLI entry path (process.argv[1])\n" };
-  // 已在运行 → 幂等返回，不派生第二个必然因端口占用而失败的 daemon。
-  const livePid = readPid(ctx);
-  if (livePid !== null && isAlive(livePid)) {
-    const url = existsSync(urlFile(ctx)) ? readFileSync(urlFile(ctx), "utf8").trim() : "unknown";
-    return { exitCode: 0, stdout: `gateway already running (pid=${livePid}) at ${url}\nstate dir: ${dir}\n`, stderr: "" };
+  try {
+    mkdirSync(dir, { recursive: true });
+    const script = process.argv[1];
+    if (!script) return { exitCode: 1, stdout: "", stderr: "start: cannot resolve CLI entry path (process.argv[1])\n" };
+    // 已在运行 → 幂等返回，不派生第二个必然因端口占用而失败的 daemon。
+    const already = alreadyRunning(ctx, dir);
+    if (already !== null) return already;
+    // 陈旧状态清理：上次异常退出遗留的 pid/url 文件会让下面的握手读到旧地址（假成功）。
+    clearStateFiles(ctx);
+    const child = spawnDetachedDaemon(script, dir, env);
+    const pid = child.pid;
+    if (!pid) return { exitCode: 1, stdout: "", stderr: "start: failed to spawn daemon process\n" };
+    const url = await waitForDaemonUrl(ctx, child, pid);
+    if (url === null) {
+      clearStateFiles(ctx);
+      return { exitCode: 1, stdout: "", stderr: "start: daemon exited before listening (port busy or misconfig?); see LLMVETO_* env\n" };
+    }
+    return { exitCode: 0, stdout: `gateway started in background (pid=${pid}) at ${url}\nstate dir: ${dir}\n`, stderr: "" };
+  } catch (err) {
+    clearStateFiles(ctx);
+    return { exitCode: 1, stdout: "", stderr: `start: failed to launch daemon: ${err instanceof Error ? err.message : String(err)}\n` };
   }
-  // 陈旧状态清理：上次异常退出遗留的 pid/url 文件会让下面的握手读到旧地址（假成功）。
-  clearStateFiles(ctx);
-  // 把 stateDir 经 env 传给子进程（ctx 不跨进程）；其余网关配置（UPSTREAM/PORT/…）随 process.env 继承。
-  const child = spawn(process.execPath, [script, "start"], {
-    cwd: process.cwd(),
-    env: { ...process.env, ...env, LLMVETO_DAEMON_CHILD: "1", LLMVETO_STATE_DIR: dir },
-    detached: true,
-    stdio: "ignore",
-  });
-  child.unref();
-  const pid = child.pid;
-  if (!pid) return { exitCode: 1, stdout: "", stderr: "start: failed to spawn daemon process\n" };
-  // 握手：轮询子进程写出的 url 文件（最长 ~3s），期间若子进程提前退出则判定启动失败。
+}
+
+/** 已在运行 → 幂等成功结果（陈旧 url 文件读不到时以 unknown 呈现）；未运行 → null。 */
+function alreadyRunning(ctx: CliCtx, dir: string): CliResult | null {
+  const livePid = readPid(ctx);
+  if (livePid === null || !isAlive(livePid)) return null;
+  // url 只是展示信息：读失败不影响"已在运行"这一判定，按 unknown 呈现。
+  const url = tryReadUrlFile(ctx) ?? "unknown";
+  return { exitCode: 0, stdout: `gateway already running (pid=${livePid}) at ${url}\nstate dir: ${dir}\n`, stderr: "" };
+}
+
+/** 读子进程写出的 gateway.url；缺失或读取失败 → null（调用方决定是继续轮询还是记 unknown）。 */
+function tryReadUrlFile(ctx: CliCtx): string | null {
+  try {
+    return existsSync(urlFile(ctx)) ? readFileSync(urlFile(ctx), "utf8").trim() : null;
+  } catch {
+    return null; // 写入中途的文件：本轮视为"还没就绪"
+  }
+}
+
+/** 派生 detached daemon：stateDir 经 env 传给子进程（ctx 不跨进程），其余网关配置随 process.env 继承。 */
+function spawnDetachedDaemon(script: string, dir: string, env: Readonly<Record<string, string | undefined>>): ChildProcess {
+  try {
+    const child = spawn(process.execPath, [script, "start"], {
+      cwd: process.cwd(),
+      env: { ...process.env, ...env, LLMVETO_DAEMON_CHILD: "1", LLMVETO_STATE_DIR: dir },
+      detached: true,
+      stdio: "ignore",
+    });
+    child.unref();
+    return child;
+  } catch (err) {
+    // 同步抛（execPath 不可执行等）在此翻译成启动失败；异步失败仍由握手轮询发现。
+    throw new Error(`cannot spawn daemon process: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
+  }
+}
+
+/** 握手：轮询子进程写出的 url 文件（最长 HANDSHAKE_TIMEOUT_MS），子进程提前退出即判定失败。 */
+async function waitForDaemonUrl(ctx: CliCtx, child: ChildProcess, pid: number): Promise<string | null> {
   let died = false;
   child.once("exit", () => { died = true; });
-  const deadline = Date.now() + 3000;
-  let url: string | null = null;
+  const deadline = Date.now() + HANDSHAKE_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (died) break; // 子进程提前退出优先于文件存在判断
     // 只认本次派生的子进程写出的状态：pid 文件必须等于 child.pid（防陈旧文件误判）。
-    if (readPid(ctx) === pid && existsSync(urlFile(ctx))) { url = readFileSync(urlFile(ctx), "utf8").trim(); break; }
-    await sleep(50);
+    if (readPid(ctx) === pid) {
+      const url = tryReadUrlFile(ctx);
+      if (url !== null) return url;
+    }
+    await sleep(HANDSHAKE_POLL_MS);
   }
-  if (!url) {
-    clearStateFiles(ctx);
-    return { exitCode: 1, stdout: "", stderr: `start: daemon exited before listening (port busy or misconfig?); see LLMVETO_* env\n` };
-  }
-  return { exitCode: 0, stdout: `gateway started in background (pid=${pid}) at ${url}\nstate dir: ${dir}\n`, stderr: "" };
+  return null;
 }
 
 /** 子（daemon）：真实持有反代 HTTP server；写 pid/url；信号下优雅收尾（Linux/CI）。 */
@@ -171,7 +215,14 @@ async function cmdStartDaemon(ctx: CliCtx, env: Readonly<Record<string, string |
 async function cmdStop(ctx: CliCtx): Promise<CliResult> {
   const pidPath = pidFile(ctx);
   if (!existsSync(pidPath)) return { exitCode: 1, stdout: "", stderr: "stop: gateway not running (no pid file)\n" };
-  const pid = Number(readFileSync(pidPath, "utf8").trim());
+  let pid: number;
+  try {
+    pid = Number(readFileSync(pidPath, "utf8").trim());
+  } catch (err) {
+    // 状态文件读不动等同于状态不可用：清掉后按"未运行"报告，不把 IO 异常抛成栈。
+    clearStateFiles(ctx);
+    return { exitCode: 1, stdout: "", stderr: `stop: pid file unreadable (${err instanceof Error ? err.message : String(err)}); removed\n` };
+  }
   let signaled = false;
   if (Number.isInteger(pid) && pid > 0) {
     try { process.kill(pid); signaled = true; } catch { /* stale pid or permission: fall through to cleanup */ }
@@ -185,8 +236,15 @@ async function cmdStop(ctx: CliCtx): Promise<CliResult> {
 function cmdStatus(ctx: CliCtx): CliResult {
   const pidPath = pidFile(ctx);
   if (!existsSync(pidPath)) return { exitCode: 1, stdout: "not running\n", stderr: "" };
-  const pid = Number(readFileSync(pidPath, "utf8").trim());
-  const url = existsSync(urlFile(ctx)) ? readFileSync(urlFile(ctx), "utf8").trim() : "unknown";
+  let pid: number;
+  let url: string;
+  try {
+    pid = Number(readFileSync(pidPath, "utf8").trim());
+    url = existsSync(urlFile(ctx)) ? readFileSync(urlFile(ctx), "utf8").trim() : "unknown";
+  } catch (err) {
+    // 与 readPid 同口径：状态文件不可读 = 拿不到可信状态，按"未运行"报并带出原因。
+    return { exitCode: 1, stdout: `not running (unreadable state: ${err instanceof Error ? err.message : String(err)})\n`, stderr: "" };
+  }
   // 守护化后 status 必须真实探活：pid 文件存在不代表进程存活（崩溃/被外部杀死会遗留僵尸文件）。
   if (!isAlive(pid)) return { exitCode: 1, stdout: `not running (stale pid file: ${pid})\n`, stderr: "" };
   return { exitCode: 0, stdout: `running pid=${pid} url=${url}\n`, stderr: "" };
@@ -295,6 +353,7 @@ function cmdVerify(ctx: CliCtx, args: readonly string[]): CliResult {
   if (r.ok) return { exitCode: 0, stdout: `ok: ${r.records} records verified\n`, stderr: "" };
   switch (r.kind) {
     case "no_file": return { exitCode: 1, stdout: "", stderr: `no file: ${r.message}\n` };
+    case "io_error": return { exitCode: 1, stdout: "", stderr: `unreadable: ${r.message}\n` };
     case "unsupported_version": return { exitCode: 1, stdout: "", stderr: `unsupported evidence_version: ${String(r.evidence_version)}\n` };
     case "schema_violation": return { exitCode: 1, stdout: "", stderr: `schema violation at seq=${r.seq}: ${r.errors.join("; ")}\n` };
     case "chain_broken": return { exitCode: 1, stdout: "", stderr: `first_bad_seq=${r.first_bad_seq} (${r.reason})\n` };
@@ -312,6 +371,9 @@ async function cmdCanary(ctx: CliCtx, args: readonly string[]): Promise<CliResul
 
 /** canary rotate 双路径（AC-V2a-08）：在线 → POST loopback 等确认；离线 → 写零字节哨兵。 */
 const ROTATE_REQUEST_TIMEOUT_MS = 5_000;
+/** start 握手窗口与轮询间隔：子进程 listen 成功后写 url 文件，父进程据此返回。 */
+const HANDSHAKE_TIMEOUT_MS = 3_000;
+const HANDSHAKE_POLL_MS = 50;
 
 async function cmdCanaryRotate(ctx: CliCtx): Promise<CliResult> {
   const env = ctx.env ?? process.env;

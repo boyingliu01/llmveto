@@ -1,5 +1,4 @@
 // @no-test-required: bench 工具（可执行脚本），复刻 check-regression.ts 的 runner 编排；解析契约与 check 侧共用 bench/runner-format.ts（R8-B-M3）。核心判定由 regression-formula.test.ts 覆盖，估计量由 repeat.test.ts 覆盖，写入路径守卫由 out-path-guard.test.ts 覆盖（R10R4-C-m4）。
-import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { arch, cpus, platform } from "node:os";
 import {
@@ -12,6 +11,7 @@ import {
 import { G1_TTFT_P95_MAX_MS, G1_TTFT_P99_MAX_MS, G2_THRESHOLDS, G3_THRESHOLDS } from "./regression-formula.ts";
 import { BENCH_SAMPLING, minOf } from "./repeat.ts";
 import { G1_LINE_RE, g2LineRe, g3LineRe } from "./runner-format.ts";
+import { runRunner } from "./runner-exec.ts";
 
 /**
  * @test REQ-VETO-013
@@ -60,14 +60,6 @@ interface Percentiles {
   readonly p99: number;
 }
 
-function runRunner(file: string): string {
-  // 与 check-regression.ts 同款：spawnSync + argv 数组，避免 shell 解析面。
-  const res = spawnSync("bun", ["run", file], { encoding: "utf8" });
-  if (res.status !== 0) throw new Error(`runner ${file} exited ${res.status}: ${res.stderr ?? ""}`);
-  process.stdout.write(res.stdout);
-  return res.stdout;
-}
-
 function percentilesFrom(log: string, re: RegExp, label: string): Percentiles {
   const m = log.match(re);
   if (!m || m[1] === undefined || m[2] === undefined || m[3] === undefined) {
@@ -87,9 +79,9 @@ const g1Logs: string[] = [];
 const g2Logs: string[] = [];
 const g3Logs: string[] = [];
 for (let i = 0; i < BENCH_SAMPLING.repeats; i++) {
-  g1Logs.push(runRunner("bench/g1-ttft.ts"));
-  g2Logs.push(runRunner("bench/g2-request-gate.ts"));
-  g3Logs.push(runRunner("bench/g3-checker-timeout.ts"));
+  g1Logs.push(runRunner("bench/g1-ttft.ts", { echo: true }));
+  g2Logs.push(runRunner("bench/g2-request-gate.ts", { echo: true }));
+  g3Logs.push(runRunner("bench/g3-checker-timeout.ts", { echo: true }));
 }
 
 const g1 = aggregatedPercentiles(g1Logs, G1_LINE_RE, "G1");

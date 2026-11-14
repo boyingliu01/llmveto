@@ -90,45 +90,62 @@ function sseFrames(text: string): string[] {
     .filter((d) => d.length > 0 && d !== "[DONE]");
 }
 
+/** 响应解析入口：SSE / 非流式两路各自成函数（原文的判定与解析混在一处 CCN 超 15）。 */
 function parseResponse(rec: Raw): Parsed {
-  const ct = (rec.content_type ?? "").toLowerCase();
   const text = rec.response_body ?? "";
+  return isSse(rec, text) ? parseStreamed(text) : parseNonStreamed(text);
+}
 
-  if (ct.includes("text/event-stream") || text.startsWith("data:") || text.includes("\ndata:")) {
-    const frames = sseFrames(text);
-    let finish: string | null = null;
-    for (const f of frames) {
-      try {
-        const o = JSON.parse(f) as Record<string, any>;
-        const r = o?.choices?.[0]?.finish_reason ?? o?.delta?.stop_reason ?? o?.stop_reason ?? null;
-        if (r) finish = String(r);
-      } catch {
-        /* 非 JSON 帧忽略（原文仍保留在 chunks 里） */
-      }
-    }
-    return { response: { chunks: frames }, finish, streamed: true };
-  }
+function isSse(rec: Raw, text: string): boolean {
+  const ct = (rec.content_type ?? "").toLowerCase();
+  return ct.includes("text/event-stream") || text.startsWith("data:") || text.includes("\ndata:");
+}
 
-  let o: Record<string, any>;
+function parseStreamed(text: string): Parsed {
+  const frames = sseFrames(text);
+  let finish: string | null = null;
+  for (const f of frames) finish = finishOfFrame(f) ?? finish;
+  return { response: { chunks: frames }, finish, streamed: true };
+}
+
+/** 单帧 finish_reason（非 JSON 帧忽略——原文仍保留在 chunks 里）。 */
+function finishOfFrame(frame: string): string | null {
   try {
-    o = JSON.parse(text) as Record<string, any>;
+    const o = JSON.parse(frame) as Record<string, any>;
+    const r = o?.choices?.[0]?.finish_reason ?? o?.delta?.stop_reason ?? o?.stop_reason ?? null;
+    return r ? String(r) : null;
   } catch {
-    return { response: { raw: text }, finish: null, streamed: false };
+    return null;
   }
-  const choice = o?.choices?.[0];
-  const finish = choice?.finish_reason ?? o?.stop_reason ?? null;
-  const content =
-    choice?.message?.content ??
-    (Array.isArray(o?.content) ? o.content.map((b: any) => b?.text ?? "").join("") : o?.content) ??
-    "";
-  const response: Record<string, unknown> = {
-    finish_reason: finish ?? null,
-    content: typeof content === "string" ? content : JSON.stringify(content),
-  };
+}
+
+function parseNonStreamed(text: string): Parsed {
+  const o = parseJsonObject(text);
+  if (o === null) return { response: { raw: text }, finish: null, streamed: false };
+  const choice = o.choices?.[0];
+  const finish = choice?.finish_reason ?? o.stop_reason ?? null;
+  const response: Record<string, unknown> = { finish_reason: finish, content: contentOf(o, choice) };
   const reasoning = choice?.message?.reasoning_content;
   if (reasoning) response.reasoning_content = reasoning;
   if (choice?.message?.tool_calls) response.tool_calls = choice.message.tool_calls;
   return { response, finish: finish ?? null, streamed: false };
+}
+
+function parseJsonObject(text: string): Record<string, any> | null {
+  try {
+    return JSON.parse(text) as Record<string, any>;
+  } catch {
+    return null;
+  }
+}
+
+/** content 提取：message.content 优先，其次顶层 content（字符串或 blocks 数组拼接）。 */
+function contentOf(o: Record<string, any>, choice: any): string {
+  const content =
+    choice?.message?.content ??
+    (Array.isArray(o.content) ? o.content.map((b: any) => b?.text ?? "").join("") : o.content) ??
+    "";
+  return typeof content === "string" ? content : JSON.stringify(content);
 }
 
 function sha(s: string): string {
@@ -295,20 +312,48 @@ function report(sessions: Session[], skipped: string[], problems: string[]): voi
   } else console.log("规格问题: 0");
 }
 
+/** CHECK_ONLY：读取已落盘的 session 文件；读/解析失败带出目录，避免只看到裸 JSON 语法错。 */
+function loadExistingSessions(): Session[] {
+  if (!existsSync(OUT_DIR)) return [];
+  try {
+    return readdirSync(OUT_DIR)
+      .filter((f) => /^session-\d+\.json$/.test(f))
+      .sort()
+      .map((f) => {
+        const o = JSON.parse(readFileSync(`${OUT_DIR}/${f}`, "utf8")) as { session_id: string } & Omit<Session, "key">;
+        return { key: o.session_id, client: o.client, model: o.model, exchanges: o.exchanges };
+      });
+  } catch (err) {
+    throw new Error(`读取 ${OUT_DIR}/session-*.json 失败: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
+  }
+}
+
+/** 写盘：目录缺失即建；任一文件写失败抛出带目录上下文的错误（避免半套文件静默留下）。 */
+function writeSessions(named: readonly Session[]): void {
+  try {
+    mkdirSync(OUT_DIR, { recursive: true });
+    for (const s of named) {
+      const out = {
+        session_id: s.key,
+        client: s.client,
+        model: s.model,
+        exchanges: s.exchanges,
+      };
+      writeFileSync(`${OUT_DIR}/${s.key}.json`, JSON.stringify(out, null, 2) + "\n", "utf8");
+    }
+  } catch (err) {
+    throw new Error(`写入 ${OUT_DIR}/session-*.json 失败: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
+  }
+}
+
 async function main(): Promise<void> {
   if (CHECK_ONLY) {
-    const files = existsSync(OUT_DIR)
-      ? readdirSync(OUT_DIR).filter((f) => /^session-\d+\.json$/.test(f)).sort()
-      : [];
-    const sessions: Session[] = files.map((f) => {
-      const o = JSON.parse(readFileSync(`${OUT_DIR}/${f}`, "utf8")) as { session_id: string } & Omit<Session, "key">;
-      return { key: o.session_id, client: o.client, model: o.model, exchanges: o.exchanges };
-    });
-    console.log(`已有 session 文件: ${files.length}（${files.join(", ") || "无"}）`);
+    const sessions = loadExistingSessions();
+    console.log(`已有 session 文件: ${sessions.length}（${sessions.map((s) => `${s.key}.json`).join(", ") || "无"}）`);
     const problems = validate(sessions);
     report(sessions, [], problems);
-    if (files.length < REQUIRE) {
-      console.error(`\nG-CANARY #E 未达标：${files.length}/${REQUIRE}`);
+    if (sessions.length < REQUIRE) {
+      console.error(`\nG-CANARY #E 未达标：${sessions.length}/${REQUIRE}`);
       process.exit(1);
     }
     return;
@@ -328,16 +373,7 @@ async function main(): Promise<void> {
     console.log("\n--dry-run：未写文件");
     return;
   }
-  mkdirSync(OUT_DIR, { recursive: true });
-  for (const s of named) {
-    const out = {
-      session_id: s.key,
-      client: s.client,
-      model: s.model,
-      exchanges: s.exchanges,
-    };
-    writeFileSync(`${OUT_DIR}/${s.key}.json`, JSON.stringify(out, null, 2) + "\n", "utf8");
-  }
+  writeSessions(named);
   console.log(`\n已写 ${named.length} 个文件到 ${OUT_DIR}/session-*.json（var/ 已 gitignore，不入 git）`);
 
   if (named.length < REQUIRE) {

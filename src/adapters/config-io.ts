@@ -32,16 +32,30 @@ export function readJsonConfig(path: string): Record<string, unknown> {
 /** 写路径专用读取：读失败必须显式抛出，绝不以空基覆写用户配置。 */
 export function readJsonConfigStrict(path: string): Record<string, unknown> {
   if (!existsSync(path)) return {};
-  const raw = readFileSync(path, "utf8").trim();
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8").trim();
+  } catch (err) {
+    throw new Error(`config exists but is unreadable: ${path} (${err instanceof Error ? err.message : String(err)})`);
+  }
   if (!raw) return {};
-  const parsed: unknown = JSON.parse(raw);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`config is not valid JSON: ${path} (${err instanceof Error ? err.message : String(err)})`);
+  }
   if (!isPlainObject(parsed)) throw new Error(`config exists but is not a JSON object: ${path}`);
   return parsed;
 }
 
 export function writeJsonConfig(path: string, data: Record<string, unknown>): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(data, null, 2) + "\n", "utf8");
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify(data, null, 2) + "\n", "utf8");
+  } catch (err) {
+    throw new Error(`failed to write config: ${path} (${err instanceof Error ? err.message : String(err)})`);
+  }
 }
 
 export function deepMerge(base: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> {

@@ -97,7 +97,12 @@ export class EvidenceWriter {
     });
     const v = validateEvidence(record);
     if (!v.ok) throw new Error(`evidence schema invalid: ${v.errors.join("; ")}`);
-    appendFileSync(this.path, JSON.stringify(record) + "\n", "utf8");
+    try {
+      appendFileSync(this.path, JSON.stringify(record) + "\n", "utf8");
+    } catch (err) {
+      // 写失败必须在此止住：下面的 seq/lastHash 只有在落盘成功后才能前移，否则内存链会与磁盘分叉。
+      throw new Error(`evidence append failed: ${this.path} (${err instanceof Error ? err.message : String(err)})`);
+    }
     this.seq += 1;
     this.lastHash = record.record_hash;
     return record;

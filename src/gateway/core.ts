@@ -98,13 +98,18 @@ export type CanaryMetrics = { inject_skipped: number; registry_unavailable: numb
 /** 响应侧扫描单元 meta 的 canary 形状（SL-08 return-scan 判定面）：快照不可用时 canary_candidates 键缺席。 */
 export interface CanaryRequestMeta { readonly canary_injected: boolean; readonly canary_candidates?: readonly string[]; }
 
+/** canary 域的装配点（类体不直接 new 依赖：测试仍可经 config 注入路径构造替身）。 */
+function createCanaryStore(cfg: GatewayConfig): CanaryStore | null {
+  return cfg.canaryRegistryPath !== undefined ? new CanaryStore(cfg.canaryRegistryPath) : null;
+}
+
 export class GatewayCore {
   /** canary：D-02 单写者 store（null = 未配置，判定域外）；计数面恒在（进程内，durable 聚合属 SL-12），未配置全零。 */
   readonly canary: CanaryStore | null;
   readonly canaryMetrics: CanaryMetrics = { inject_skipped: 0, registry_unavailable: 0, canary_injected: 0 };
 
   constructor(private readonly cfg: GatewayConfig) {
-    this.canary = cfg.canaryRegistryPath !== undefined ? new CanaryStore(cfg.canaryRegistryPath) : null;
+    this.canary = createCanaryStore(cfg);
   }
 
   /** 分派序列：REGISTRY + 配置注入的额外 checker（按 side 过滤）。 */
@@ -400,6 +405,23 @@ function handleNonStreamResponse(p: NonStreamResponseParams): ChatOutcome {
 }
 
 /**
+ * 上游 POST 的边界封装：`fetch` 的网络层异常（DNS / 连接重置 / TLS）在此翻译成带阶段标记的错误，
+ * 由 server 的 dispatch 兜底路径统一收敛为 502 + evidence（rule_id 直接携带该消息，便于区分
+ * "转发阶段就失败"与"扫描内部异常"）。其余 `!upstream.ok` 属协议层，走正常 outcome 分支。
+ */
+async function postToUpstream(url: string, forwardedBody: string, authorization: string | undefined): Promise<Response> {
+  try {
+    return await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(authorization ? { authorization } : {}) },
+      body: forwardedBody,
+    });
+  } catch (err) {
+    throw new Error(`upstream fetch failed: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
+  }
+}
+
+/**
  * 端到端 handler：接收 req（HTTP），向 upstream 转发 + 扫描 + 落 evidence。
  * 该函数是 gateway 层的"骨架"，测试通过 mock-upstream 集成。
  */
@@ -408,8 +430,8 @@ export async function handleChatCompletions(
   req: { body: string; headers: Record<string, string>; upstreamUrl: string; requestId: string; sessionId: string; turnId: string; client: string; providerId: string; endpointHost: string; transport: "stream" | "non-stream" },
 ): Promise<ChatOutcome> {
   // transport 由 server 层判定后下传（单一真相源）：本层不再自行从 headers/body 重判。
-  const stream = req.transport === "stream";
-  const transport = req.transport;
+  const { transport } = req;
+  const stream = transport === "stream";
   const reqScan = core.scanRequest(req.body, req.headers, transport);
   // SL-01/D-12：请求体 tools 声明面（declared_tools/declared_required）提取自请求扫描
   // 单元 meta，下传给响应侧全部扫描单元（非流式 / 流式逐帧 / 归并单元）。
@@ -422,57 +444,86 @@ export async function handleChatCompletions(
   }
   // canary 注入编排（D-04）：先于 fetch，注入后体作为转发体；请求侧扫描仍以客户端原体为准。
   const canaryStep = orchestrateCanary(core, req);
-  const gwReasons = canaryStep.gatewayReason !== undefined ? [canaryStep.gatewayReason] : undefined;
-  // canary meta 随声明面并入全部响应侧扫描单元（SL-08 return-scan 判定面）；判定域外保持 declaredMeta 原样。
-  const responseMeta = responseMetaFor(canaryStep.meta, declaredMeta);
   // 转发到 upstream（体 = 注入编排产出：受管路径为注入后体，其余为原体）
-  const upstream = await fetch(req.upstreamUrl, {
-    method: "POST",
-    headers: { "content-type": "application/json", ...(req.headers.authorization ? { authorization: req.headers.authorization } : {}) },
-    body: canaryStep.forwardedBody,
-  });
-  if (!upstream.ok) {
-    return upstreamFailureOutcome({
-      upstream,
-      degraded: reqDecision.degraded,
-      reqFindings,
-      gwReasons,
-      forwardedBody: canaryStep.forwardedBody,
-      canaryMeta: canaryStep.meta,
-      stream,
-    });
-  }
-  if (!stream) {
-    return handleNonStreamResponse({
-      core,
-      text: await upstream.text(),
-      requestedModel: (reqScan.scanUnit.meta.model_requested as string | undefined) ?? null,
-      responseMeta,
-      requestInputs: reqScan.inputs,
-      reqFindings,
-      forwardedBody: canaryStep.forwardedBody,
-      canaryMeta: canaryStep.meta,
-      gwReasons,
-    });
-  }
-  // 流式：tee（逐帧交付逻辑独立成 handleStreaming，主 handler 只保留分支骨架）
-  const requested = (reqScan.scanUnit.meta.model_requested as string | undefined) ?? null;
-  return handleStreaming({
+  const upstream = await postToUpstream(req.upstreamUrl, canaryStep.forwardedBody, req.headers.authorization);
+  return deliverUpstream({
     core,
-    body: upstream.body,
-    requested,
-    responseMeta,
+    upstream,
+    stream,
+    requestedModel: requestedModelOf(reqScan.scanUnit),
+    // canary meta 随声明面并入全部响应侧扫描单元（SL-08 return-scan 判定面）；判定域外保持 declaredMeta 原样。
+    responseMeta: responseMetaFor(canaryStep.meta, declaredMeta),
     requestInputs: reqScan.inputs,
     degraded: reqDecision.degraded,
     reqFindings,
     forwardedBody: canaryStep.forwardedBody,
     canaryMeta: canaryStep.meta,
-    gwReasons,
+    gwReasons: canaryStep.gatewayReason !== undefined ? [canaryStep.gatewayReason] : undefined,
   });
 }
 
-/** 流式交付：逐帧扫描 + veto 截断 + tool_call arguments 归并；上游无 body 时按空交付收束。 */
-function handleStreaming(p: {
+/** 请求扫描单元里声明的 response model（缺声明即 null）。 */
+function requestedModelOf(unit: ScanUnit): string | null {
+  return (unit.meta.model_requested as string | undefined) ?? null;
+}
+
+/** 上游已应答后的三分支交付（非 2xx / 非流式 / 流式）——主 handler 只保留请求侧骨架。 */
+interface UpstreamDelivery {
+  readonly core: GatewayCore;
+  readonly upstream: Response;
+  readonly stream: boolean;
+  readonly requestedModel: string | null;
+  readonly responseMeta: Record<string, unknown>;
+  readonly requestInputs: readonly PolicyInput[];
+  readonly degraded: boolean;
+  readonly reqFindings: EvidenceFinding[];
+  readonly forwardedBody: string;
+  readonly canaryMeta: CanaryRequestMeta | null;
+  readonly gwReasons: readonly string[] | undefined;
+}
+
+async function deliverUpstream(d: UpstreamDelivery): Promise<ChatOutcome> {
+  if (!d.upstream.ok) {
+    return upstreamFailureOutcome({
+      upstream: d.upstream,
+      degraded: d.degraded,
+      reqFindings: d.reqFindings,
+      gwReasons: d.gwReasons,
+      forwardedBody: d.forwardedBody,
+      canaryMeta: d.canaryMeta,
+      stream: d.stream,
+    });
+  }
+  if (!d.stream) {
+    return handleNonStreamResponse({
+      core: d.core,
+      text: await d.upstream.text(),
+      requestedModel: d.requestedModel,
+      responseMeta: d.responseMeta,
+      requestInputs: d.requestInputs,
+      reqFindings: d.reqFindings,
+      forwardedBody: d.forwardedBody,
+      canaryMeta: d.canaryMeta,
+      gwReasons: d.gwReasons,
+    });
+  }
+  // 流式：tee（逐帧交付逻辑独立成 handleStreaming，主 handler 只保留分支骨架）
+  return handleStreaming({
+    core: d.core,
+    body: d.upstream.body,
+    requested: d.requestedModel,
+    responseMeta: d.responseMeta,
+    requestInputs: d.requestInputs,
+    degraded: d.degraded,
+    reqFindings: d.reqFindings,
+    forwardedBody: d.forwardedBody,
+    canaryMeta: d.canaryMeta,
+    gwReasons: d.gwReasons,
+  });
+}
+
+/** handleStreaming 入参：请求侧扫描结果 + 已注入的转发体 + 上游响应体流。 */
+interface StreamParams {
   readonly core: GatewayCore;
   readonly body: ReadableStream<Uint8Array> | null;
   readonly requested: string | null;
@@ -483,135 +534,173 @@ function handleStreaming(p: {
   readonly forwardedBody: string;
   readonly canaryMeta: CanaryRequestMeta | null;
   readonly gwReasons: readonly string[] | undefined;
-}): ChatOutcome {
-  const { core, body, requested, responseMeta, requestInputs, reqFindings } = p;
-  if (!body) {
-    return {
-      status: 200,
-      body: "",
-      actionTaken: resolveActionTaken([
-        "allowed",
-        ...(p.degraded ? (["degraded_observational"] as const) : []),
-      ]),
-      findings: [...reqFindings],
-      reason: reasonOf(reqFindings, p.gwReasons),
-      forwardedBody: p.forwardedBody, canaryMeta: p.canaryMeta,
-      deliveredChunks: 0,
-      scenario: "3",
-    };
-  }
-  const reader = body.getReader();
-  const decoder = new TextDecoder("utf-8", { fatal: false });
-  // D-07：窗口按 checkerId 分持的 store（含 per-checker 字节账本）；推进/落账在
-  // scanResponseStreamUnit 重组点单点发生，本层不再持有任何单一窗口变量。
-  const windows = createWindowStore();
-  let pending = "";
-  let deliveredChunks = 0;
-  const allFindings: EvidenceFinding[] = [...reqFindings];
-  let terminated = false;
-  // D-11：流式路径的观测类降级累积——任一帧扫描出现观测类 error 即置位；
-  // 收束时（即便无 veto）action_taken 如实降级为 degraded_observational。
-  let degradedSeen = p.degraded;
-  // SL-01/AC-V2a-01：流式 delta.tool_calls arguments 跨帧归并桶（按 tool_call index 累积）。
-  const argsMerger = createToolCallArgsMerger();
-  /** 交付前扫描（含非 SSE 内容）：命中 block → true，调用方改发 veto 终止流。 */
-  function scanDelivered(text: string): boolean {
-    const scan = core.scanResponseStreamChunk(windows, text, requested, responseMeta);
-    argsMerger.feed(scan.parsed); // 帧内 delta 片段进归并桶（归并后统一扫描，不逐 chunk 扫碎片）
-    allFindings.push(...flattenFindings(scan.inputs));
-    const d = decide([...requestInputs, ...scan.inputs]);
-    if (d.degraded) degradedSeen = true;
-    return d.action === "block";
-  }
-  /**
-   * SL-01 归并增量扫描：把归并文本作为**整体**进扫描域（交付当前帧之前），命中则
-   * 当前帧起不交付。归并文本是已消费内容的重投影：findings 收编，但窗口零推进
-   * （advance:false + REPROJECTION_META_KEY 标记；消费计数只认逐帧口径，
-   * 窗口归属/offsets 语义由 D-07/D-08 接管）。
-   */
-  let mergedOverflowReported = false;
-  function scanMergedArgs(): boolean {
-    // AC-V2a-14：归并器在 256 KiB 处封顶；越顶本身就是安全类判定（window_overflow），
-    // 不再重扫已封顶文本，也不得让上游继续喂大（内存/CPU 有界）。
-    // 本函数运行在 sse() 惰性 generator 内：任何 throw 都会冒泡出 for-await，headers
-    // 已发出时无法再收敛为 HTTP 错误，且未处理的 rejection 可能杀 daemon（fail-open）。
-    // 因此注册表缺项也不得抛错——合成 scanner_error 条目并照常 block。
-    if (argsMerger.overflowed) {
-      if (!mergedOverflowReported) {
-        mergedOverflowReported = true;
-        const spec = REGISTRY.find((c) => c.id === "tool-call-shape");
-        allFindings.push({
-          checker: "tool-call-shape",
-          threat: spec?.threat ?? CHECKER_THREAT_BY_ID["tool-call-shape"] ?? "T2a",
-          verdict: "error",
-          rule_id: "window_overflow",
-        });
-      }
-      return true;
+}
+
+/** 流式交付的跨帧可变状态：扫描窗口、归并桶与交付计数同住一处，收束时由 getter 读真值。 */
+interface StreamState {
+  readonly core: GatewayCore;
+  readonly windows: WindowStore;
+  readonly requested: string | null;
+  readonly responseMeta: Record<string, unknown>;
+  readonly requestInputs: readonly PolicyInput[];
+  readonly argsMerger: ReturnType<typeof createToolCallArgsMerger>;
+  readonly allFindings: EvidenceFinding[];
+  pending: string;
+  deliveredChunks: number;
+  terminated: boolean;
+  degradedSeen: boolean;
+  mergedOverflowReported: boolean;
+}
+
+/** 交付前扫描（含非 SSE 内容）：命中 block → true，调用方改发 veto 终止流。 */
+function scanDelivered(st: StreamState, text: string): boolean {
+  const scan = st.core.scanResponseStreamChunk(st.windows, text, st.requested, st.responseMeta);
+  st.argsMerger.feed(scan.parsed); // 帧内 delta 片段进归并桶（归并后统一扫描，不逐 chunk 扫碎片）
+  st.allFindings.push(...flattenFindings(scan.inputs));
+  const d = decide([...st.requestInputs, ...scan.inputs]);
+  if (d.degraded) st.degradedSeen = true;
+  return d.action === "block";
+}
+
+/**
+ * SL-01 归并增量扫描：把归并文本作为**整体**进扫描域（交付当前帧之前），命中则
+ * 当前帧起不交付。归并文本是已消费内容的重投影：findings 收编，但窗口零推进
+ * （advance:false + REPROJECTION_META_KEY 标记；消费计数只认逐帧口径，
+ * 窗口归属/offsets 语义由 D-07/D-08 接管）。
+ *
+ * AC-V2a-14：归并器在 256 KiB 处封顶；越顶本身就是安全类判定（window_overflow），
+ * 不再重扫已封顶文本，也不得让上游继续喂大（内存/CPU 有界）。
+ * 本函数运行在 sse() 惰性 generator 内：任何 throw 都会冒泡出 for-await，headers
+ * 已发出时无法再收敛为 HTTP 错误，且未处理的 rejection 可能杀 daemon（fail-open）。
+ * 因此注册表缺项也不得抛错——合成 scanner_error 条目并照常 block。
+ */
+function scanMergedArgs(st: StreamState): boolean {
+  if (st.argsMerger.overflowed) {
+    if (!st.mergedOverflowReported) {
+      st.mergedOverflowReported = true;
+      const spec = REGISTRY.find((c) => c.id === "tool-call-shape");
+      st.allFindings.push({
+        checker: "tool-call-shape",
+        threat: spec?.threat ?? CHECKER_THREAT_BY_ID["tool-call-shape"] ?? "T2a",
+        verdict: "error",
+        rule_id: "window_overflow",
+      });
     }
-    const merged = argsMerger.mergedText();
-    if (merged === "") return false;
-    const scan = core.scanResponseStreamUnit(windows, buildMergedToolCallScanUnit(merged, responseMeta), { advance: false });
-    allFindings.push(...flattenFindings(scan.inputs));
-    const d = decide([...requestInputs, ...scan.inputs]);
-    if (d.degraded) degradedSeen = true;
-    return d.action === "block";
+    return true;
   }
-  /** 单帧处置：非 `data:` 帧（上游按 body 判模态而回整段 JSON 时即此类）同样先扫描后转发：
-   * transport=stream 由本端判定（`?stream=1` / 头），与上游模态可能不一致，免检直通会让
-   * 该子类的响应侧 checker 全部落空（R2-N1 扫描回归）。 */
-  type FrameStep =
-    | { readonly kind: "veto" }
-    | { readonly kind: "emit"; readonly text: string; readonly delivers: boolean };
-  function stepForFrame(f: SseFrame): FrameStep {
-    if (f.data === undefined) {
-      if (scanDelivered(f.raw)) return { kind: "veto" };
-      return { kind: "emit", text: f.raw + "\n\n", delivers: false };
-    }
-    if (f.data === "[DONE]") return { kind: "emit", text: `data: ${f.data}\n\n`, delivers: false };
-    // SL-01：归并增量扫描在交付当前帧之前——跨帧才完整的载荷此刻已可判定
-    if (scanDelivered(f.data) || scanMergedArgs()) return { kind: "veto" };
-    return { kind: "emit", text: `data: ${f.data}\n\n`, delivers: true };
+  const merged = st.argsMerger.mergedText();
+  if (merged === "") return false;
+  const scan = st.core.scanResponseStreamUnit(st.windows, buildMergedToolCallScanUnit(merged, st.responseMeta), { advance: false });
+  st.allFindings.push(...flattenFindings(scan.inputs));
+  const d = decide([...st.requestInputs, ...scan.inputs]);
+  if (d.degraded) st.degradedSeen = true;
+  return d.action === "block";
+}
+
+type FrameStep =
+  | { readonly kind: "veto" }
+  | { readonly kind: "emit"; readonly text: string; readonly delivers: boolean };
+
+/** 单帧处置：非 `data:` 帧（上游按 body 判模态而回整段 JSON 时即此类）同样先扫描后转发：
+ * transport=stream 由本端判定（`?stream=1` / 头），与上游模态可能不一致，免检直通会让
+ * 该子类的响应侧 checker 全部落空（R2-N1 扫描回归）。 */
+function stepForFrame(st: StreamState, f: SseFrame): FrameStep {
+  if (f.data === undefined) {
+    if (scanDelivered(st, f.raw)) return { kind: "veto" };
+    return { kind: "emit", text: f.raw + "\n\n", delivers: false };
   }
-  /** EOF 残尾（未以空行收束的最后一帧，含"上游返回非 SSE JSON 体"的整段内容）：
-   * 补帧终止符后按帧规则解析出可扫描文本，命中则不发残尾直接 veto。 */
-  function scanPendingTail(): boolean {
-    const tail = parseSseFrames(pending + "\n\n").frames[0];
-    return scanDelivered(tail?.data ?? tail?.raw ?? pending);
-  }
-  async function* sse(): AsyncIterable<string> {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      pending += decoder.decode(value, { stream: true });
-      const { frames, rest } = parseSseFrames(pending);
-      pending = rest;
-      for (const f of frames) {
-        const step = stepForFrame(f);
-        if (step.kind === "veto") {
-          yield encodeVetoEvent(deliveredChunks);
-          terminated = true;
-          return;
-        }
-        yield step.text;
-        if (step.delivers) deliveredChunks += 1;
-      }
-    }
-    if (pending.length > 0) {
-      if (scanPendingTail()) {
-        yield encodeVetoEvent(deliveredChunks);
-        terminated = true;
+  if (f.data === "[DONE]") return { kind: "emit", text: `data: ${f.data}\n\n`, delivers: false };
+  // SL-01：归并增量扫描在交付当前帧之前——跨帧才完整的载荷此刻已可判定
+  if (scanDelivered(st, f.data) || scanMergedArgs(st)) return { kind: "veto" };
+  return { kind: "emit", text: `data: ${f.data}\n\n`, delivers: true };
+}
+
+/** EOF 残尾（未以空行收束的最后一帧，含"上游返回非 SSE JSON 体"的整段内容）：
+ * 补帧终止符后按帧规则解析出可扫描文本，命中则不发残尾直接 veto。 */
+function scanPendingTail(st: StreamState): boolean {
+  const tail = parseSseFrames(st.pending + "\n\n").frames[0];
+  return scanDelivered(st, tail?.data ?? tail?.raw ?? st.pending);
+}
+
+/** 上游响应体的最小读取面（只取 `read()`，避免绑定 DOM/Node 两套 ReadableStream 类型）。 */
+interface ByteReader {
+  read(): Promise<{ readonly done: boolean; readonly value?: Uint8Array | undefined }>;
+}
+
+/** 逐帧 generator：读上游流 → 扫描 → 产出待转发文本；命中则发 veto 事件并终止（置 terminated）。 */
+async function* streamSseFrames(
+  st: StreamState,
+  reader: ByteReader,
+  decoder: TextDecoder,
+): AsyncIterable<string> {
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    st.pending += decoder.decode(value, { stream: true });
+    const { frames, rest } = parseSseFrames(st.pending);
+    st.pending = rest;
+    for (const f of frames) {
+      const step = stepForFrame(st, f);
+      if (step.kind === "veto") {
+        yield encodeVetoEvent(st.deliveredChunks);
+        st.terminated = true;
         return;
       }
-      yield pending;
-    }
-    // SL-01：残尾帧可能补进最后的 arguments 片段——流收束前对归并文本做末次整体扫描
-    if (scanMergedArgs()) {
-      yield encodeVetoEvent(deliveredChunks);
-      terminated = true;
-      return;
+      yield step.text;
+      if (step.delivers) st.deliveredChunks += 1;
     }
   }
+  if (st.pending.length > 0) {
+    if (scanPendingTail(st)) {
+      yield encodeVetoEvent(st.deliveredChunks);
+      st.terminated = true;
+      return;
+    }
+    yield st.pending;
+  }
+  // SL-01：残尾帧可能补进最后的 arguments 片段——流收束前对归并文本做末次整体扫描
+  if (scanMergedArgs(st)) {
+    yield encodeVetoEvent(st.deliveredChunks);
+    st.terminated = true;
+    return;
+  }
+}
+
+/** 上游 200 但无响应体：按"零交付 + 场景 3"收束（reason / 降级仍取请求侧结果）。 */
+function emptyStreamOutcome(p: StreamParams): ChatOutcome {
+  return {
+    status: 200,
+    body: "",
+    actionTaken: resolveActionTaken([
+      "allowed",
+      ...(p.degraded ? (["degraded_observational"] as const) : []),
+    ]),
+    findings: [...p.reqFindings],
+    reason: reasonOf(p.reqFindings, p.gwReasons),
+    forwardedBody: p.forwardedBody, canaryMeta: p.canaryMeta,
+    deliveredChunks: 0,
+    scenario: "3",
+  };
+}
+
+/** 流式交付：逐帧扫描 + veto 截断 + tool_call arguments 归并；上游无 body 时按空交付收束。 */
+function handleStreaming(p: StreamParams): ChatOutcome {
+  const { core, body, requested, responseMeta, requestInputs, reqFindings } = p;
+  if (!body) return emptyStreamOutcome(p);
+  // D-07：窗口按 checkerId 分持的 store（含 per-checker 字节账本）；推进/落账在
+  // scanResponseStreamUnit 重组点单点发生，本层不再持有任何单一窗口变量。
+  const st: StreamState = {
+    core, windows: createWindowStore(), requested, responseMeta, requestInputs,
+    argsMerger: createToolCallArgsMerger(),
+    allFindings: [...reqFindings],
+    pending: "",
+    deliveredChunks: 0,
+    terminated: false,
+    // D-11：流式路径的观测类降级累积——任一帧扫描出现观测类 error 即置位；
+    // 收束时（即便无 veto）action_taken 如实降级为 degraded_observational。
+    degradedSeen: p.degraded,
+    mergedOverflowReported: false,
+  };
   // 用 getter 而不是快照：sse() 是惰性 generator，调用方 server.ts 在 `for await` 完成后才写 evidence；
   // 届时 actionTaken / deliveredChunks / scenario / findings 需要反映终止时的真值（AC-VETO-014-05 场景 4）。
   // D-11：action_taken 经 resolveActionTaken 单值化——顶层档（terminated）> degraded_observational
@@ -620,19 +709,19 @@ function handleStreaming(p: {
   return {
     status: 200,
     body: "",
-    sse: sse(),
+    sse: streamSseFrames(st, body.getReader(), new TextDecoder("utf-8", { fatal: false })),
     forwardedBody: p.forwardedBody, canaryMeta: p.canaryMeta, // 注入产物请求侧定型（流式只改请求体，SL-02 债边界）
     get actionTaken(): ActionTaken {
       return resolveActionTaken([
-        ...(terminated ? (["terminated_after_delivery"] as const) : []),
-        ...(degradedSeen ? (["degraded_observational"] as const) : []),
+        ...(st.terminated ? (["terminated_after_delivery"] as const) : []),
+        ...(st.degradedSeen ? (["degraded_observational"] as const) : []),
         "allowed",
       ]);
     },
-    get findings(): EvidenceFinding[] { return allFindings; },
-    get reason(): string | undefined { return reasonOf(allFindings, p.gwReasons); },
-    get deliveredChunks(): number { return deliveredChunks; },
-    get scenario(): BehaviorScenario { return pickScenario({ side: "response", transport: "stream", deliveredChunks }); },
+    get findings(): EvidenceFinding[] { return st.allFindings; },
+    get reason(): string | undefined { return reasonOf(st.allFindings, p.gwReasons); },
+    get deliveredChunks(): number { return st.deliveredChunks; },
+    get scenario(): BehaviorScenario { return pickScenario({ side: "response", transport: "stream", deliveredChunks: st.deliveredChunks }); },
   };
 }
 

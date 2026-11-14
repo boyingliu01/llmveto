@@ -28,30 +28,42 @@ function isToolCall(obj: unknown): obj is ToolCallShape {
   return typeof o.name === "string" && typeof o.arguments === "string";
 }
 
+function tryParseToolCall(text: string): ToolCallShape | null {
+  try {
+    const obj = JSON.parse(text);
+    return isToolCall(obj) ? obj : null;
+  } catch { return null; }
+}
+
+function parseToolCallsByLine(text: string): ToolCallShape[] {
+  const calls: ToolCallShape[] = [];
+  for (const line of text.split("\n").filter((l) => l.trim())) {
+    const obj = tryParseToolCall(line);
+    if (obj) calls.push(obj);
+  }
+  return calls;
+}
+
+function parseToolCallsByRegex(text: string): ToolCallShape[] {
+  const re = /\{[^{}]*"name"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:\s*"[^"]*"[^{}]*\}/g;
+  const calls: ToolCallShape[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const obj = tryParseToolCall(m[0]);
+    if (obj) calls.push(obj);
+  }
+  return calls;
+}
+
 function extractToolCalls(text: string): ToolCallShape[] {
   // 廉价前置：ToolCallShape 必然同时含 "name" 与 "arguments" 两个键。
   // 流式 arguments 片段（本 checker 逐帧累积的主体）通常一个都没有，跳过
   // JSON.parse + 全文正则，避免 O(n²) 重扫在 G1 12ms/片预算里超时误阻断。
   if (!text.includes('"name"') || !text.includes('"arguments"')) return [];
-  try {
-    const obj = JSON.parse(text);
-    if (isToolCall(obj)) return [obj];
-  } catch {}
-  const calls: ToolCallShape[] = [];
-  for (const line of text.split("\n").filter((l) => l.trim())) {
-    try {
-      const obj = JSON.parse(line);
-      if (isToolCall(obj)) calls.push(obj);
-    } catch {}
-  }
-  if (calls.length === 0) {
-    const re = /\{[^{}]*"name"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:\s*"[^"]*"[^{}]*\}/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(text))) {
-      try { const obj = JSON.parse(m[0]); if (isToolCall(obj)) calls.push(obj); } catch {}
-    }
-  }
-  return calls;
+  const whole = tryParseToolCall(text);
+  if (whole) return [whole];
+  const byLine = parseToolCallsByLine(text);
+  return byLine.length > 0 ? byLine : parseToolCallsByRegex(text);
 }
 
 function makeFinding(rule_id: string): Finding {
@@ -79,25 +91,38 @@ function checkInvalidJson(call: ToolCallShape): Finding | null {
   return null;
 }
 
+function declaredToolsOf(unit: ScanUnit): string[] {
+  return Array.isArray(unit.meta.declared_tools) ? (unit.meta.declared_tools as string[]) : [];
+}
+
+function declaredRequiredOf(unit: ScanUnit): Readonly<Record<string, readonly string[]>> {
+  return unit.meta.declared_required && typeof unit.meta.declared_required === "object"
+    ? (unit.meta.declared_required as Record<string, readonly string[]>)
+    : {};
+}
+
+function checkCall(
+  call: ToolCallShape,
+  declared: readonly string[],
+  reqMap: Readonly<Record<string, readonly string[]>>,
+): Finding[] {
+  const findings: Finding[] = [];
+  if (declared.length) {
+    const f1 = checkUnknownTool(call, declared);
+    if (f1) findings.push(f1);
+    const f2 = checkMissingRequired(call, reqMap);
+    if (f2) findings.push(f2);
+  }
+  const f3 = checkInvalidJson(call);
+  if (f3) findings.push(f3);
+  return findings;
+}
+
 function checkUnit(unit: ScanUnit): CheckerResult {
+  const declared = declaredToolsOf(unit);
+  const reqMap = declaredRequiredOf(unit);
   for (const text of scanTexts(unit)) {
-    const calls = extractToolCalls(text);
-    if (!calls.length) continue;
-    const declared = Array.isArray(unit.meta.declared_tools)
-      ? (unit.meta.declared_tools as string[]) : [];
-    const reqMap = unit.meta.declared_required && typeof unit.meta.declared_required === "object"
-      ? (unit.meta.declared_required as Record<string, readonly string[]>) : {};
-    const findings: Finding[] = [];
-    for (const call of calls) {
-      if (declared.length) {
-        const f1 = checkUnknownTool(call, declared);
-        if (f1) findings.push(f1);
-        const f2 = checkMissingRequired(call, reqMap);
-        if (f2) findings.push(f2);
-      }
-      const f3 = checkInvalidJson(call);
-      if (f3) findings.push(f3);
-    }
+    const findings = extractToolCalls(text).flatMap((call) => checkCall(call, declared, reqMap));
     if (findings.length) return { verdict: "finding", evidence: findings };
   }
   return { verdict: "clean", evidence: [] };

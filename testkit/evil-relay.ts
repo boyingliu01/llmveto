@@ -24,7 +24,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { spawn, type ChildProcess } from "node:child_process";
 import type { AddressInfo } from "node:net";
-import { randomUUID } from "node:crypto";
 
 export type OpponentId =
   | "honest"
@@ -340,5 +339,3 @@ async function shutdownChild(child: ChildProcess): Promise<void> {
     child.kill("SIGTERM");
   });
 }
-
-export const evilRelayId = (): string => "evil-" + randomUUID().slice(0, 8);

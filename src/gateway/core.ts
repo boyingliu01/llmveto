@@ -15,7 +15,7 @@ import {
   createToolCallArgsMerger,
   declaredToolsMeta,
 } from "./scan-unit.ts";
-import { encodeVetoEvent, parseSseFrames, tryParseJson } from "./sse-tee.ts";
+import { encodeVetoEvent, parseSseFrames, tryParseJson, type SseFrame } from "./sse-tee.ts";
 import { decide, pickScenario, pickTopReasonFromErrorFindings, type BehaviorScenario } from "../policy/engine.ts";
 import type { PolicyInput } from "../policy/engine.ts";
 import { resolveActionTaken } from "../policy/mapping.ts";
@@ -23,6 +23,7 @@ import type {
   CheckerResult,
   CheckerSpec,
   Direction,
+  Finding,
   ScanUnit,
   ScanWindow,
   NonStreamChecker,
@@ -183,34 +184,44 @@ export class GatewayCore {
     // D-09 默认接线（AC-V2a-27①）：流式路径每次 checker 调用走 G1 每 chunk 门。
     // advance:false 的归并重投影再扫描（归并文本 = 已消费内容的重放）按"每次调用"
     // 字面同样包裹与裁决（含注入 override）；超时只改写 result，窗口推进语义不变。
-    const defaultBudget = G1_PER_CHUNK;
     const inputs: PolicyInput[] = [];
     const nextWindows = new Map<string, ScanWindow>();
     for (const spec of this.checkersIncludingInjected("response")) {
+      const prev = windows.get(spec.id) ?? initialWindow();
       if (spec.runStream) {
-        const prev = windows.get(spec.id) ?? initialWindow();
         const [result, returned] = runStreamWithBudget(
           spec.runStream,
           prev,
           effectiveUnit,
-          this.budgetFor(spec.id, defaultBudget),
+          this.budgetFor(spec.id, G1_PER_CHUNK),
         );
-        inputs.push({ checkerId: spec.id, safetyClass: spec.safetyClass, threat: spec.threat, result });
-        if (advance) {
-          // 重组点 = 网关唯一推进点；ledger 在场时落账（AC-V2a-26③ 字节账本）随行。
-          nextWindows.set(
-            spec.id,
-            ledger ? ledger.recordChunk(spec.id, returned, unit.text) : recombineWindow(prev, returned, unit.text.length),
-          );
-        } else {
-          nextWindows.set(spec.id, prev); // 重投影零推进：消费计数只认逐帧口径
-        }
+        inputs.push(this.policyInput(spec, result));
+        nextWindows.set(spec.id, advance ? this.advanceWindow(ledger, spec.id, prev, returned, unit.text) : prev);
       } else if (spec.runNonStream) {
-        const r = safeRun(spec.runNonStream as NonStreamChecker, effectiveUnit, this.budgetFor(spec.id, defaultBudget));
-        inputs.push({ checkerId: spec.id, safetyClass: spec.safetyClass, threat: spec.threat, result: r });
+        const result = safeRun(
+          spec.runNonStream as NonStreamChecker,
+          effectiveUnit,
+          this.budgetFor(spec.id, G1_PER_CHUNK),
+        );
+        inputs.push(this.policyInput(spec, result));
       }
     }
     return { inputs, nextWindows };
+  }
+
+  private policyInput(spec: CheckerSpec, result: CheckerResult): PolicyInput {
+    return { checkerId: spec.id, safetyClass: spec.safetyClass, threat: spec.threat, result };
+  }
+
+  /** 重组点 = 网关唯一推进点；ledger 在场时落账（AC-V2a-26③ 字节账本）随行。 */
+  private advanceWindow(
+    ledger: WindowStore | undefined,
+    checkerId: string,
+    prev: ScanWindow,
+    returned: ScanWindow,
+    consumedText: string,
+  ): ScanWindow {
+    return ledger ? ledger.recordChunk(checkerId, returned, consumedText) : recombineWindow(prev, returned, consumedText.length);
   }
 
   /** 响应侧流式扫描：per-chunk → policy；返回 action + evidence。 */
@@ -296,6 +307,98 @@ export interface ChatOutcome {
   readonly canaryMeta: CanaryRequestMeta | null;
 }
 
+/** 请求侧 block 早退：canary 编排尚未执行 ⇒ 无 gateway reason 可携带（恒空）。 */
+function blockedBeforeForward(reqFindings: EvidenceFinding[], degraded: boolean, body: string): ChatOutcome {
+  return {
+    status: 502,
+    body: JSON.stringify({ error: { code: "llmveto:rejected" } }),
+    actionTaken: resolveActionTaken([
+      "blocked_before_forward",
+      ...(degraded ? (["degraded_observational"] as const) : []),
+    ]),
+    findings: reqFindings,
+    reason: reasonOf(reqFindings),
+    forwardedBody: body, canaryMeta: null, // block 前置：编排不进入，链上 sha = 客户端原体
+    deliveredChunks: 0,
+    scenario: "1",
+  };
+}
+
+interface UpstreamFailureParams {
+  readonly upstream: Awaited<ReturnType<typeof fetch>>;
+  readonly degraded: boolean;
+  readonly reqFindings: EvidenceFinding[];
+  readonly gwReasons: readonly string[] | undefined;
+  readonly forwardedBody: string;
+  readonly canaryMeta: CanaryRequestMeta | null;
+  readonly stream: boolean;
+}
+
+function upstreamFailureOutcome(p: UpstreamFailureParams): Promise<ChatOutcome> {
+  return p.upstream.text().then((body) => ({
+    status: p.upstream.status,
+    body,
+    actionTaken: resolveActionTaken([
+      "allowed",
+      ...(p.degraded ? (["degraded_observational"] as const) : []),
+    ]),
+    findings: p.reqFindings,
+    reason: reasonOf(p.reqFindings, p.gwReasons),
+    forwardedBody: p.forwardedBody, canaryMeta: p.canaryMeta,
+    deliveredChunks: 0,
+    scenario: p.stream ? "3" : "2",
+  }));
+}
+
+/** canary meta 随声明面并入全部响应侧扫描单元（SL-08 return-scan 判定面）；判定域外保持 declaredMeta 原样。 */
+function responseMetaFor(canaryMeta: CanaryRequestMeta | null, declaredMeta: Record<string, unknown>): Record<string, unknown> {
+  if (canaryMeta === null) return declaredMeta;
+  return {
+    ...declaredMeta,
+    canary_injected: canaryMeta.canary_injected,
+    ...(canaryMeta.canary_candidates !== undefined ? { canary_candidates: canaryMeta.canary_candidates } : {}),
+  };
+}
+
+interface NonStreamResponseParams {
+  readonly core: GatewayCore;
+  readonly text: string;
+  readonly requestedModel: string | null;
+  readonly responseMeta: Record<string, unknown>;
+  readonly requestInputs: readonly PolicyInput[];
+  readonly reqFindings: EvidenceFinding[];
+  readonly forwardedBody: string;
+  readonly canaryMeta: CanaryRequestMeta | null;
+  readonly gwReasons: readonly string[] | undefined;
+}
+
+function handleNonStreamResponse(p: NonStreamResponseParams): ChatOutcome {
+  const respInputs = p.core.scanResponseNonStream(p.text, p.requestedModel, p.responseMeta);
+  const respDecision = decide([...p.requestInputs, ...respInputs]);
+  const allFindings = [...p.reqFindings, ...flattenFindings(respInputs)];
+  if (respDecision.action === "block") {
+    return {
+      status: 502,
+      body: "",
+      actionTaken: resolveActionTaken([
+        "blocked_before_deliver",
+        ...(respDecision.degraded ? (["degraded_observational"] as const) : []),
+      ]),
+      findings: allFindings,
+      reason: reasonOf(allFindings, p.gwReasons),
+      forwardedBody: p.forwardedBody, canaryMeta: p.canaryMeta,
+      deliveredChunks: 0,
+      scenario: "2",
+    };
+  }
+  const actionTaken = resolveActionTaken([
+    "allowed",
+    ...(respDecision.action === "warn" ? (["warned"] as const) : []),
+    ...(respDecision.degraded ? (["degraded_observational"] as const) : []),
+  ]);
+  return { status: 200, body: p.text, actionTaken, findings: allFindings, reason: reasonOf(allFindings, p.gwReasons), forwardedBody: p.forwardedBody, canaryMeta: p.canaryMeta, deliveredChunks: 1, scenario: "2" };
+}
+
 /**
  * 端到端 handler：接收 req（HTTP），向 upstream 转发 + 扫描 + 落 evidence。
  * 该函数是 gateway 层的"骨架"，测试通过 mock-upstream 集成。
@@ -315,30 +418,13 @@ export async function handleChatCompletions(
   const reqFindings = flattenFindings(reqScan.inputs);
 
   if (reqDecision.action === "block") {
-    return {
-      status: 502,
-      body: JSON.stringify({ error: { code: "llmveto:rejected" } }),
-      actionTaken: resolveActionTaken([
-        "blocked_before_forward",
-        ...(reqDecision.degraded ? (["degraded_observational"] as const) : []),
-      ]),
-      findings: reqFindings,
-      // 请求侧 block 早退：canary 编排尚未执行 ⇒ 无 gateway reason 可携带（恒空）。
-      reason: reasonOf(reqFindings),
-      forwardedBody: req.body, canaryMeta: null, // block 前置：编排不进入，链上 sha = 客户端原体
-      deliveredChunks: 0,
-      scenario: "1",
-    };
+    return blockedBeforeForward(reqFindings, reqDecision.degraded, req.body);
   }
   // canary 注入编排（D-04）：先于 fetch，注入后体作为转发体；请求侧扫描仍以客户端原体为准。
   const canaryStep = orchestrateCanary(core, req);
   const gwReasons = canaryStep.gatewayReason !== undefined ? [canaryStep.gatewayReason] : undefined;
   // canary meta 随声明面并入全部响应侧扫描单元（SL-08 return-scan 判定面）；判定域外保持 declaredMeta 原样。
-  const responseMeta: Record<string, unknown> = canaryStep.meta === null ? declaredMeta : {
-    ...declaredMeta,
-    canary_injected: canaryStep.meta.canary_injected,
-    ...(canaryStep.meta.canary_candidates !== undefined ? { canary_candidates: canaryStep.meta.canary_candidates } : {}),
-  };
+  const responseMeta = responseMetaFor(canaryStep.meta, declaredMeta);
   // 转发到 upstream（体 = 注入编排产出：受管路径为注入后体，其余为原体）
   const upstream = await fetch(req.upstreamUrl, {
     method: "POST",
@@ -346,46 +432,28 @@ export async function handleChatCompletions(
     body: canaryStep.forwardedBody,
   });
   if (!upstream.ok) {
-    return {
-      status: upstream.status,
-      body: await upstream.text(),
-      actionTaken: resolveActionTaken([
-        "allowed",
-        ...(reqDecision.degraded ? (["degraded_observational"] as const) : []),
-      ]),
-      findings: reqFindings,
-      reason: reasonOf(reqFindings, gwReasons),
-      forwardedBody: canaryStep.forwardedBody, canaryMeta: canaryStep.meta,
-      deliveredChunks: 0,
-      scenario: transport === "stream" ? "3" : "2",
-    };
+    return upstreamFailureOutcome({
+      upstream,
+      degraded: reqDecision.degraded,
+      reqFindings,
+      gwReasons,
+      forwardedBody: canaryStep.forwardedBody,
+      canaryMeta: canaryStep.meta,
+      stream,
+    });
   }
   if (!stream) {
-    const text = await upstream.text();
-    const respInputs = core.scanResponseNonStream(text, (reqScan.scanUnit.meta.model_requested as string | undefined) ?? null, responseMeta);
-    const respDecision = decide([...reqScan.inputs, ...respInputs]);
-    const allFindings = [...reqFindings, ...flattenFindings(respInputs)];
-    if (respDecision.action === "block") {
-      return {
-        status: 502,
-        body: "",
-        actionTaken: resolveActionTaken([
-          "blocked_before_deliver",
-          ...(respDecision.degraded ? (["degraded_observational"] as const) : []),
-        ]),
-        findings: allFindings,
-        reason: reasonOf(allFindings, gwReasons),
-        forwardedBody: canaryStep.forwardedBody, canaryMeta: canaryStep.meta,
-        deliveredChunks: 0,
-        scenario: "2",
-      };
-    }
-    const actionTaken = resolveActionTaken([
-      "allowed",
-      ...(respDecision.action === "warn" ? (["warned"] as const) : []),
-      ...(respDecision.degraded ? (["degraded_observational"] as const) : []),
-    ]);
-    return { status: 200, body: text, actionTaken, findings: allFindings, reason: reasonOf(allFindings, gwReasons), forwardedBody: canaryStep.forwardedBody, canaryMeta: canaryStep.meta, deliveredChunks: 1, scenario: "2" };
+    return handleNonStreamResponse({
+      core,
+      text: await upstream.text(),
+      requestedModel: (reqScan.scanUnit.meta.model_requested as string | undefined) ?? null,
+      responseMeta,
+      requestInputs: reqScan.inputs,
+      reqFindings,
+      forwardedBody: canaryStep.forwardedBody,
+      canaryMeta: canaryStep.meta,
+      gwReasons,
+    });
   }
   // 流式：tee（逐帧交付逻辑独立成 handleStreaming，主 handler 只保留分支骨架）
   const requested = (reqScan.scanUnit.meta.model_requested as string | undefined) ?? null;
@@ -489,6 +557,28 @@ function handleStreaming(p: {
     if (d.degraded) degradedSeen = true;
     return d.action === "block";
   }
+  /** 单帧处置：非 `data:` 帧（上游按 body 判模态而回整段 JSON 时即此类）同样先扫描后转发：
+   * transport=stream 由本端判定（`?stream=1` / 头），与上游模态可能不一致，免检直通会让
+   * 该子类的响应侧 checker 全部落空（R2-N1 扫描回归）。 */
+  type FrameStep =
+    | { readonly kind: "veto" }
+    | { readonly kind: "emit"; readonly text: string; readonly delivers: boolean };
+  function stepForFrame(f: SseFrame): FrameStep {
+    if (f.data === undefined) {
+      if (scanDelivered(f.raw)) return { kind: "veto" };
+      return { kind: "emit", text: f.raw + "\n\n", delivers: false };
+    }
+    if (f.data === "[DONE]") return { kind: "emit", text: `data: ${f.data}\n\n`, delivers: false };
+    // SL-01：归并增量扫描在交付当前帧之前——跨帧才完整的载荷此刻已可判定
+    if (scanDelivered(f.data) || scanMergedArgs()) return { kind: "veto" };
+    return { kind: "emit", text: `data: ${f.data}\n\n`, delivers: true };
+  }
+  /** EOF 残尾（未以空行收束的最后一帧，含"上游返回非 SSE JSON 体"的整段内容）：
+   * 补帧终止符后按帧规则解析出可扫描文本，命中则不发残尾直接 veto。 */
+  function scanPendingTail(): boolean {
+    const tail = parseSseFrames(pending + "\n\n").frames[0];
+    return scanDelivered(tail?.data ?? tail?.raw ?? pending);
+  }
   async function* sse(): AsyncIterable<string> {
     while (true) {
       const { value, done } = await reader.read();
@@ -497,35 +587,18 @@ function handleStreaming(p: {
       const { frames, rest } = parseSseFrames(pending);
       pending = rest;
       for (const f of frames) {
-        // 非 `data:` 帧（上游按 body 判模态而回整段 JSON 时即此类）同样先扫描后转发：
-        // transport=stream 由本端判定（`?stream=1` / 头），与上游模态可能不一致，
-        // 免检直通会让该子类的响应侧 checker 全部落空（R2-N1 扫描回归）。
-        if (f.data === undefined) {
-          if (scanDelivered(f.raw)) { yield encodeVetoEvent(deliveredChunks); terminated = true; return; }
-          yield f.raw + "\n\n";
-          continue;
-        }
-        if (f.data === "[DONE]") { yield `data: ${f.data}\n\n`; continue; }
-        if (scanDelivered(f.data)) {
+        const step = stepForFrame(f);
+        if (step.kind === "veto") {
           yield encodeVetoEvent(deliveredChunks);
           terminated = true;
           return;
         }
-        // SL-01：归并增量扫描在交付当前帧之前——跨帧才完整的载荷此刻已可判定
-        if (scanMergedArgs()) {
-          yield encodeVetoEvent(deliveredChunks);
-          terminated = true;
-          return;
-        }
-        yield `data: ${f.data}\n\n`;
-        deliveredChunks += 1;
+        yield step.text;
+        if (step.delivers) deliveredChunks += 1;
       }
     }
-    // EOF 残尾（未以空行收束的最后一帧，含"上游返回非 SSE JSON 体"的整段内容）：
-    // 补帧终止符后按帧规则解析出可扫描文本，命中则不发残尾直接 veto。
     if (pending.length > 0) {
-      const tail = parseSseFrames(pending + "\n\n").frames[0];
-      if (scanDelivered(tail?.data ?? tail?.raw ?? pending)) {
+      if (scanPendingTail()) {
         yield encodeVetoEvent(deliveredChunks);
         terminated = true;
         return;
@@ -563,35 +636,40 @@ function handleStreaming(p: {
   };
 }
 
+/** D-10 第二层：verdict=error 的输入本身落一条 error 条目（rule_id 承载成因）。
+ * threat 从 CheckerSpec.threat 经 PolicyInput 下传——单一声明，缺登记即显式失败；
+ * 缺 reason 归一为 scanner_error，保证 reasonOf 不会静默丢条目（§4.5）。 */
+function errorFindingOf(input: PolicyInput): EvidenceFinding | null {
+  if (input.result.verdict !== "error") return null;
+  const threat = input.threat ?? CHECKER_THREAT_BY_ID[input.checkerId];
+  if (threat === undefined) {
+    throw new Error(`D-10: checker '${input.checkerId}' has no threat mapping (registration defect)`);
+  }
+  return {
+    checker: input.checkerId,
+    threat,
+    verdict: "error",
+    rule_id: input.result.reason ?? "scanner_error",
+  };
+}
+
+function toEvidenceFinding(f: Finding): EvidenceFinding {
+  return {
+    checker: f.checker,
+    threat: f.threat,
+    verdict: f.verdict,
+    ...(f.severity !== undefined ? { severity: f.severity } : {}),
+    ...(f.offsets !== undefined ? { offsets: f.offsets } : {}),
+    ...(f.rule_id !== undefined ? { rule_id: f.rule_id } : {}),
+  };
+}
+
 function flattenFindings(inputs: readonly PolicyInput[]): EvidenceFinding[] {
   const out: EvidenceFinding[] = [];
   for (const i of inputs) {
-    // D-10 第二层：verdict=error 的输入本身落一条 error 条目（rule_id 承载成因）。
-    // threat 从 CheckerSpec.threat 经 PolicyInput 下传——单一声明，缺登记即显式失败；
-    // 缺 reason 归一为 scanner_error，保证 reasonOf 不会静默丢条目（§4.5）。
-    if (i.result.verdict === "error") {
-      const threat = i.threat ?? CHECKER_THREAT_BY_ID[i.checkerId];
-      if (threat === undefined) {
-        throw new Error(`D-10: checker '${i.checkerId}' has no threat mapping (registration defect)`);
-      }
-      out.push({
-        checker: i.checkerId,
-        threat,
-        verdict: "error",
-        rule_id: i.result.reason ?? "scanner_error",
-      });
-    }
-    for (const f of i.result.evidence) {
-      const finding: EvidenceFinding = {
-        checker: f.checker,
-        threat: f.threat,
-        verdict: f.verdict,
-        ...(f.severity !== undefined ? { severity: f.severity } : {}),
-        ...(f.offsets !== undefined ? { offsets: f.offsets } : {}),
-        ...(f.rule_id !== undefined ? { rule_id: f.rule_id } : {}),
-      };
-      out.push(finding);
-    }
+    const errorFinding = errorFindingOf(i);
+    if (errorFinding !== null) out.push(errorFinding);
+    for (const f of i.result.evidence) out.push(toEvidenceFinding(f));
   }
   return out;
 }

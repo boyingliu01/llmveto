@@ -1,5 +1,5 @@
 import type { Action, CheckerResult } from "../shared/types.ts";
-import { mapBySpec, V1_MAPPING } from "./mapping.ts";
+import { mapBySpec } from "./mapping.ts";
 
 /**
  * @test REQ-VETO-006
@@ -62,17 +62,6 @@ export function pickScenario(params: {
   if (params.side === "request") return "1";
   if (params.transport === "non-stream") return "2";
   return params.deliveredChunks === 0 ? "3" : "4";
-}
-
-/** 断言 v1 映射表内不出现 redact（AC-VETO-006-03）。 */
-export function assertNoRedactInV1Table(): void {
-  for (const [id, m] of Object.entries(V1_MAPPING)) {
-    for (const [verdict, action] of Object.entries(m)) {
-      if (action === "redact") {
-        throw new Error(`AC-VETO-006-03 violation: ${id}.${verdict} = redact is not reachable in v1`);
-      }
-    }
-  }
 }
 
 // ── D-10（SL-03/REQ-V2a-13）：顶层 reason 单值选择 ───────────────────────────

@@ -21,3 +21,12 @@ ignore:
 - 'bench/**'
 # var/*.ts 是刻意 git 跟踪的 G-CANARY 录制工具（.gitignore !var/*.ts），独立脚本、不参与网关分层架构
 - 'var/**'
+# testkit/ 是测试替身（evil relay 等），唯一消费者是 *.test.ts（同样被上面规则忽略 → dead symbol 误报）
+- 'testkit/**'
+# scripts/*.mjs 是 package.json scripts 的入口（npm 调用），静态分析看不到这条调用边
+overrides:
+- files:
+  - '**/scripts/**'
+  rules:
+    dead_code:
+      enabled: false

@@ -1,6 +1,7 @@
 // @no-test-required: 测试在 tests/unit/evidence/aggregate.test.ts（Gate 5a 仅识别同目录/根 tests/ 六种路径）
 import { existsSync, readFileSync } from "node:fs";
 import type { EvidenceRecord } from "./schema.ts";
+import type { ActionTaken } from "../shared/types.ts";
 
 /**
  * @test REQ-V2a-06
@@ -29,22 +30,44 @@ export type AggregateResult =
 
 const ZERO: AggregateCounts = Object.freeze({ total: 0, allowed: 0, blocked: 0, warned: 0, terminated: 0, degraded: 0 });
 
+interface MutableCounts {
+  allowed: number;
+  blocked: number;
+  warned: number;
+  terminated: number;
+  degraded: number;
+}
+
+/** action_taken → 桶。五桶与 ActionTaken 一一对应，degraded 独占自身桶。 */
+const ACTION_BUCKETS: Readonly<Record<ActionTaken, keyof MutableCounts>> = {
+  allowed: "allowed",
+  blocked_before_forward: "blocked",
+  blocked_before_deliver: "blocked",
+  warned: "warned",
+  terminated_after_delivery: "terminated",
+  degraded_observational: "degraded",
+};
+
+function countAction(action: ActionTaken, counts: MutableCounts): void {
+  const bucket = ACTION_BUCKETS[action];
+  if (bucket !== undefined) counts[bucket]++;
+}
+
+function parseRecord(line: string): EvidenceRecord | null {
+  try { return JSON.parse(line) as EvidenceRecord; } catch { return null; }
+}
+
 export function aggregateEvidence(path: string): AggregateResult {
   if (!existsSync(path)) return { status: "degraded", reason: "no_file" };
   let raw: string;
   try { raw = readFileSync(path, "utf8"); } catch { return { status: "degraded", reason: "parse_error" }; }
   const lines = raw.split("\n").filter((l) => l.length > 0);
   if (lines.length === 0) return { status: "ok", counts: ZERO };
-  let allowed = 0, blocked = 0, warned = 0, terminated = 0, degraded = 0;
+  const counts: MutableCounts = { allowed: 0, blocked: 0, warned: 0, terminated: 0, degraded: 0 };
   for (const line of lines) {
-    let rec: EvidenceRecord;
-    try { rec = JSON.parse(line) as EvidenceRecord; } catch { return { status: "degraded", reason: "parse_error" }; }
-    const a = rec.action_taken;
-    if (a === "allowed") allowed++;
-    else if (a === "blocked_before_forward" || a === "blocked_before_deliver") blocked++;
-    else if (a === "warned") warned++;
-    else if (a === "terminated_after_delivery") terminated++;
-    if (a === "degraded_observational") degraded++;
+    const rec = parseRecord(line);
+    if (rec === null) return { status: "degraded", reason: "parse_error" };
+    countAction(rec.action_taken, counts);
   }
-  return { status: "ok", counts: { total: lines.length, allowed, blocked, warned, terminated, degraded } };
+  return { status: "ok", counts: { total: lines.length, ...counts } };
 }

@@ -25,6 +25,40 @@ export type VerifyResult =
   | { ok: false; kind: "schema_violation"; seq: number; errors: readonly string[] }
   | { ok: false; kind: "chain_broken"; first_bad_seq: number; reason: string };
 
+type LineVerdict =
+  | { readonly ok: true; readonly record: EvidenceRecord }
+  | { readonly ok: false; readonly result: VerifyResult };
+
+/** 单行全量校验：解析 → 版本 → schema → 位置一致 → 链式重算。 */
+function verifyLineAt(line: string, index: number, prev: EvidenceRecord | null): LineVerdict {
+  let parsed: EvidenceRecord;
+  try {
+    parsed = JSON.parse(line) as EvidenceRecord;
+  } catch {
+    // 末行残半：verify 视为文件被截断 → chain_broken
+    return { ok: false, result: { ok: false, kind: "chain_broken", first_bad_seq: prev ? prev.seq + 1 : 0, reason: "truncated_line" } };
+  }
+  // AC-VETO-010-04 evidence_version 优先断言
+  const version = (parsed as { evidence_version?: unknown }).evidence_version;
+  if (version !== 1) {
+    return { ok: false, result: { ok: false, kind: "unsupported_version", evidence_version: version } };
+  }
+  const sv = validateEvidence(parsed);
+  if (!sv.ok) {
+    return { ok: false, result: { ok: false, kind: "schema_violation", seq: parsed.seq ?? -1, errors: sv.errors } };
+  }
+  // 位置一致性：writer 以 0 起步、每条 +1 单调写 seq，故合法链恒有 seq === 行号(0-based)。
+  // 它拦的是"记录被重新编号"（改大/改小）与中段错位；**拦不住尾部截断**（前缀本身合法，见文件头边界）。
+  if (parsed.seq !== index) {
+    return { ok: false, result: { ok: false, kind: "chain_broken", first_bad_seq: index, reason: "seq_position_mismatch" } };
+  }
+  const cr = verifyRecord(parsed, prev);
+  if (!cr.ok) {
+    return { ok: false, result: { ok: false, kind: "chain_broken", first_bad_seq: parsed.seq, reason: cr.reason ?? "unknown" } };
+  }
+  return { ok: true, record: parsed };
+}
+
 export function verifyEvidenceFile(path: string): VerifyResult {
   if (!existsSync(path)) {
     return { ok: false, kind: "no_file", message: `evidence file not found: ${path}` };
@@ -38,32 +72,9 @@ export function verifyEvidenceFile(path: string): VerifyResult {
   }
   let prev: EvidenceRecord | null = null;
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    let parsed: EvidenceRecord;
-    try {
-      parsed = JSON.parse(line) as EvidenceRecord;
-    } catch {
-      // 末行残半：verify 视为文件被截断 → chain_broken
-      return { ok: false, kind: "chain_broken", first_bad_seq: prev ? prev.seq + 1 : 0, reason: "truncated_line" };
-    }
-    // AC-VETO-010-04 evidence_version 优先断言
-    if ((parsed as { evidence_version?: unknown }).evidence_version !== 1) {
-      return { ok: false, kind: "unsupported_version", evidence_version: (parsed as { evidence_version?: unknown }).evidence_version };
-    }
-    const sv = validateEvidence(parsed);
-    if (!sv.ok) {
-      return { ok: false, kind: "schema_violation", seq: parsed.seq ?? -1, errors: sv.errors };
-    }
-    // 位置一致性：writer 以 0 起步、每条 +1 单调写 seq，故合法链恒有 seq === 行号(0-based)。
-    // 它拦的是"记录被重新编号"（改大/改小）与中段错位；**拦不住尾部截断**（前缀本身合法，见文件头边界）。
-    if (parsed.seq !== i) {
-      return { ok: false, kind: "chain_broken", first_bad_seq: i, reason: "seq_position_mismatch" };
-    }
-    const cr = verifyRecord(parsed, prev);
-    if (!cr.ok) {
-      return { ok: false, kind: "chain_broken", first_bad_seq: parsed.seq, reason: cr.reason ?? "unknown" };
-    }
-    prev = parsed;
+    const verdict = verifyLineAt(lines[i]!, i, prev);
+    if (!verdict.ok) return verdict.result;
+    prev = verdict.record;
   }
   return { ok: true, records: lines.length };
 }

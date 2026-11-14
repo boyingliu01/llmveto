@@ -40,9 +40,30 @@ export const sentinelPathFor = (registryPath: string): string => join(dirname(re
  *  rotate 恒先于删除（删除失败不回滚已确认的轮换）。registry 不可用时既不轮换也不删除：
  *  persist() 会用空内存态覆盖损坏文件、销毁取证现场（§4.3 要求损坏必须显式暴露），
  *  标记保留到人工修复 registry 后的下一次启动重放。 */
+function sentinelSize(sentinelPath: string): number | null {
+  try { return statSync(sentinelPath).size; } catch { return null; } // 无文件：启动序无离线待办
+}
+
+/** 序内删除（初次 + 重试 3 次）；耗尽时留痕一次，返回是否删成功。 */
+function deleteSentinel(io: SentinelIo, sentinelPath: string): boolean {
+  for (let attempt = 1; attempt <= SENTINEL_UNLINK_ATTEMPTS; attempt += 1) {
+    try { io.unlink(sentinelPath); return true; }
+    catch (err) {
+      if (attempt === SENTINEL_UNLINK_ATTEMPTS) {
+        io.log(`[llmveto] canary rotate sentinel delete failed after ${SENTINEL_UNLINK_ATTEMPTS} attempts: ${sentinelPath} (${err instanceof Error ? err.message : String(err)})\n`);
+      }
+    }
+  }
+  return false;
+}
+
+/** 启动序哨兵消费：零字节 → rotate + 删除；非零 → 忽略不轮换 + 删除；缺失 → 不动。
+ *  rotate 恒先于删除（删除失败不回滚已确认的轮换）。registry 不可用时既不轮换也不删除：
+ *  persist() 会用空内存态覆盖损坏文件、销毁取证现场（§4.3 要求损坏必须显式暴露），
+ *  标记保留到人工修复 registry 后的下一次启动重放。 */
 export function consumeRotateSentinel(store: CanaryStore, sentinelPath: string, io: SentinelIo = SENTINEL_STD_IO): CanarySentinelOutcome {
-  let size: number;
-  try { size = statSync(sentinelPath).size; } catch { return "absent"; } // 无文件：启动序无离线待办
+  const size = sentinelSize(sentinelPath);
+  if (size === null) return "absent";
   const zero = size === 0;
   if (zero) {
     if (store.loadStatus.status !== "ok") {
@@ -50,16 +71,10 @@ export function consumeRotateSentinel(store: CanaryStore, sentinelPath: string, 
       return "skipped_registry_unavailable";
     }
     store.rotate(); // 幂等：重放安全（rotation_count 只增）
+  } else {
+    io.log(`[llmveto] canary rotate sentinel ignored: ${sentinelPath} is corrupt (expected zero-byte marker, got ${size} bytes)\n`);
   }
-  else io.log(`[llmveto] canary rotate sentinel ignored: ${sentinelPath} is corrupt (expected zero-byte marker, got ${size} bytes)\n`);
-  for (let attempt = 1; attempt <= SENTINEL_UNLINK_ATTEMPTS; attempt += 1) {
-    try { io.unlink(sentinelPath); return zero ? "rotated" : "corrupt_ignored"; }
-    catch (err) {
-      if (attempt === SENTINEL_UNLINK_ATTEMPTS) {
-        io.log(`[llmveto] canary rotate sentinel delete failed after ${SENTINEL_UNLINK_ATTEMPTS} attempts: ${sentinelPath} (${err instanceof Error ? err.message : String(err)})\n`);
-      }
-    }
-  }
+  if (deleteSentinel(io, sentinelPath)) return zero ? "rotated" : "corrupt_ignored";
   return zero ? "rotated_delete_failed" : "corrupt_delete_failed"; // 重试耗尽：放弃（哨兵留存，下次启动重放）
 }
 

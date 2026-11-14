@@ -10,23 +10,24 @@ export interface SseFrame {
   readonly data?: string;
 }
 
+/** 单帧字段解析：`event:` 取末次，`data:` 多行以 `\n` 拼接（SSE 规范）。 */
+function toFrame(raw: string): SseFrame {
+  let event: string | undefined;
+  let data: string | undefined;
+  for (const line of raw.split("\n")) {
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    else if (line.startsWith("data:")) data = (data ? data + "\n" : "") + line.slice(5).trimStart();
+  }
+  return { raw, ...(event !== undefined ? { event } : {}), ...(data !== undefined ? { data } : {}) };
+}
+
 /** 从字节流中拆 SSE 帧；返回剩余未解析缓冲。 */
 export function parseSseFrames(buf: string): { frames: SseFrame[]; rest: string } {
   const frames: SseFrame[] = [];
   let rest = buf;
-  while (true) {
-    const idx = rest.indexOf("\n\n");
-    if (idx < 0) break;
-    const raw = rest.slice(0, idx);
+  for (let idx = rest.indexOf("\n\n"); idx >= 0; idx = rest.indexOf("\n\n")) {
+    frames.push(toFrame(rest.slice(0, idx)));
     rest = rest.slice(idx + 2);
-    let event: string | undefined;
-    let data: string | undefined;
-    for (const line of raw.split("\n")) {
-      if (line.startsWith("event:")) event = line.slice(6).trim();
-      else if (line.startsWith("data:")) data = (data ? data + "\n" : "") + line.slice(5).trimStart();
-    }
-    const ev: SseFrame = { raw, ...(event !== undefined ? { event } : {}), ...(data !== undefined ? { data } : {}) };
-    frames.push(ev);
   }
   return { frames, rest };
 }

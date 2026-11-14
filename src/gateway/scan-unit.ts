@@ -1,5 +1,5 @@
 import type { ScanUnit, Transport } from "../shared/types.ts";
-import { STREAM_WINDOW_OVERFLOW_LIMIT } from "../shared/types.ts";
+import { exceedsWindowOverflowLimit } from "./window-store.ts";
 
 /**
  * @test REQ-VETO-002
@@ -118,6 +118,26 @@ function collectMessageParts(m: unknown, out: string[]): void {
   if (mm.function_call) collectToolCallParts(mm.function_call, out);
 }
 
+/** 单个 delta/message 盒子的文本投影 + 工具调用载荷回填（content/工具调用/reasoning 三源）。 */
+function collectChoiceBox(box: unknown, out: string[], meta: Record<string, unknown>): void {
+  if (!box || typeof box !== "object") return;
+  const b = box as Record<string, unknown>;
+  pushContentParts(b.content, out);
+  // 工具调用载荷（T2a 载体）
+  // has_tool_call_payload 让流式 checker 区分“本片是 arguments 片段”与“本片是
+  // content/reasoning 文本”：256KiB 单笔硬顶只约束前者（G-WINDOW §4.2 计量口径），
+  // 否则一段超长正文会被误判 window_overflow 而阻断。
+  if (Array.isArray(b.tool_calls) && b.tool_calls.length > 0) {
+    meta.has_tool_call_payload = true;
+    for (const tc of b.tool_calls) collectToolCallParts(tc, out);
+  }
+  if (b.function_call) {
+    meta.has_tool_call_payload = true;
+    collectToolCallParts(b.function_call, out);
+  }
+  if (typeof b.reasoning_content === "string") out.push(b.reasoning_content);
+}
+
 /** 抽 choices[*] 里 message/delta 的文本 + 工具调用载荷；同时回填结构性 meta。 */
 function collectChoiceParts(parsed: Record<string, unknown>, out: string[]): Record<string, unknown> {
   const meta: Record<string, unknown> = {};
@@ -126,28 +146,48 @@ function collectChoiceParts(parsed: Record<string, unknown>, out: string[]): Rec
   for (const c of choices) {
     if (!c || typeof c !== "object") continue;
     const c0 = c as Record<string, unknown>;
-    for (const key of ["delta", "message"] as const) {
-      const box = c0[key];
-      if (!box || typeof box !== "object") continue;
-      const b = box as Record<string, unknown>;
-      pushContentParts(b.content, out);
-      // 工具调用载荷（T2a 载体）
-      // has_tool_call_payload 让流式 checker 区分“本片是 arguments 片段”与“本片是
-      // content/reasoning 文本”：256KiB 单笔硬顶只约束前者（G-WINDOW §4.2 计量口径），
-      // 否则一段超长正文会被误判 window_overflow 而阻断。
-      if (Array.isArray(b.tool_calls) && b.tool_calls.length > 0) {
-        meta.has_tool_call_payload = true;
-        for (const tc of b.tool_calls) collectToolCallParts(tc, out);
-      }
-      if (b.function_call) {
-        meta.has_tool_call_payload = true;
-        collectToolCallParts(b.function_call, out);
-      }
-      if (typeof b.reasoning_content === "string") out.push(b.reasoning_content);
-    }
+    for (const key of ["delta", "message"] as const) collectChoiceBox(c0[key], out, meta);
     if (typeof c0.finish_reason === "string") meta.finish_reason = c0.finish_reason;
   }
   return meta;
+}
+
+/** 请求侧 extra_headers 投影：认证类头跳过（AC-VETO-002-06）。 */
+function collectExtraHeaderParts(parsed: Record<string, unknown>, parts: string[]): void {
+  const extra = parsed.extra_headers;
+  if (!extra || typeof extra !== "object") return;
+  for (const [k, v] of Object.entries(extra as Record<string, unknown>)) {
+    if (isAuthHeader(k)) continue; // AC-VETO-002-06
+    parts.push(`${k}: ${String(v)}`);
+  }
+}
+
+/**
+ * D-12（SL-01/REQ-V2a-01）：声明面进请求 meta，经 core 下传给响应侧扫描单元
+ * （非流式 / 流式逐帧 / 归并单元三处同参）—— SL-09 tool-call-shape 的
+ * "未知工具名 / 缺 required" 判定源；declared_tools 为空时两子规则不适用
+ * （无声明即漏检，#C 登记）。
+ */
+function collectDeclaredMeta(tools: readonly unknown[], meta: Record<string, unknown>): void {
+  const declared = extractDeclaredTools(tools);
+  if (declared.declared_tools.length > 0) meta.declared_tools = declared.declared_tools;
+  if (Object.keys(declared.declared_required).length > 0) meta.declared_required = declared.declared_required;
+}
+
+/** 请求体文本投影：messages → system → tools(JSON) → 非认证 extra_headers。 */
+function collectRequestBodyParts(parsed: Record<string, unknown>, meta: Record<string, unknown>): string[] {
+  const parts: string[] = [];
+  const msgs = parsed.messages;
+  if (Array.isArray(msgs)) {
+    for (const m of msgs) collectMessageParts(m, parts);
+  }
+  if (typeof parsed.system === "string") parts.push(parsed.system);
+  if (Array.isArray(parsed.tools)) {
+    parts.push(JSON.stringify(parsed.tools));
+    collectDeclaredMeta(parsed.tools, meta);
+  }
+  collectExtraHeaderParts(parsed, parts);
+  return parts;
 }
 
 /** 请求侧：把 body JSON 展平为 text 投影 + meta。 */
@@ -161,33 +201,33 @@ export function buildRequestScanUnit(
   if (parsed && typeof parsed === "object") {
     if (typeof parsed.model === "string") meta.model_requested = parsed.model;
     // messages 展平为 text；extra_headers 里的 auth 头跳过（AC-VETO-002-06）
-    const parts: string[] = [];
-    const msgs = parsed.messages;
-    if (Array.isArray(msgs)) {
-      for (const m of msgs) collectMessageParts(m, parts);
-    }
-    if (typeof parsed.system === "string") parts.push(parsed.system);
-    if (Array.isArray(parsed.tools)) {
-      parts.push(JSON.stringify(parsed.tools));
-      // D-12（SL-01/REQ-V2a-01）：声明面进请求 meta，经 core 下传给响应侧扫描单元
-      // （非流式 / 流式逐帧 / 归并单元三处同参）—— SL-09 tool-call-shape 的
-      // "未知工具名 / 缺 required" 判定源；declared_tools 为空时两子规则不适用
-      // （无声明即漏检，#C 登记）。
-      const declared = extractDeclaredTools(parsed.tools);
-      if (declared.declared_tools.length > 0) meta.declared_tools = declared.declared_tools;
-      if (Object.keys(declared.declared_required).length > 0) meta.declared_required = declared.declared_required;
-    }
-    const extra = parsed.extra_headers;
-    if (extra && typeof extra === "object") {
-      for (const [k, v] of Object.entries(extra as Record<string, unknown>)) {
-        if (isAuthHeader(k)) continue; // AC-VETO-002-06
-        parts.push(`${k}: ${String(v)}`);
-      }
-    }
+    const parts = collectRequestBodyParts(parsed, meta);
     return withDecoded({ direction: "request", transport, text: parts.join("\n"), meta });
   }
   // parsed 失败：原样 text，标记 malformed
   return withDecoded({ direction: "request", transport, text: body, meta, malformed: true });
+}
+
+interface DeclaredTool {
+  readonly name: string;
+  readonly fn: Record<string, unknown> | null;
+}
+
+/** tools[*] 的 name + function 包裹（扁平形态无 function）；无名字则该条不可判定。 */
+function declaredToolOf(t: Record<string, unknown>): DeclaredTool | null {
+  const fn = t.function && typeof t.function === "object" ? (t.function as Record<string, unknown>) : null;
+  const name = fn && typeof fn.name === "string" ? fn.name : typeof t.name === "string" ? t.name : null;
+  return name === null ? null : { name, fn };
+}
+
+/** parameters.required 里的字符串项（未声明 required 的工具返回 null）；扁平形态取工具自身的 parameters。 */
+function requiredFieldsOf(t: Record<string, unknown>, fn: Record<string, unknown> | null): string[] | null {
+  const params = fn ? fn.parameters : t.parameters;
+  if (!params || typeof params !== "object") return null;
+  const reqRaw = (params as Record<string, unknown>).required;
+  if (!Array.isArray(reqRaw)) return null;
+  const req = reqRaw.filter((x): x is string => typeof x === "string");
+  return req.length > 0 ? req : null;
 }
 
 /**
@@ -205,18 +245,11 @@ function extractDeclaredTools(tools: readonly unknown[]): {
   for (const t of tools) {
     if (!t || typeof t !== "object") continue;
     const to = t as Record<string, unknown>;
-    const fn = to.function && typeof to.function === "object" ? (to.function as Record<string, unknown>) : null;
-    const name = fn && typeof fn.name === "string" ? fn.name : typeof to.name === "string" ? to.name : null;
-    if (name === null) continue;
-    names.push(name);
-    const params = fn ? fn.parameters : to.parameters;
-    if (params && typeof params === "object") {
-      const reqRaw = (params as Record<string, unknown>).required;
-      if (Array.isArray(reqRaw)) {
-        const req = reqRaw.filter((x): x is string => typeof x === "string");
-        if (req.length > 0) required[name] = req;
-      }
-    }
+    const tool = declaredToolOf(to);
+    if (tool === null) continue;
+    names.push(tool.name);
+    const req = requiredFieldsOf(to, tool.fn);
+    if (req !== null) required[tool.name] = req;
   }
   return { declared_tools: names, declared_required: required };
 }
@@ -313,6 +346,22 @@ export function createToolCallArgsMerger(): ToolCallArgsMerger {
   };
 }
 
+/** 桶键 = choice 序 + tool_call index（协议字段；缺省退化为帧内数组位）——
+ * 跨帧稳定，保证同一 tool_call 的片段落进同一桶按到达序拼接。 */
+function toolCallBucketKey(ci: number, ti: number, t: Record<string, unknown>): string {
+  return `${ci}:${typeof t.index === "number" ? t.index : ti}`;
+}
+
+/** 单条 tool_call 的 arguments 片段入桶（function 包裹 / 扁平两种形态）。 */
+function feedToolCall(state: MergerState, ci: number, ti: number, t: unknown): void {
+  if (!t || typeof t !== "object") return;
+  const to = t as Record<string, unknown>;
+  const key = toolCallBucketKey(ci, ti, to);
+  const fn = to.function;
+  if (fn && typeof fn === "object") appendFragment(state, key, (fn as Record<string, unknown>).arguments);
+  else if (!fn) appendFragment(state, key, to.arguments); // 扁平形态（无 function 包裹）
+}
+
 /** 吸收单条 choice 的 delta：tool_calls 数组按 index 分桶，旧式 function_call 单独一桶。 */
 function feedChoiceDelta(state: MergerState, ci: number, choice: unknown): void {
   if (!choice || typeof choice !== "object") return;
@@ -320,17 +369,7 @@ function feedChoiceDelta(state: MergerState, ci: number, choice: unknown): void 
   if (!delta || typeof delta !== "object") return;
   const d = delta as Record<string, unknown>;
   if (Array.isArray(d.tool_calls)) {
-    for (let ti = 0; ti < d.tool_calls.length; ti++) {
-      const t = d.tool_calls[ti];
-      if (!t || typeof t !== "object") continue;
-      const to = t as Record<string, unknown>;
-      // 键 = choice 序 + tool_call index（协议字段；缺省退化为帧内数组位）——
-      // 跨帧稳定，保证同一 tool_call 的片段落进同一桶按到达序拼接。
-      const key = `${ci}:${typeof to.index === "number" ? to.index : ti}`;
-      const fn = to.function;
-      if (fn && typeof fn === "object") appendFragment(state, key, (fn as Record<string, unknown>).arguments);
-      else if (!fn) appendFragment(state, key, to.arguments); // 扁平形态（无 function 包裹）
-    }
+    for (let ti = 0; ti < d.tool_calls.length; ti++) feedToolCall(state, ci, ti, d.tool_calls[ti]);
   }
   if (d.function_call && typeof d.function_call === "object") {
     appendFragment(state, `${ci}:fc`, (d.function_call as Record<string, unknown>).arguments);
@@ -342,7 +381,7 @@ function feedChoiceDelta(state: MergerState, ci: number, choice: unknown): void 
 function appendFragment(state: MergerState, key: string, args: unknown): void {
   if (typeof args !== "string" || args.length === 0 || state.overflowed) return;
   const add = Buffer.byteLength(args, "utf8");
-  if (state.bytes + add > STREAM_WINDOW_OVERFLOW_LIMIT) {
+  if (exceedsWindowOverflowLimit(state.bytes, add)) {
     state.overflowed = true;
     return;
   }

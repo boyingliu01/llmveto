@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  assertNoRedactInV1Table,
   decide,
   pickScenario,
   type PolicyInput,
@@ -32,8 +31,6 @@ describe("SL-05 policy engine (REQ-VETO-006)", () => {
   });
 
   it("AC-03 表内不出现 redact", () => {
-    expect(() => assertNoRedactInV1Table()).not.toThrow();
-    // 显式断言
     for (const m of Object.values(V1_MAPPING)) {
       expect(Object.values(m)).not.toContain("redact");
     }

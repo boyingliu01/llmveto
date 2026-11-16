@@ -44,15 +44,24 @@ export async function startMockUpstream(spec: MockUpstreamSpec): Promise<MockUps
   };
 }
 
-async function handle(req: IncomingMessage, res: ServerResponse, spec: MockUpstreamSpec, sink: MockUpstream["requests"]): Promise<void> {
+/** 读请求体 + 归一化头（多值取首）：handle 只保留响应形态编排。 */
+async function readRequest(req: IncomingMessage): Promise<{ body: string; headers: Record<string, string> }> {
   const chunks: Buffer[] = [];
   for await (const c of req) chunks.push(c as Buffer);
-  const body = Buffer.concat(chunks).toString("utf8");
-  const headers: Record<string, string> = {};
-  for (const [k, v] of Object.entries(req.headers)) {
-    if (typeof v === "string") headers[k] = v;
-    else if (Array.isArray(v)) headers[k] = v[0] ?? "";
+  return { body: Buffer.concat(chunks).toString("utf8"), headers: headersOf(req.headers) };
+}
+
+function headersOf(raw: IncomingMessage["headers"]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (typeof v === "string") out[k] = v;
+    else if (Array.isArray(v)) out[k] = v[0] ?? "";
   }
+  return out;
+}
+
+async function handle(req: IncomingMessage, res: ServerResponse, spec: MockUpstreamSpec, sink: MockUpstream["requests"]): Promise<void> {
+  const { body, headers } = await readRequest(req);
   (sink as { method: string; url: string; body: string; headers: Record<string, string> }[]).push({ method: req.method ?? "GET", url: req.url ?? "", body, headers });
 
   for (const [k, v] of Object.entries(spec.headers ?? {})) res.setHeader(k, v);
@@ -67,27 +76,37 @@ async function handle(req: IncomingMessage, res: ServerResponse, spec: MockUpstr
   const frames = spec.chunks ?? [];
   const boundaries = spec.boundaryChunks;
   if (boundaries && boundaries.length === frames.length) {
-    // 自定义 chunk 边界：按字节切片写
-    for (let i = 0; i < frames.length; i++) {
-      const sseFrame = `data: ${frames[i]}\n\n`;
-      const bytes = Buffer.from(sseFrame, "utf8");
-      const cuts = boundaries[i]!;
-      let prev = 0;
-      for (const cut of [...cuts, bytes.byteLength]) {
-        res.write(bytes.subarray(prev, cut));
-        prev = cut;
-        // 允许测试观察到 chunk 边界的分离
-        await new Promise((r) => setImmediate(r));
-      }
-    }
+    await writeAtBoundaries(res, frames, boundaries);
   } else {
-    for (const f of frames) {
-      res.write(`data: ${f}\n\n`);
-      await new Promise((r) => setImmediate(r));
-    }
+    await writeWholeFrames(res, frames);
   }
   res.write("data: [DONE]\n\n");
   res.end();
+}
+
+/** 自定义 chunk 边界：每个 SSE 帧再按给定字节索引切片写出，供测试观察分片。 */
+async function writeAtBoundaries(
+  res: ServerResponse,
+  frames: readonly string[],
+  boundaries: readonly (readonly number[])[],
+): Promise<void> {
+  for (let i = 0; i < frames.length; i++) {
+    const bytes = Buffer.from(`data: ${frames[i]}\n\n`, "utf8");
+    let prev = 0;
+    for (const cut of [...boundaries[i]!, bytes.byteLength]) {
+      res.write(bytes.subarray(prev, cut));
+      prev = cut;
+      // 允许测试观察到 chunk 边界的分离
+      await new Promise((r) => setImmediate(r));
+    }
+  }
+}
+
+async function writeWholeFrames(res: ServerResponse, frames: readonly string[]): Promise<void> {
+  for (const f of frames) {
+    res.write(`data: ${f}\n\n`);
+    await new Promise((r) => setImmediate(r));
+  }
 }
 
 /** 便捷：把一段文本按 utf-8 字节切成 N 片，返回每片字节起始索引（模拟 chunk 边界）。 */

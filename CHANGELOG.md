@@ -40,6 +40,9 @@ take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
   machine-checked. Converted to the checker's map form (`layer:` + `patterns:`); the checker now
   reports 9 layers / 37 files classified / 0 violations, and the boundary test's YAML parser
   accepts both shapes.
+- **The release workflow now actually authenticates to npm.** `setup-node` was configured without
+  `registry-url`, so `secrets.NPM_TOKEN` never reached npm's credential lookup and the v0.4.0 tag
+  run failed closed with `ENEEDAUTH` before any release was created.
 - Complexity and clean-code debt across `scripts/provider-probe.ts`, `scripts/release-gate.mjs`
   internals and four checkers (`egress-secret-scan`, `invisible-unicode-scan`, `tool-call-shape`,
   `dangerous-command-scan`): assignment-in-condition loops rewritten, long/IO-heavy helpers split

@@ -48,7 +48,7 @@ async function startResettingUpstream(): Promise<{ server: Server; url: string }
  *  若本用例红且 evidence 的 action_taken=blocked_before_forward，说明网关在该环境下完全未消费
  *  上游响应字节——这是真实的 fail-closed 形态而非时序 flaky，按此判读而非重跑（PWR3-A-m1）。 */
 async function startMidStreamResettingUpstream(): Promise<{ server: Server; url: string }> {
-  const server = createServer((req, res) => {
+  const server = createServer((_req, res) => {
     res.writeHead(200, { "content-type": "text/event-stream" });
     const f1 = 'data: {"choices":[{"delta":{"content":"par"}}]}\n\n';
     const f2 = 'data: {"choices":[{"delta":{"content":"tial"}}]}\n\n';

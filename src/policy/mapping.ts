@@ -23,6 +23,7 @@ interface Mapping {
 
 export const V1_MAPPING: Readonly<Record<string, Mapping>> = Object.freeze({
   "canary-return-scan":           Object.freeze({ clean: "allow", finding: "block", error: "block" }), // T1a 安全类
+  "dangerous-command-scan":       Object.freeze({ clean: "allow", finding: "warn",  error: "warn"  }), // T2a 内容侧观测类（文本规则有教程正例误报面）
   "egress-secret-scan":           Object.freeze({ clean: "allow", finding: "block", error: "block" }),
   "invisible-unicode-scan":       Object.freeze({ clean: "allow", finding: "block", error: "block" }),
   "model-label-consistency":      Object.freeze({ clean: "allow", finding: "warn",  error: "warn"  }),

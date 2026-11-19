@@ -24,6 +24,13 @@ per-checker streaming windows with a 256 KiB hard bound · per-checker execution
 optional top-level evidence `reason` while the evidence schema stays **v1**. The canary registry
 lives at `stateDir/canary-registry.json` and is wired automatically by `llmveto start`.
 
+**Post-v2a addendum (2026-11-14)** — `dangerous-command-scan` (response side, `warn`): flags
+download-and-execute primitives in response text and tool-call arguments (`curl … | bash`,
+`wget … | sh`, `sh <(curl …)`, `eval $(curl …)`, `base64 -d | sh`, PowerShell
+`IEX`/`DownloadString`/`-enc`, reverse shells, public raw-IP download URLs). Observational by
+design: install tutorials contain the same strings, so hits are evidence signals (`rule_id` +
+`offsets`), not blocks; private/loopback IPs are excluded.
+
 **Scan-surface statement (after the 2026-09-27 fixes)**: checkers see `messages[*].content` / `system` / `tools` / custom `extra_headers`,
 plus **tool-call payloads** `tool_calls[*].function.arguments` (including legacy `function_call`, on both request and response sides).
 Each scan unit produces two projections — "raw text" and "unescape-restored text" (`\uXXXX` / `\u{…}` / `\xXX`) — and both are scanned, so
@@ -120,7 +127,7 @@ Requirements: **Bun ≥ 1.1** (package management + test/build driver) and **Nod
 | `bun run test` | Full test suite (vitest on Node) |
 | `bun run test:coverage` | Tests + coverage gate (threshold 80%; used by CI and the pre-commit hook) |
 | `bun run typecheck` | `tsc --noEmit` |
-| `bun run lint` | oxlint |
+| `bun run lint` | `biome check .` (lint only; formatter disabled) |
 
 > **Tests run vitest, not `bun test`**: the global xp-gate pre-commit hook always runs
 > `npx vitest run --coverage <changed tests>` for TypeScript projects and requires `coverage/coverage-summary.json`.

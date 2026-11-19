@@ -194,7 +194,7 @@ function collectRequestBodyParts(parsed: Record<string, unknown>, meta: Record<s
 export function buildRequestScanUnit(
   body: string,
   parsed: Record<string, unknown> | null,
-  headers: Readonly<Record<string, string>>,
+  _headers: Readonly<Record<string, string>>,
   transport: Transport,
 ): ScanUnit {
   const meta: Record<string, unknown> = {};

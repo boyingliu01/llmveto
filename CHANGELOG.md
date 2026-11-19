@@ -4,6 +4,41 @@ All notable changes to this project are documented in this file. The format is a
 take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-11-19
+
+### Added
+
+- **`dangerous-command-scan` (T2a content side, observational)** — new response-side checker
+  (REQ-POST-01 / AC-POST-01) that flags download-and-execute primitives in response text and
+  tool-call arguments: `remote-pipe-exec` (`curl … | bash`, `wget … | sh`), `process-substitution-exec`
+  (`sh <(curl …)`, `eval $(curl …)`), `base64-pipe-exec` (`base64 -d | sh`),
+  `powershell-download-exec` (`IEX` / `DownloadString` / `-enc`), `reverse-shell`, and
+  `raw-ip-download` (public raw-IP download URLs; private/loopback addresses excluded). Declared
+  `safetyClass: false`, so findings map to `warn` — the v1 blocking-class FP=0 promise is unchanged.
+  Install tutorials legitimately contain the same strings; hits are evidence signals
+  (`rule_id` + `offsets`), not blocks. Rule list registered in `specification.yaml`.
+- **`dsh/cliproxy` managed route** — the dsh OpenAI-compatible provider surface is now part of the
+  canary injection/detection domain. Routes are declared as
+  `CANARY_MANAGED_ROUTES = adapter-derived set ∪ MANUAL_CANARY_MANAGED_ROUTES`, with an
+  integration assertion pinning that union so adapter drift is still caught.
+- **`scripts/provider-probe.ts`** — dev tool for probing OpenAI-compatible and ACP upstreams
+  (median latency, pass/fail, token drift) against `var/provider-probe.json`.
+
+### Changed
+
+- **Lint moved from oxlint to Biome** (`biome.jsonc`, recommended preset, formatter and assist
+  disabled; only `noNonNullAssertion`, `useTemplate` and `useLiteralKeys` turned off with documented
+  rationale). `bun run lint`, the CI workflow, the release gate and both READMEs now run
+  `biome check . --no-errors-on-unmatched`. This also makes the xp-gate Gate 1 adapter actually
+  execute for this repo instead of skipping (it only recognises eslint/biome configurations).
+
+### Fixed
+
+- Complexity and clean-code debt across `scripts/provider-probe.ts`, `scripts/release-gate.mjs`
+  internals and four checkers (`egress-secret-scan`, `invisible-unicode-scan`, `tool-call-shape`,
+  `dangerous-command-scan`): assignment-in-condition loops rewritten, long/IO-heavy helpers split
+  with contextual error messages, unused fields/imports removed. No behaviour change.
+
 ## [0.3.1] - 2026-11-02
 
 ### Fixed

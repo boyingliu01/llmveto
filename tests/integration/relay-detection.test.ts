@@ -170,7 +170,7 @@ describe.skipIf(!RELAY_MATRIX)("SL-13 relay detection matrix (REQ-V2a-08 AC-V2a-
 describe.skipIf(!RELAY_MATRIX)("SL-13 relay false-positive matrix (REQ-V2a-08 AC-V2a-09)", () => {
   const fpPath = new URL("../fixtures/false-positives.json", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
   const fpData = JSON.parse(readFileSync(fpPath, "utf8"));
-  const relayFps = fpData.fps.filter((fp: any) => fp.id.startsWith("FP-T5a-RELAY"));
+  const relayFps = fpData.fps.filter((fp: { id: string }) => fp.id.startsWith("FP-T5a-RELAY"));
 
   it("should have relay-specific false positive samples", () => {
     expect(relayFps.length).toBeGreaterThanOrEqual(6);

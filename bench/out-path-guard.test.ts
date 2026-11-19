@@ -147,7 +147,7 @@ describe("期望表自身的结构元断言（共因失效面：R11R1-C-M2 / A-m
   it("预检族自洽：win32 必 throw 者的流后缀恰为「空串或含冒号」，posix 对照组与 win32 拒族同形", () => {
     for (const form of PRECHECK_THROW_FORMS) {
       const s = streamOf(form);
-      expect([form, s === "" || (s !== null && s.includes(":"))]).toEqual([form, true]);
+      expect([form, s === "" || (s?.includes(":") ?? false)]).toEqual([form, true]);
     }
     for (const form of PRECHECK_PASS_WIN32_FORMS) {
       const s = streamOf(form);

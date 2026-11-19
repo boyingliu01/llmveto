@@ -18,6 +18,8 @@
 
 **v2a（0.3.0）新增** —— T1a 金丝雀引擎（受管路径向末条 user 文本注入 27 字符会话 canary；跨会话回流扫描命中 → `block`；`llmveto canary rotate` 轮换）· T2a tool-call-shape（`block`：未知工具名 / 缺必需参数 / arguments 非法 JSON）· T3a thinking 签名存在性（`warn`）· T4a usage 对账（`warn`）· 按 checker 分持的流式窗口（256 KiB 硬顶）· 按 checker 的执行预算（G1/G3）· evidence 可选顶层 `reason`（schema 仍为 **v1**）。canary registry 落盘于 `stateDir/canary-registry.json`，由 `llmveto start` 自动接线。
 
+**v2a 后增补（2026-11-14）** —— `dangerous-command-scan`（响应侧，`warn`）：检出响应正文与 tool-call 参数里的「下载即执行」原语（`curl … | bash`、`wget … | sh`、`sh <(curl …)`、`eval $(curl …)`、`base64 -d | sh`、PowerShell `IEX`/`DownloadString`/`-enc`、反弹 shell、公网裸 IP 下载 URL）。设计为观测类：正常安装教程也会出现同样字符串，故命中只作证据信号（`rule_id` + `offsets`）不阻断；内网/回环 IP 排除。
+
 **扫描面口径（2026-09-27 修复后）**：checker 能看到 `messages[*].content` / `system` / `tools` / 自定义 `extra_headers`，
 以及**工具调用载荷** `tool_calls[*].function.arguments`（含 legacy `function_call`，请求侧与响应侧均含）。
 每个扫描单元同时产出"原始文本"与"转义已还原文本"（`\uXXXX` / `\u{…}` / `\xXX`）两份投影，两份都扫——
@@ -114,7 +116,7 @@ llmveto stop
 | `bun run test` | 全量测试（vitest on Node） |
 | `bun run test:coverage` | 测试 + 覆盖率门禁（阈值 80%，CI 与 pre-commit 钩子使用） |
 | `bun run typecheck` | `tsc --noEmit` |
-| `bun run lint` | oxlint |
+| `bun run lint` | `biome check .`（仅 lint，格式化关闭） |
 
 > **测试跑 vitest，不跑 `bun test`**：全局 xp-gate pre-commit 钩子对 TypeScript 项目固定执行
 > `npx vitest run --coverage <changed tests>`，并要求 `coverage/coverage-summary.json`。

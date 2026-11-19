@@ -170,7 +170,7 @@ describe("SL-09 tool-call-shape (REQ-V2a-02)", () => {
     const chunk1 = unit('{"name": "unkn', { has_tool_call_payload: true });
     const chunk2 = unit('own_tool", "arguments": "{}"}', { has_tool_call_payload: true });
 
-    let window: ScanWindow = emptyWindow;
+    const window: ScanWindow = emptyWindow;
     const [r1, w1] = checkToolCallShapeStream(window, chunk1);
     expect(r1.verdict).toBe("clean"); // 片段不完整，暂不判定
 
@@ -184,7 +184,7 @@ describe("SL-09 tool-call-shape (REQ-V2a-02)", () => {
     const chunk1 = unit('{"name": "unkn', meta);
     const chunk2 = unit('own_tool", "arguments": "{}"}', meta);
 
-    let window: ScanWindow = emptyWindow;
+    const window: ScanWindow = emptyWindow;
     const [_r1, w1] = checkToolCallShapeStream(window, chunk1);
     const [r2, _w2] = checkToolCallShapeStream(w1, chunk2);
     expect(r2.verdict).toBe("finding");

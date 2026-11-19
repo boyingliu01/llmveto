@@ -1,0 +1,43 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.6.8/schema.json",
+	// Lint-only adoption. Formatting and import organisation stay with the
+	// existing style; turning them on would rewrite every file in the repo and
+	// bury the change this config exists to enable (a real Gate 1 lint run).
+	"formatter": { "enabled": false },
+	"assist": { "enabled": false },
+	"vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+	"files": {
+		"includes": [
+			"src/**",
+			"tests/**",
+			"bench/**",
+			"scripts/**",
+			"*.ts",
+			"*.mjs",
+			"!dist",
+			"!coverage",
+			"!var"
+		]
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"preset": "recommended",
+			"style": {
+				// Strict-mode TypeScript: non-null assertions encode invariants the
+				// compiler cannot see (length-checked array tails, constructor-filled
+				// fields). ~275 call sites predate this config; rewriting them all is
+				// a separate refactor, not a lint adoption.
+				"noNonNullAssertion": "off",
+				// Pure readability preferences (string concat over template). Cannot be
+				// a defect; keeping them off keeps Gate 1 output signal-only.
+				"useTemplate": "off"
+			},
+			"complexity": {
+				// `body["choices"]` is used deliberately when reading index-signature
+				// JSON; dot access on those shapes is not more correct.
+				"useLiteralKeys": "off"
+			}
+		}
+	}
+}

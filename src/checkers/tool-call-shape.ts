@@ -47,8 +47,7 @@ function parseToolCallsByLine(text: string): ToolCallShape[] {
 function parseToolCallsByRegex(text: string): ToolCallShape[] {
   const re = /\{[^{}]*"name"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:\s*"[^"]*"[^{}]*\}/g;
   const calls: ToolCallShape[] = [];
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text))) {
+  for (let m = re.exec(text); m !== null; m = re.exec(text)) {
     const obj = tryParseToolCall(m[0]);
     if (obj) calls.push(obj);
   }

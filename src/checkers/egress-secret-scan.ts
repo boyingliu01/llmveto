@@ -48,8 +48,7 @@ function scanProjections(rule: Rule, texts: readonly string[]): RuleScan {
   for (const text of texts) {
     rule.re.lastIndex = 0;
     let matched = false;
-    let m: RegExpExecArray | null;
-    while ((m = rule.re.exec(text)) !== null) {
+    for (let m = rule.re.exec(text); m !== null; m = rule.re.exec(text)) {
       // 防御 zero-length 死循环（当前 pattern 不会 zero-length，仍显式保护）
       if (m.index === rule.re.lastIndex) rule.re.lastIndex++;
       if (text === texts[0]) offsets.push(m.index);

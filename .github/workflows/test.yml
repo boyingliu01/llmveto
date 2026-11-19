@@ -30,7 +30,7 @@ jobs:
       - name: Typecheck (source + build surface)
         run: bun run typecheck && bun run typecheck:dist
       - name: Lint
-        run: npx oxlint bench tests src
+        run: bunx biome check . --no-errors-on-unmatched
       # 全量步已覆盖以下两个套件；独立成步只把“矩阵红了”从整仓红里分离出来，
       # 便于归因。任何一步失败都必须红——不得用吞错后缀把红灯变绿。
       # 13 对手 evil-relay 只在 nightly 跑（relay-nightly.yml），PR 档不重复消费。

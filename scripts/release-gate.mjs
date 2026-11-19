@@ -4,7 +4,7 @@
 // 任一步失败即阻断并打印首个失败步；install-tarball / smoke / publish-dry-run 整体 try/finally teardown，
 // 门链失败不留全局包与常驻 daemon。冒烟 8 行判据 + seed 步内置为结构化常量（锚定串依据 src/cli/index.ts 实况，
 // CLI 无 --help；改 CLI 输出必须同步更新 SMOKE_ROWS）。本文件为 dev 工具，不属于任何既有门的面
-// （oxlint=src tests / typecheck=两个 tsconfig / vitest include=tests+bench / coverage include=src）。
+// （lint=biome check .（仅 lint）/ typecheck=两个 tsconfig / vitest include=tests+bench / coverage include=src）。
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -315,6 +315,7 @@ async function main() {
     ["test", () => {
       const r = run("bun", ["run", "test"], { timeout: 900_000 });
       if (r.code !== 0) fail("test (bun run test)", [tail(r.stdout), tail(r.stderr)]);
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: ESC (0x1b) 是 ANSI SGR 序列的首字节，这里就是要剥掉它
       const combined = (r.stdout + r.stderr).replace(/\x1b\[[0-9;]*m/g, ""); // 剥 ANSI，否则 \b 不成立（[32m326 无词边界）
       const passed = /\bTests\s+(\d+)\s+passed\b/.exec(combined);
       if (!passed) fail("test: 无法解析 vitest passed 计数（基线核对不可能）——若 vitest 版本升级导致汇总行格式变更，须同步修订本脚本正则", [tail(combined, 10)]);

@@ -48,7 +48,7 @@ describe("SL-03 invisible-unicode-scan (REQ-VETO-004)", () => {
 
   // AC-VETO-004-02：跨 chunk cursor 偏移
   it("AC-02 流式跨 chunk：cursor 全局偏移正确", () => {
-    let w = initialWindow();
+    const w = initialWindow();
     const c1 = unit("hel"); // 0..2
     const c2 = unit("lo\u200B"); // 3..5, U+200B 在 index 5
     const c3 = unit("wor"); // 6..8

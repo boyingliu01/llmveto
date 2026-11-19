@@ -29,7 +29,7 @@ import type {
   NonStreamChecker,
   BodyCapture,
 } from "../shared/types.ts";
-import { EvidenceWriter } from "../evidence/writer.ts";
+import type { EvidenceWriter } from "../evidence/writer.ts";
 import type { EvidenceFinding } from "../evidence/schema.ts";
 import type { ActionTaken } from "../shared/types.ts";
 import { CanaryStore } from "../canary/store.ts";
@@ -89,8 +89,19 @@ export interface GatewayConfig {
 /** SL-01/D-07：归并重投影单元的 meta 标记（advance:false 时由 core 统一打标，单一真相源）。 */
 export const REPROJECTION_META_KEY = "llmveto_reprojected" as const;
 
+/**
+ * 无 adapter 契约的显式判定域扩展（与 adapter 推导集合分开维护）：
+ * dsh 的全部 OpenAI 兼容 provider 共用 `<gw>/dsh/cliproxy/v1` 路由（LLMVETO_UPSTREAMS 的
+ * `dsh/cliproxy` 条目），故注入/串流检出按该单一路由键生效。集成测试断言
+ * CANARY_MANAGED_ROUTES = adapter 推导集合 ∪ 本集合，adapter 侧漂移仍会被抓到。
+ */
+export const MANUAL_CANARY_MANAGED_ROUTES: ReadonlySet<string> = Object.freeze(new Set(["dsh/cliproxy"]));
+
 /** REQ-V2a-11/D-05 注入判定域（路由键 client/provider）：gateway 层镜像常量——architecture.yaml 禁 import adapters，与 adapters 层 MANAGED_CONFIG_IDS 的同源一致性由集成测试以真实 adapter 产物推导钉死（canary-inject 防漂移断言）。 */
-export const CANARY_MANAGED_ROUTES: ReadonlySet<string> = Object.freeze(new Set(["opencode/openai", "opencode/anthropic", "opencode/mock", "delphi/default"]));
+export const CANARY_MANAGED_ROUTES: ReadonlySet<string> = Object.freeze(new Set([
+  "opencode/openai", "opencode/anthropic", "opencode/mock", "delphi/default",
+  ...MANUAL_CANARY_MANAGED_ROUTES,
+]));
 
 /** D-03 计数面：GET /_llmveto/metrics 的 canary 观测（D-14 live p50/p95/max 属 SL-12 handoff）。 */
 export type CanaryMetrics = { inject_skipped: number; registry_unavailable: number; canary_injected: number };

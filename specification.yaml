@@ -351,3 +351,23 @@ specification:
       - "T3a：部分（弱）→部分（仍无正向确认，证伪信号）"
       - "T4a：仅取证→部分（本地估算方向性告警；无官价基准、估算误差决定不可阻断）"
     doc_source: "docs/plans/2026-09-27-v2a-requirements.md §7"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Sprint 后增补（2026-11-14，用户直接指定；未走 R1/R2 Delphi 评审）
+  # 与 v2a 冻结的 15 条 REQ 分开登记，避免把增量能力误记成已评审范围。
+  # ─────────────────────────────────────────────────────────────────────────
+  post_sprint_extensions:
+    - id: "REQ-POST-01"
+      date: "2026-11-14"
+      description: "dangerous-command-scan（T2a 内容侧，观测类）：响应正文与 tool-call 参数中的「下载即执行」原语（curl/wget 管道进 shell、sh <(curl)、eval $(curl)、base64 管道执行、PowerShell IEX/DownloadString/-enc、反弹 shell、公网裸 IP 下载 URL）→ finding/warn"
+      review: "未走 Delphi；安全性依据 = safetyClass=false（finding→warn、error→warn），不新增阻断面，故不改变 v1 阻断类 FP=0 承诺"
+      acceptance_criteria:
+        - id: "AC-POST-01"
+          given: "六类命令注入正样本各 ≥1、转义写法样本、内网/回环裸 IP 负样本、普通开发文本负样本"
+          when: "非流式与流式 checker 执行"
+          then: "正样本 finding 且 rule_id 正确；转义样本经还原投影命中；内网 IP 与普通文本 clean；流式跨 chunk 可命中且不报 offsets；finding 只映射 warn（mapBySpec safetyClass=false）"
+      known_false_positive_surface: "安全教程/安装文档原样写出的 curl|bash 同样命中（已登记为观测类代价，不阻断）"
+      test_coverage_requirements:
+        unit: true
+        integration: false
+        e2e: false

@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { verifyEvidenceFile } from "../../src/evidence/verify.ts";
 import { EvidenceWriter } from "../../src/evidence/writer.ts";
 import { startGateway } from "../../src/gateway/server.ts";
-import { CANARY_MANAGED_ROUTES, sha256Hex } from "../../src/gateway/core.ts";
+import { CANARY_MANAGED_ROUTES, MANUAL_CANARY_MANAGED_ROUTES, sha256Hex } from "../../src/gateway/core.ts";
 import { MANAGED_CONFIG_IDS as OPENCODE_IDS } from "../../src/adapters/opencode.ts";
 import { delphiAdapter } from "../../src/adapters/delphi.ts";
 import type { CheckerSpec, ScanUnit } from "../../src/shared/types.ts";
@@ -78,10 +78,14 @@ interface ParsedRecord {
 }
 function readEvidenceLines(path: string): readonly ParsedRecord[] {
   if (!existsSync(path)) return [];
-  return readFileSync(path, "utf8")
-    .split("\n")
-    .filter((l) => l.length > 0)
-    .map((l) => JSON.parse(l) as unknown as ParsedRecord);
+  try {
+    return readFileSync(path, "utf8")
+      .split("\n")
+      .filter((l) => l.length > 0)
+      .map((l) => JSON.parse(l) as unknown as ParsedRecord);
+  } catch (e) {
+    throw new Error(`cannot read evidence ${path}: ${String(e instanceof Error ? e.message : e)}`);
+  }
 }
 async function waitForEvidence(path: string, count = 1): Promise<readonly ParsedRecord[]> {
   for (let i = 0; i < 250; i++) {
@@ -99,7 +103,11 @@ interface RegistryFileView {
   readonly entries: Readonly<Record<string, { readonly canary: string; readonly last_seen: number }>>;
 }
 function registryRead(path: string): RegistryFileView {
-  return JSON.parse(readFileSync(path, "utf8")) as RegistryFileView;
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as RegistryFileView;
+  } catch (e) {
+    throw new Error(`cannot read registry ${path}: ${String(e instanceof Error ? e.message : e)}`);
+  }
 }
 
 // @mock-justified: meta.canary_* 是 ScanUnit.meta 的进程内通道，链上无落点（evidence canary
@@ -142,15 +150,35 @@ async function boot(opts: { extra?: readonly CheckerSpec[] } = {}): Promise<{ g:
 const chatBody = (content: string): string =>
   JSON.stringify({ model: "m", messages: [{ role: "user", content }] });
 
+async function postJson(
+  g: { url: string },
+  path: string,
+  body: string,
+  headers: Readonly<Record<string, string>> = {},
+): Promise<Response> {
+  try {
+    return await fetch(`${g.url}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body,
+    });
+  } catch (e) {
+    throw new Error(`POST ${path} failed: ${String(e instanceof Error ? e.message : e)}`);
+  }
+}
+
+async function metricsOf(g: { url: string }): Promise<Record<string, number>> {
+  try {
+    return (await (await fetch(`${g.url}/_llmveto/metrics`)).json()) as Record<string, number>;
+  } catch (e) {
+    throw new Error(`GET /_llmveto/metrics failed: ${String(e instanceof Error ? e.message : e)}`);
+  }
+}
+
 async function postManaged(g: { url: string }, body: string, session: string, turnId?: string): Promise<Response> {
-  return fetch(`${g.url}/opencode/mock/v1/chat/completions`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      [SESSION_HEADER]: session,
-      ...(turnId !== undefined ? { "x-llmveto-turn-id": turnId } : {}),
-    },
-    body,
+  return postJson(g, "/opencode/mock/v1/chat/completions", body, {
+    [SESSION_HEADER]: session,
+    ...(turnId !== undefined ? { "x-llmveto-turn-id": turnId } : {}),
   });
 }
 
@@ -161,8 +189,22 @@ const okResponse = (): string =>
 // 判定域镜像同源 + AC-V2a-07 经网关（分支 1）
 // ─────────────────────────────────────────────────────────────────────────────
 describe("SL-07 integration ①: 判定域与 AC-V2a-07 经网关（D-04 sha 语义）", () => {
-  it("CANARY_MANAGED_ROUTES 与 adapters 层 MANAGED_CONFIG_IDS 同源（镜像常量防漂移）", () => {
-    expect(CANARY_MANAGED_ROUTES).toEqual(adapterDerivedManagedRoutes());
+  it("CANARY_MANAGED_ROUTES = adapters 层 MANAGED_CONFIG_IDS ∪ 手工显式路由（镜像常量防漂移）", () => {
+    expect(CANARY_MANAGED_ROUTES).toEqual(new Set([...adapterDerivedManagedRoutes(), ...MANUAL_CANARY_MANAGED_ROUTES]));
+  });
+
+  it("dsh/cliproxy 手工判定域：经网关注入 canary 且上游实收注入后体", async () => {
+    mock = await startMockUpstream({ transport: "non-stream", body: okResponse() });
+    const probe = metaProbe();
+    const { g, registryPath } = await boot({ extra: [probe.spec] });
+    const original = chatBody("hello dsh");
+    const r = await postJson(g, "/dsh/cliproxy/v1/chat/completions", original, { [SESSION_HEADER]: "dsh-sess-1" });
+    expect(r.status).toBe(200);
+    const canary = registryRead(registryPath).entries["dsh-sess-1"]!.canary;
+    expect(canary).toHaveLength(27);
+    expect(mock.requests[0]!.body).toBe(JSON.stringify({ model: "m", messages: [{ role: "user", content: "hello dsh" + canary }] }));
+    expect(probe.seen[0]!.injected).toBe(true);
+    expect(probe.seen[0]!.candidates).toEqual([]); // 快照排除请求方自身
   });
 
   it("AC-V2a-07 经网关（分支 1）：注入后体上链且上游实收；sha/bytes=注入后体；B'=B[0..k]+canary+B[k..]", async () => {
@@ -189,7 +231,7 @@ describe("SL-07 integration ①: 判定域与 AC-V2a-07 经网关（D-04 sha 语
     expect(probe.seen[0]!.injectedKey).toBe(true);
     expect(probe.seen[0]!.injected).toBe(true); // meta.canary_injected=true
     expect(probe.seen[0]!.candidates).toEqual([]); // 首请求：快照排除自身 → 空
-    const m = (await (await fetch(g.url + "/_llmveto/metrics")).json()) as Record<string, number>;
+    const m = await metricsOf(g);
     expect(m.canary_injected).toBe(1); // metrics 计数面
     expect(verifyEvidenceFile(evidencePath).ok).toBe(true);
   });
@@ -280,7 +322,7 @@ describe("SL-07 integration ③: AC-V2a-18⑥ 语义孪生对照（分支 6 经�
     expect(mock.requests[0]!.body).toBe(okForwarded);
     expect(mock.requests[1]!.body).toBe(skipBody);
     // status 计数落点（本切片 = metrics 面；durable 聚合属 SL-12）
-    const m = (await (await fetch(g.url + "/_llmveto/metrics")).json()) as Record<string, number>;
+    const m = await metricsOf(g);
     expect(m.inject_skipped).toBe(1);
     expect(m.canary_injected).toBe(1); // B_ok 趟注入成功各计各的
   });
@@ -296,11 +338,7 @@ describe("SL-07 integration ④: AC-V2a-21 匹配域不区分客户端（D-05 �
     const { g, registryPath } = await boot({ extra: [probe.spec] });
     const rA = await postManaged(g, chatBody("from-a"), "sess-a");
     expect(rA.status).toBe(200);
-    const rB = await fetch(`${g.url}/delphi/default/v1/chat/completions`, {
-      method: "POST",
-      headers: { "content-type": "application/json", [SESSION_HEADER]: "sess-b" },
-      body: chatBody("from-b"),
-    });
+    const rB = await postJson(g, "/delphi/default/v1/chat/completions", chatBody("from-b"), { [SESSION_HEADER]: "sess-b" });
     expect(rB.status).toBe(200);
     await rB.text();
 
@@ -322,11 +360,7 @@ describe("SL-07 integration ⑤: 判定域外（非受管 / block）与 inject_s
     const probe = metaProbe();
     const { g, evidencePath } = await boot({ extra: [probe.spec] });
     const original = chatBody("legacy");
-    const r = await fetch(`${g.url}/v1/chat/completions`, {
-      method: "POST",
-      headers: { "content-type": "application/json" }, // 无路径身份 → client=unknown → 判定域外
-      body: original,
-    });
+    const r = await postJson(g, "/v1/chat/completions", original); // 无路径身份 → client=unknown → 判定域外
     expect(r.status).toBe(200);
     expect(mock.requests[0]!.body).toBe(original); // 原体直转（无注入）
     const recs = await waitForEvidence(evidencePath);
@@ -334,7 +368,7 @@ describe("SL-07 integration ⑤: 判定域外（非受管 / block）与 inject_s
     expect(recs[0]!.canary).toBe(null);
     expect(probe.seen[0]!.injectedKey).toBe(false); // meta 无 canary 字段（非 false 值）
     expect(probe.seen[0]!.candidates).toBeUndefined(); // 无快照
-    const m = (await (await fetch(g.url + "/_llmveto/metrics")).json()) as Record<string, number>;
+    const m = await metricsOf(g);
     expect(m.canary_injected).toBe(0); // 无计数（判定域外不计）
     expect(m.inject_skipped).toBe(0);
     expect(m.registry_unavailable).toBe(0);

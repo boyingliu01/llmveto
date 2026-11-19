@@ -295,6 +295,7 @@ describe("SL-03 REGISTRY 声明序（tie-break 单一真相源）", () => {
   it("v2a 注册表声明序逐位钉死", () => {
     expect(REGISTRY.map((c) => c.id)).toEqual([
       "canary-return-scan",
+      "dangerous-command-scan",
       "egress-secret-scan",
       "invisible-unicode-scan",
       "model-label-consistency",
@@ -308,6 +309,7 @@ describe("SL-03 REGISTRY 声明序（tie-break 单一真相源）", () => {
     expect(checkersFor("request").map((c) => c.id)).toEqual(["egress-secret-scan"]);
     expect(checkersFor("response").map((c) => c.id)).toEqual([
       "canary-return-scan",
+      "dangerous-command-scan",
       "invisible-unicode-scan",
       "model-label-consistency",
       "thinking-signature-presence",
@@ -325,6 +327,7 @@ describe("SL-03 CHECKER_THREAT_BY_ID：error 条目 threat 取值表（§4.5）"
     expect(CHECKER_THREAT_BY_ID["model-label-consistency"]).toBe("T3a");
     expect(CHECKER_THREAT_BY_ID["tool-call-shape"]).toBe("T2a");
     expect(CHECKER_THREAT_BY_ID["canary-return-scan"]).toBe("T1a");
+    expect(CHECKER_THREAT_BY_ID["dangerous-command-scan"]).toBe("T2a");
     expect(CHECKER_THREAT_BY_ID["thinking-signature-presence"]).toBe("T3a");
     expect(CHECKER_THREAT_BY_ID["usage-reconcile"]).toBe("T4a");
   });
@@ -414,9 +417,60 @@ describe("SL-03 真路径双层 fixture：顶层 reason + findings[] error 条�
     return new GatewayCore({ upstreamBaseUrl: mockUrl, evidenceWriter: new EvidenceWriter(evidencePath) });
   }
 
+  function newEvidencePath(name: string): string {
+    const d = mkdtempSync(join(tmpdir(), "llmveto-sl03-"));
+    dirs.push(d);
+    try {
+      mkdirSync(d, { recursive: true });
+    } catch (e) {
+      throw new Error(`cannot create fixture dir ${d}: ${String(e instanceof Error ? e.message : e)}`);
+    }
+    return join(d, name);
+  }
+
+  function firstEvidenceLine(path: string): Record<string, unknown> {
+    try {
+      return JSON.parse(readFileSync(path, "utf8").split("\n")[0]!) as Record<string, unknown>;
+    } catch (e) {
+      throw new Error(`cannot read evidence ${path}: ${String(e instanceof Error ? e.message : e)}`);
+    }
+  }
+
+  /** 在指定 stream checker 被替换的窗口内跑一次流式请求，并在还原前消费完惰性 SSE generator。 */
+  async function runSwappedStream(
+    core: GatewayCore,
+    mockUrl: string,
+    payload: string,
+    replacement: StreamChecker,
+  ): Promise<{ outcome: Awaited<ReturnType<typeof handleChatCompletions>>; parts: string[] }> {
+    const target = REGISTRY.find((c) => c.id === "invisible-unicode-scan")!;
+    const prev = swapRunStream(target, replacement);
+    const parts: string[] = [];
+    try {
+      const outcome = await handleChatCompletions(core, mkReq(payload, "stream", mockUrl + "/v1/chat/completions"));
+      // 注意：sse 是惰性 generator，必须在还原 spec **之前**消费完，否则流式扫描
+      // 跑在原始 checker 上（swap 窗口失效）。
+      for await (const f of outcome.sse!) parts.push(f);
+      return { outcome, parts };
+    } finally {
+      swapRunStream(target, prev);
+    }
+  }
+
+  function malformedReactive(seen: { saw: boolean }): StreamChecker {
+    return (window: ScanWindow, chunk: ScanUnit) => {
+      if (chunk.malformed === true) seen.saw = true;
+      const next: ScanWindow = { pendingBytes: window.pendingBytes, cursor: window.cursor + chunk.text.length };
+      const result: CheckerResult = chunk.malformed
+        ? { verdict: "error", evidence: [], reason: "input_malformed" }
+        : { verdict: "clean", evidence: [] };
+      return [result, next] as const;
+    };
+  }
+
   /** 双层痕迹断言：顶层 reason 与 findings[] error 条目同时出现在同一条 JSONL 记录里。 */
   function assertDoubleLayerInJsonl(path: string, expectedReason: string, expectedChecker: string, expectedThreat: string): void {
-    const line = JSON.parse(readFileSync(path, "utf8").split("\n")[0]!) as Record<string, unknown>;
+    const line = firstEvidenceLine(path);
     expect(line["reason"], "顶层 reason（D-10 第一层）").toBe(expectedReason);
     const findings = line["findings"] as readonly { checker: string; verdict: string; threat: string; rule_id?: string }[];
     const errEntry = findings.find((f) => f.verdict === "error");
@@ -438,9 +492,7 @@ describe("SL-03 真路径双层 fixture：顶层 reason + findings[] error 条�
       transport: "non-stream",
       body: JSON.stringify({ model: "gpt-4o", choices: [{ message: { role: "assistant", content: "hi" } }] }),
     });
-    dirs.push(mkdtempSync(join(tmpdir(), "llmveto-sl03-")));
-    mkdirSync(dirs[dirs.length - 1]!, { recursive: true });
-    const evidencePath = join(dirs[dirs.length - 1]!, "ev-obs.jsonl");
+    const evidencePath = newEvidencePath("ev-obs.jsonl");
     const core = bootCore(mock.url, evidencePath);
 
     // @mock-justified: v1 无观测类 checker 会自然抛错（checker_timeout 重写在 SL-04）。
@@ -485,9 +537,7 @@ describe("SL-03 真路径双层 fixture：顶层 reason + findings[] error 条�
 
   it("fixture-2 安全类 scanner_error（请求侧 egress 抛错）：502 fail-closed + blocked_before_forward + 双层痕迹落链", async () => {
     mock = await startMockUpstream({ transport: "non-stream", body: '{"ok":true}' });
-    dirs.push(mkdtempSync(join(tmpdir(), "llmveto-sl03-")));
-    mkdirSync(dirs[dirs.length - 1]!, { recursive: true });
-    const evidencePath = join(dirs[dirs.length - 1]!, "ev-safe.jsonl");
+    const evidencePath = newEvidencePath("ev-safe.jsonl");
     const core = bootCore(mock.url, evidencePath);
 
     // @mock-justified: 同 fixture-1 —— 注入点在 checker spec 边界，safeRun/扫描管线/HTTP 全真。
@@ -537,45 +587,23 @@ describe("SL-03 真路径双层 fixture：顶层 reason + findings[] error 条�
         JSON.stringify({ choices: [{ delta: { content: "after-marker" } }] }),
       ],
     });
-    dirs.push(mkdtempSync(join(tmpdir(), "llmveto-sl03-")));
-    mkdirSync(dirs[dirs.length - 1]!, { recursive: true });
-    const evidencePath = join(dirs[dirs.length - 1]!, "ev-malformed.jsonl");
+    const evidencePath = newEvidencePath("ev-malformed.jsonl");
     const core = bootCore(mock.url, evidencePath);
 
     // @mock-justified: malformed 标志由真实 scan-unit 代码从真实 HTTP 字节产出（下方
     // sawMalformed 断言为证）；此 stand-in 只在 spec 边界替换 checker 的"判定逻辑"——
     // v1 尚无以 malformed 为输入的已注册 checker（其随 SL-09 结构类 checker 落地），
     // input_malformed 的真实注册生产者到 SL-09 才存在。
-    let sawMalformed = false;
-    const malformedReactive: StreamChecker = (window: ScanWindow, chunk: ScanUnit) => {
-      if (chunk.malformed === true) sawMalformed = true;
-      const next: ScanWindow = { pendingBytes: window.pendingBytes, cursor: window.cursor + chunk.text.length };
-      const result: CheckerResult = chunk.malformed
-        ? { verdict: "error", evidence: [], reason: "input_malformed" }
-        : { verdict: "clean", evidence: [] };
-      return [result, next] as const;
-    };
-    const prev = swapRunStream(
-      REGISTRY.find((c) => c.id === "invisible-unicode-scan")!,
-      malformedReactive,
+    const seen = { saw: false };
+    const { outcome, parts } = await runSwappedStream(
+      core,
+      mock.url,
+      JSON.stringify({ messages: [{ role: "user", content: "hi" }] }),
+      malformedReactive(seen),
     );
-    let outcome: Awaited<ReturnType<typeof handleChatCompletions>>;
-    const parts: string[] = [];
-    try {
-      outcome = await handleChatCompletions(core, mkReq(
-        JSON.stringify({ messages: [{ role: "user", content: "hi" }] }),
-        "stream",
-        mock.url + "/v1/chat/completions",
-      ));
-      // 注意：sse 是惰性 generator，必须在还原 spec **之前**消费完，否则流式扫描
-      // 跑在原始 checker 上（swap 窗口失效）。
-      for await (const f of outcome.sse!) parts.push(f);
-    } finally {
-      swapRunStream(REGISTRY.find((c) => c.id === "invisible-unicode-scan")!, prev);
-    }
 
     const text = parts.join("");
-    expect(sawMalformed).toBe(true); // malformed 标志确由真实扫描单元管线产出
+    expect(seen.saw).toBe(true); // malformed 标志确由真实扫描单元管线产出
     expect(text).toContain("llmveto:veto-mid-stream"); // 安全类 error → 流内终止
     expect(text).toContain('"delivered_chunks":0'); // 命中帧即 malformed 帧：零交付
     expect(text).not.toContain("after-marker");
@@ -610,9 +638,7 @@ describe("SL-03 真路径双层 fixture：顶层 reason + findings[] error 条�
         JSON.stringify({ model: "gpt-4o", choices: [{ delta: { content: "b" } }] }),
       ],
     });
-    dirs.push(mkdtempSync(join(tmpdir(), "llmveto-sl03-")));
-    mkdirSync(dirs[dirs.length - 1]!, { recursive: true });
-    const evidencePath = join(dirs[dirs.length - 1]!, "ev-stream-degraded.jsonl");
+    const evidencePath = newEvidencePath("ev-stream-degraded.jsonl");
     const core = bootCore(mock.url, evidencePath);
 
     // @mock-justified: 同 fixture-1（checker spec 边界故障注入，其余全真）。
@@ -655,9 +681,7 @@ describe("SL-03 真路径双层 fixture：顶层 reason + findings[] error 条�
       transport: "non-stream",
       body: JSON.stringify({ model: "gpt-4o", choices: [{ message: { role: "assistant", content: "hi" } }] }),
     });
-    dirs.push(mkdtempSync(join(tmpdir(), "llmveto-sl03-")));
-    mkdirSync(dirs[dirs.length - 1]!, { recursive: true });
-    const evidencePath = join(dirs[dirs.length - 1]!, "ev-benign.jsonl");
+    const evidencePath = newEvidencePath("ev-benign.jsonl");
     const core = bootCore(mock.url, evidencePath);
 
     const outcome = await handleChatCompletions(core, mkReq(
@@ -673,7 +697,7 @@ describe("SL-03 真路径双层 fixture：顶层 reason + findings[] error 条�
 
     const writer = new EvidenceWriter(evidencePath);
     writer.append(baseAppend({ request_id: "r-sl03-benign", findings: outcome.findings })); // 不传 reason
-    const line = JSON.parse(readFileSync(evidencePath, "utf8").split("\n")[0]!) as Record<string, unknown>;
+    const line = firstEvidenceLine(evidencePath);
     expect("reason" in line).toBe(false); // v1 兼容：键缺席而非 null
     expect(verifyEvidenceFile(evidencePath)).toEqual({ ok: true, records: 1 });
     // AC-V2a-23①：无 reason 记录的键集与 REQUIRED_FIELDS 完全一致（26 项，不加不减）

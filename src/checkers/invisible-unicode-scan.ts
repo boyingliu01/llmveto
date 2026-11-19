@@ -27,8 +27,7 @@ export const CHECKER_ID = "invisible-unicode-scan";
 function scanText(text: string, baseCursor: number): Finding[] {
   INVISIBLE.lastIndex = 0; // 纯函数保证
   const offsets: number[] = [];
-  let m: RegExpExecArray | null;
-  while ((m = INVISIBLE.exec(text)) !== null) {
+  for (let m = INVISIBLE.exec(text); m !== null; m = INVISIBLE.exec(text)) {
     // 全局码点偏移：由于本 pattern 命中项均为 BMP 单元（非代理对），
     // m.index 是 UTF-16 code unit index；对 BMP 而言 = 码点 index。
     offsets.push(baseCursor + m.index);

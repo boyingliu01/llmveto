@@ -70,7 +70,6 @@ function headings(text) {
 function tableRowCounts(text) {
   const counts = [];
   let cur = 0;
-  let inFence = false;
   for (const line of stripFences(text)) {
     if (/^\s*\|/.test(line)) cur += 1;
     else if (cur > 0) { counts.push(cur); cur = 0; }
@@ -109,9 +108,7 @@ for (let i = 0; i < Math.max(HEADING_PAIRS.length, zhSeq.length, enSeq.length); 
   const eActual = enSeq[i];
   if (!pair) die(`标题序列超出冻结对表（index ${i}）：zh=${zActual ?? "—"} en=${eActual ?? "—"}——改标题须同步脚本 HEADING_PAIRS`);
   const zhLevel = zActual?.slice(0, zActual.indexOf(" "));
-  const zhText = zActual?.slice(zActual.indexOf(" ") + 1);
   const enLevel = eActual?.slice(0, eActual.indexOf(" "));
-  const enText = eActual?.slice(eActual.indexOf(" ") + 1);
   if (zActual !== `${zhLevel} ${pair[0]}`) die(`zh 标题 ${i} 偏离冻结对表：got ${JSON.stringify(zActual)}, want ${JSON.stringify(zhLevel + " " + pair[0])}`);
   if (eActual !== `${enLevel} ${pair[1]}`) die(`en 标题 ${i} 偏离冻结对表：got ${JSON.stringify(eActual)}, want ${JSON.stringify(enLevel + " " + pair[1])}`);
   if (zhLevel !== enLevel) die(`标题级别不齐 index ${i}: zh=${zhLevel} en=${enLevel}`);

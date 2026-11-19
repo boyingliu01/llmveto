@@ -39,7 +39,7 @@ describe("CI workflows（REQ-V2a-09 / AC-V2a-10）", () => {
     expect(wf).toContain("COVERAGE_ALL=1");
     expect(wf).toContain("npx vitest run --coverage");
     expect(wf).toContain("bun run typecheck && bun run typecheck:dist");
-    expect(wf).toContain("npx oxlint bench tests src");
+    expect(wf).toContain("bunx biome check . --no-errors-on-unmatched");
   });
 
   it("test.yml：检出与误报矩阵指向真实套件，且没有任何 `|| true` 掩码", () => {

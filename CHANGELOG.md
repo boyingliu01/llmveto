@@ -42,11 +42,21 @@ take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
   accepts both shapes.
 - **The release workflow now actually authenticates to npm.** `setup-node` was configured without
   `registry-url`, so `secrets.NPM_TOKEN` never reached npm's credential lookup and the v0.4.0 tag
-  run failed closed with `ENEEDAUTH` before any release was created.
+  run failed closed with `ENEEDAUTH` before any release was created. The v0.4.1 tag carries the
+  same code plus that one workflow fix.
 - Complexity and clean-code debt across `scripts/provider-probe.ts`, `scripts/release-gate.mjs`
   internals and four checkers (`egress-secret-scan`, `invisible-unicode-scan`, `tool-call-shape`,
   `dangerous-command-scan`): assignment-in-condition loops rewritten, long/IO-heavy helpers split
   with contextual error messages, unused fields/imports removed. No behaviour change.
+
+## [0.4.1] - 2026-11-19
+
+### Fixed
+
+- **npm publish now completes for tagged releases.** The `setup-node` step in `release.yml` was
+  missing `registry-url`, so `secrets.NPM_TOKEN` never became an npm credential and the v0.4.0
+  tag run failed closed with `ENEEDAUTH` before creating any release artifacts. No product code
+  changed between 0.4.0 and 0.4.1 — only this workflow configuration.
 
 ## [0.3.1] - 2026-11-02
 

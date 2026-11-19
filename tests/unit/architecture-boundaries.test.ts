@@ -109,8 +109,19 @@ function parseLayers(): Record<string, string[]> {
   const text = readFileSync(join(ROOT, "architecture.yaml"), "utf8");
   const layers: Record<string, string[]> = {};
   let current: string | null = null;
+  let inLayers = false;
   for (const line of text.split("\n")) {
-    const nameMatch = /^\s*-\s*name:\s*(\S+)\s*$/.exec(line);
+    if (/^layers:\s*$/.test(line)) {
+      inLayers = true;
+      continue;
+    }
+    if (!inLayers) continue;
+    // 顶层键结束 layers 块
+    if (/^\S/.test(line)) break;
+    // 同时接受序列形式（- name: X）与 xp-gate 层检查器要求的 map 形式（两空格缩进 X:）
+    const seqMatch = /^\s*-\s*name:\s*(\S+)\s*$/.exec(line);
+    const mapMatch = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(line);
+    const nameMatch = seqMatch ?? mapMatch;
     if (nameMatch) {
       current = nameMatch[1]!;
       layers[current] = [];

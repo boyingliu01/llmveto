@@ -34,6 +34,12 @@ take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 
 ### Fixed
 
+- **Layer boundaries are now actually enforced.** `architecture.yaml` declared layers in a
+  sequence-of-maps shape (`- name: …` / `paths:`) that the xp-gate Gate 6 layer checker cannot
+  parse, so it failed closed with `layer_config_unparsable` — the boundaries had never been
+  machine-checked. Converted to the checker's map form (`layer:` + `patterns:`); the checker now
+  reports 9 layers / 37 files classified / 0 violations, and the boundary test's YAML parser
+  accepts both shapes.
 - Complexity and clean-code debt across `scripts/provider-probe.ts`, `scripts/release-gate.mjs`
   internals and four checkers (`egress-secret-scan`, `invisible-unicode-scan`, `tool-call-shape`,
   `dangerous-command-scan`): assignment-in-condition loops rewritten, long/IO-heavy helpers split

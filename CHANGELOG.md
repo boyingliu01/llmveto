@@ -60,12 +60,18 @@ take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 
 ### Fixed
 
-- **CI toolchain versions were inconsistent.** The four workflows pinned bun at `1.3.14`,
-  `1.4.3` and `latest` at once, and `release.yml` carried a comment claiming it matched
-  `test.yml` while the two values had already diverged. All five `bun-version` entries are now
-  `1.4.3`; `release.yml`'s `node-version` moves `20` → `24` to match the runner and the other
-  workflows. Verified: every workflow parses, and `bun install --frozen-lockfile` produces no
-  changes under 1.4.3.
+- **CI toolchain versions were inconsistent and are no longer pinned.** The four workflows named
+  bun as `1.3.14`, `1.4.3` and `latest` at once, and `release.yml` carried a comment claiming it
+  matched `test.yml` while the two values had already diverged — pinning had itself become the
+  source of a stale comment. All five `bun-version` entries are now `latest`, and every
+  `node-version` is `lts/*` (`release.yml` was on the EOL `20`; `bench.yml` had no explicit Node
+  at all, which is now fixed since the benchmark is runtime-sensitive).
+
+  Measured before dropping the pin: bun `1.3.14`, `1.4.3` and `1.4.5` all process this repository's
+  `bun.lock` to a **byte-identical** file, with and without `--frozen-lockfile`. CI installs with
+  `--frozen-lockfile` throughout, so the dependency set is decided by the lockfile rather than by
+  the tool version. Node stays expressible as a range because it is the vitest runtime and the
+  distribution artifact's verifier, backed by `engines.node >= 18`.
 - **`.gitattributes` was missing** despite day-to-day development on both Windows and WSL. Line
   endings are now pinned (`* text=auto eol=lf`, CRLF retained for PowerShell scripts, binaries
   marked as such) with a note on `core.autocrlf=input`. `git add --renormalize .` produces an

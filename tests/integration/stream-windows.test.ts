@@ -166,6 +166,27 @@ async function boot(...extra: readonly CheckerSpec[]): Promise<{ g: NonNullable<
   return { g: gw, evidencePath };
 }
 
+/**
+ * 同 boot，但给指定 checker 放宽执行预算。
+ * 用于"本轮验证的不是性能门"的用例：默认 G1 12ms/帧 在满并发下会偶发超时，
+ * 让本该验证功能边界的用例因机器负载变红。
+ */
+async function bootWithBudget(
+  spec: CheckerSpec,
+  budgetMs: number,
+): Promise<{ g: NonNullable<typeof gw>; evidencePath: string }> {
+  const evidencePath = join(dir, "ev-" + Math.random().toString(36).slice(2) + ".jsonl");
+  gw = await startGateway({
+    config: {
+      upstreamBaseUrl: mock!.url,
+      evidenceWriter: new EvidenceWriter(evidencePath),
+      extraCheckers: [spec],
+      checkerBudgetMs: new Map([[spec.id, budgetMs]]),
+    },
+  });
+  return { g: gw, evidencePath };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // AC-V2a-25：offsets 精确等于全局 UTF-16 code unit 偏移（D-08）
 // ─────────────────────────────────────────────────────────────────────────────
@@ -322,7 +343,11 @@ describe("SL-02 integration: AC-V2a-14 window_overflow（2049×128B fixture）",
     expect((OVERFLOW_CHUNKS - 1) * OVERFLOW_CHUNK_BYTES).toBe(STREAM_WINDOW_OVERFLOW_LIMIT);
     const stub = toolCallShapeStub();
     mock = await startMockUpstream({ transport: "stream", chunks: buildOverflowFrames() });
-    const { g, evidencePath } = await boot(stub.spec);
+    // 本用例验证的是 256KiB 硬顶（window_overflow），不是 G1 的 12ms/帧性能门。
+    // 2049 帧的流在高并发（62 个 vitest worker）下偶发单帧超 12ms，会先触发
+    // checker_timeout 而使流提前收束（实测 delivered_chunks 停在 103 而非 2048）。
+    // 故对本用例单独放宽预算：测试意图不变，只去掉对机器负载的敏感性。
+    const { g, evidencePath } = await bootWithBudget(stub.spec, 10_000);
     const r = await post(g, true);
     expect(r.status).toBe(200);
     const text = await r.text();

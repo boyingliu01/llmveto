@@ -11,7 +11,7 @@
 // 注意：`bun install` / `npm ci` 会重新下载 gnu 二进制，所以本脚本挂在 postinstall 上。
 
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, readFileSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -70,5 +70,5 @@ function main() {
 try {
   main();
 } catch (err) {
-  console.warn(`[patch-archlint-musl] 跳过（非致命）：${err && err.message}`);
+  console.warn("[patch-archlint-musl] 跳过（非致命）：", err);
 }

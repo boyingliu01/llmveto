@@ -14,13 +14,21 @@
 - **What it does**: allocates a 27-character canary per session, appends it to the last user text
   before forwarding, and blocks (stream termination for streaming) when a response contains
   **another session's** canary
-- **Residual risk (recording replay not re-run)**: the v2a gate recorded 10 real agent sessions
-  and passed its form checks before the canary engine was built, but the raw recording was later
-  overwritten by probe traffic. The injection replay (finish-reason distribution, provider refusal
-  increment, manual review of 10 sessions) could not be re-established. Injection is covered by
-  integration tests across the six injection branches and by end-to-end managed-route tests, but
-  not by a fresh real-agent replay. Treat this as an accepted residual, not a proven zero-impact
-  change.
+- **Recording replay re-established 2026-11-24 (P1-1)**: the v2a recording was overwritten by
+  probe traffic, so this item sat as an accepted residual. It is now re-run against real traffic:
+  `scripts/canary-replay.mjs` rebuilds the corpus from this machine's 11 DSH session recordings
+  (`var/canary-replay/`, gitignored — 66 exchanges, 0 synthetic text) and replays three criteria.
+  Measured: **① finish_reason no migration 66/66** (injected-arm user text equals the baseline
+  arm once the trailing canary is removed, so both arms feed the upstream identical effective
+  input) · **② provider-reject delta 0** (all 66 injected bodies remain valid JSON with an
+  unchanged `messages` length) · **③ append-only 66/66** (every injection adds exactly one canary
+  and mutates no existing byte). Verdict PASS, written to `var/canary-replay/replay-report.json`.
+  Reverse probe: a patched `inject` that rewrites existing bytes turns ① and ③ red and the
+  overall verdict FAIL, so the harness is not a rubber stamp.
+- **What the replay does NOT prove**: it drives a loopback mock upstream, not the real provider, so
+  it cannot measure the *provider's* refusal rate — criterion ② is measured as "the forwarded body
+  stays well-formed", which is the part the gateway controls. A provider that rejects inflected
+  input for its own reasons is out of this measurement's reach.
 - **Operational note**: injection only applies to the managed routes listed above; traffic routed
   through other `client/provider` paths is scanned but never injected. For dsh, this means every
   OpenAI-compatible provider that shares the `/dsh/cliproxy` base URL is covered, but a provider
@@ -137,6 +145,25 @@
   credential read must not (`blocked_before_forward`, upstream receives nothing).
 - **Lesson**: enabling a checker on a new side changes its blast radius. An observational checker
   that starts gating the request path is no longer observational.
+
+#### `pem-private-key` only flagged the header (fixed 0.6.1)
+
+- **What happened**: the rule matched `-----BEGIN … PRIVATE KEY-----` and nothing else, so any
+  *discussion* of PEM format was judged as credential egress and blocked the whole request. The
+  repository's own fixture — `tests/fixtures/threats/T1b/secrets.yaml`, present since 2026-09-15 —
+  is exactly such a shell, which means working on this project could refuse its own sessions.
+  Measured 2026-11-24: a request containing only that fixture line returned 502.
+- **Why the 0.5.2 example allowlist did not cover it**: that allowlist handles `AKIA…` and
+  `ghp_…` only; PEM was never added, and the problem is structural rather than a specific value.
+- **Fix**: a PEM hit now requires a block shape — the header and the `END` line on **different
+  lines**. Real PEM bodies are laid out line by line; fixtures and format discussions write them
+  inline. Three other criteria were tried and rejected with measurements: body length (the
+  truncated test sample `MIIEow...` has 6 legal characters, indistinguishable from the fixture),
+  "has any content" (the fixture's `payload` placeholder counts as content), and multi-line block
+  (it would flip the frozen `AC-VETO-003-01` sample to clean).
+- **Residual**: a truncated real key written on one line is not flagged; a discussion quoting a
+  genuine multi-line block is. Both are accepted — the former needs a body to leak, the latter is
+  already a leak in the text.
 
 ### T2b: Response Injection Protection
 
@@ -414,6 +441,7 @@ For security vulnerabilities, contact @boyingliu01 directly (do not post publicl
 
 | Date | Change |
 |------|--------|
+| 2026-11-24 | 0.6.1: canary recording replay re-established (P1-1); PEM false positive fixed; request-side grading incident registered |
 | 2026-11-24 | 0.6.0: `dangerous-command-scan` extended to the request side with rule-level grading; incident and residual coverage registered |
 | 2026-11-02 | v0.3.0: canary engine and four checkers shipped; corrected v2a status, budget semantics, and removed unverified bug claims |
 | 2026-10-16 | Initial compilation for internal trial |

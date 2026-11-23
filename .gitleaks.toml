@@ -29,3 +29,18 @@ useDefault = true
   paths = [
     '''^\.secrets\.baseline$''',
   ]
+
+  # ── 0.6.1：PEM 测试样例（逐字豁免，不放行目录）──
+  #
+  # `pem-private-key` 判据收紧后，测试必须同时覆盖"成块 → 检出"与"空壳 → 放行"两种形态，
+  # 两类样例都含 `-----BEGIN … PRIVATE KEY-----`，gitleaks 的 private-key 规则必然命中
+  # （实测 entropy 4.67 / 4.73）。它们是**测试夹具，不是密钥**：空壳样例里的 `payload`
+  # 是占位词、没有编码主体；成块样例的 base64 是测试里手写的固定串。
+  #
+  # 为什么逐字而不放行 tests/ 目录：目录级豁免会让今后误提交进测试文件的真实私钥同样
+  # 静默通过，与 Gate 8 的 fail-closed 语义冲突。
+  regexes = [
+    '''-----BEGIN RSA PRIVATE KEY----- payload -----END RSA PRIVATE KEY-----''',
+    '''b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAt''',
+    '''MIIEowIBAAKCAQEA0Z3VS5JJcds3xfn''',
+  ]

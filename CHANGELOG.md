@@ -4,6 +4,57 @@ All notable changes to this project are documented in this file. The format is a
 take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.1] - 2026-11-24
+
+### Fixed
+
+- **`pem-private-key` blocked every discussion of PEM format.** The rule matched the header
+  (`-----BEGIN … PRIVATE KEY-----`) and nothing else, so this repository's own fixture — present
+  since 2026-09-15 — made the gateway refuse the sessions that work on it (measured: a request
+  containing only that line returned 502). A PEM hit now requires a block shape: header and `END`
+  on different lines. Real bodies are line-laid-out; fixtures and format discussions write them
+  inline. Three other criteria (body length, "has content", multi-line block) were measured and
+  rejected — each flipped either the fixture or the frozen `AC-VETO-003-01` sample.
+
+### Added
+
+- **`scripts/canary-replay.mjs` — the G-CANARY replay is back (P1-1).** The v2a recording was
+  overwritten by probe traffic and the item sat as an accepted residual. The script rebuilds the
+  corpus from this machine's 11 DSH session recordings (66 exchanges, gitignored under
+  `var/canary-replay/`) and replays three criteria: finish_reason no migration 66/66,
+  provider-reject delta 0, append-only 66/66 → PASS. A patched inject that rewrites existing bytes
+  turns the verdict FAIL, so the harness is not a rubber stamp. It drives a loopback mock upstream,
+  so it measures the body the gateway forwards, not the provider's own refusal rate.
+
+## [0.6.1] - 2026-11-24
+
+### Fixed
+
+- **`pem-private-key` blocked every discussion of PEM format.** The rule matched the header
+  (`-----BEGIN … PRIVATE KEY-----`) and nothing else, so this repository's own fixture — present
+  since 2026-09-15 — made the gateway refuse the sessions that work on it (measured: a request
+  containing only that line returned 502). A PEM hit now requires a **block shape**: header and
+  `END` on different lines. Real bodies are line-laid-out; fixtures and format discussions write
+  them inline. Three other criteria were measured and rejected — body length (the truncated sample
+  `MIIEow...` has 6 legal characters, indistinguishable from the fixture), "has any content" (the
+  fixture's `payload` counts as content), and multi-line block (it flips the frozen
+  `AC-VETO-003-01` sample to clean).
+- The T1b corpus entry that expressed the shell form now carries `expected: clean` and is excluded
+  from the "detection rate = 100%" denominator; a dedicated block-form case covers the positive
+  path instead. Encoding a newline inside a YAML-subset scalar is not possible, so the fixture
+  states the semantics rather than contorting the format.
+
+### Added
+
+- **`scripts/canary-replay.mjs` — the G-CANARY replay is back (P1-1).** The v2a recording was
+  overwritten by probe traffic and the item sat as an accepted residual. The script rebuilds the
+  corpus from this machine's 11 DSH session recordings (66 exchanges, gitignored under
+  `var/canary-replay/`) and replays three criteria: finish_reason no migration 66/66,
+  provider-reject delta 0, append-only 66/66 → PASS. `tests/unit/canary-replay.test.ts` pins both
+  directions: a patched `inject` that rewrites existing bytes turns the verdict FAIL, so the
+  harness is not a rubber stamp. It drives a loopback mock upstream, so it measures the body the
+  gateway forwards, not the provider's own refusal rate.
+
 ## [0.6.0] - 2026-11-24
 
 ### Added

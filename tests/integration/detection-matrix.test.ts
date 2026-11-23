@@ -39,14 +39,34 @@ describe("SL-12 detection matrix (REQ-VETO-012 AC-01)", () => {
   it(`T1b 正样本 ≥ 3：${t1bCases.length} cases`, () => {
     expect(t1bCases.length).toBeGreaterThanOrEqual(3);
   });
-  for (let i = 0; i < t1bCases.length; i++) {
-    const c = t1bCases[i] as Record<string, YamlValue>;
-    it(`T1b[${String(c.id ?? i)}] 检出`, () => {
+  // 正样本 = 期望 finding 的条目；`expected: clean` 的条目是非检出样本（如 0.6.1 的 PEM
+  // 格式讨论形态），单独断言，且不计入「检出率 = 100%」的分母。
+  const t1bPositive = t1bCases.filter((c) => (c as Record<string, YamlValue>).expected !== "clean");
+  it(`T1b 正样本 ≥ 3：${t1bPositive.length} cases`, () => {
+    expect(t1bPositive.length).toBeGreaterThanOrEqual(3);
+  });
+  for (const raw of t1bCases) {
+    const c = raw as Record<string, YamlValue>;
+    if (c.expected === "clean") {
+      it(`T1b[${String(c.id ?? "?")}] 非检出样本 → clean`, () => {
+        expect(egressSecretScan(unit(String(c.body ?? ""))).verdict).toBe("clean");
+      });
+      continue;
+    }
+    it(`T1b[${String(c.id ?? t1bCases.indexOf(raw))}] 检出`, () => {
       const r = egressSecretScan(unit(String(c.body ?? "")));
       expect(r.verdict).toBe("finding");
       if (c.expected_rule_id) expect(r.evidence[0]?.rule_id).toBe(String(c.expected_rule_id));
     });
   }
+
+  // 0.6.1：PEM 成块形态必须检出（YAML 子集无法表达换行，故在此显式构造）。
+  it("T1b[pem-block] 成块 PEM（头/体/END 分行）→ 检出 pem-private-key", () => {
+    const block = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA0Z3VS5JJcds3xfn\nYYVgHZ1uA8P7IbUmlu7F\n-----END RSA PRIVATE KEY-----";
+    const r = egressSecretScan(unit(block));
+    expect(r.verdict).toBe("finding");
+    expect(r.evidence[0]?.rule_id).toBe("pem-private-key");
+  });
 
   // ── T2c：invisible-unicode-scan 检出率 = 100%，含跨 chunk 与 tool-call arguments 归并路径 ──
   const t2cCases = loadAll(join(FIXTURES, "T2c"));

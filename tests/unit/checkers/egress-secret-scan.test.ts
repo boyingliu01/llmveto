@@ -55,6 +55,29 @@ describe("egress-secret-scan (REQ-VETO-003)", () => {
     expect(r.evidence.some((f) => f.rule_id === "pem-private-key")).toBe(true);
   });
 
+  // ── PEM：只认「头 + 主体」，光有头部是文档/夹具形态（2026-11-24 线上误报）──
+  it("PEM 空壳（本仓库夹具原文）→ clean：讨论 PEM 格式不应被自己的网关拦下", () => {
+    // 这一行自 2026-09-15 起就在 tests/fixtures/threats/T1b/secrets.yaml 里，
+    // 旧规则只认头部，导致任何引用该夹具的会话请求都 502。
+    const fixture = "-----BEGIN RSA PRIVATE KEY----- payload -----END RSA PRIVATE KEY-----";
+    expect(egressSecretScan(req(fixture)).verdict).toBe("clean");
+    // 讨论格式的写法同样不该命中
+    expect(egressSecretScan(req("PEM 文件以 -----BEGIN OPENSSH PRIVATE KEY----- 开头")).verdict).toBe("clean");
+  });
+
+  it("PEM 真块（头 + base64 主体）仍命中：收紧没有削弱检测", () => {
+    const realLike = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZWQyNTUxOQAAACB\n-----END OPENSSH PRIVATE KEY-----";
+    const r = egressSecretScan(req(realLike));
+    expect(r.verdict).toBe("finding");
+    expect(r.evidence.some((f) => f.rule_id === "pem-private-key")).toBe(true);
+  });
+
+  it("PEM 成块形态（多行，含截断示例）→ 仍命中：收紧没有误伤已冻结的测试契约", () => {
+    // 判据是「头尾是否分处不同行」。多行块即使主体很短也按真块处理——
+    // 这与 AC-VETO-003-01 的既有样例一致，收紧不能与它冲突。
+    expect(egressSecretScan(req("-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----")).verdict).toBe("finding");
+  });
+
   // ── 官方文档示例值放行（防止"开发本项目的会话被自己拦下"）──
   it("官方文档示例值 AKIAIOSFODNN7EXAMPLE → clean（不阻断）", () => {
     const r = egressSecretScan(req("aws_access_key_id = AKIAIOSFODNN7EXAMPLE"));

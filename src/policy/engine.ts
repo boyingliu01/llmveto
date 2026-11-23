@@ -1,5 +1,6 @@
 import type { Action, CheckerResult } from "../shared/types.ts";
-import { mapBySpec } from "./mapping.ts";
+import { mapBySpec, mapBySpecWithRules } from "./mapping.ts";
+import { BLOCKING_RULE_IDS } from "../checkers/dangerous-command-scan.ts";
 
 /**
  * @test REQ-VETO-006
@@ -32,15 +33,33 @@ export interface PolicyInput {
 
 const SEVERITY: Record<Action, number> = { allow: 0, warn: 1, redact: 1, block: 2 };
 
+/** 需要按规则分级（而非 checker 粒度）判定的 checker（0.6.0）。 */
+const RULE_GRADED_CHECKERS: ReadonlySet<string> = Object.freeze(new Set(["dangerous-command-scan"]));
+
+/**
+ * 单个 checker 结果 → action。规则级分级只对声明该能力的 checker 生效（当前唯一：
+ * dangerous-command-scan 的 credential-file-read）；其余 checker 的 evidence 不参与判定，
+ * 映射逐字不变。
+ */
+function actionFor({ checkerId, safetyClass, result }: PolicyInput): Action {
+  if (!RULE_GRADED_CHECKERS.has(checkerId)) return mapBySpec({ id: checkerId, safetyClass }, result.verdict);
+  return mapBySpecWithRules({ id: checkerId, safetyClass }, result.verdict, result.evidence, BLOCKING_RULE_IDS);
+}
+
+/** D-11：观测类 checker 的 scanner_error 等于本交互观测面降级（safetyClass 走 fail-closed block，不在此列）。 */
+function isObservationalError({ safetyClass, result }: PolicyInput): boolean {
+  return !safetyClass && result.verdict === "error";
+}
+
 export function decide(inputs: readonly PolicyInput[]): PolicyDecision {
   let worst: Action = "allow";
   let degraded = false;
   const reasons: { checker: string; verdict: CheckerResult["verdict"]; action: Action }[] = [];
-  for (const { checkerId, safetyClass, result } of inputs) {
-    const action = mapBySpec({ id: checkerId, safetyClass }, result.verdict);
-    reasons.push({ checker: checkerId, verdict: result.verdict, action });
+  for (const input of inputs) {
+    const action = actionFor(input);
+    reasons.push({ checker: input.checkerId, verdict: input.result.verdict, action });
     if (SEVERITY[action] > SEVERITY[worst]) worst = action;
-    if (!safetyClass && result.verdict === "error") degraded = true;
+    degraded = degraded || isObservationalError(input);
   }
   return { action: worst, degraded, reasons };
 }

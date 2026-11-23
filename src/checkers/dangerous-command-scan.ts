@@ -39,6 +39,13 @@ interface Rule {
   readonly severity: "medium" | "high";
   /** 命中串的宿主名需再过一道「非内网」判定（裸 IP 规则用）。 */
   readonly publicHostOnly?: boolean;
+  /**
+   * 该规则命中允许升级为 block（0.6.0 按规则分级）。
+   * 只有「读凭据文件」这类**语义封闭**的规则可以标 true：命中即意味着凭据正要离开本机，
+   * 不存在「安装教程里也这么写」的正例面。其余规则保持观测类（warn）——
+   * 文本规则无法保证零误报，给它们阻断权会把正常开发会话整条 502 掉（2026-11-24 实测）。
+   */
+  readonly blocking?: boolean;
 }
 
 /**
@@ -73,55 +80,156 @@ const RULES: readonly Rule[] = [
   },
   {
     id: "raw-ip-download",
-    re: /\bhttps?:\/\/(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\//g,
+    re: /\bhttps?:\/\/(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\/\S*/g,
     severity: "medium",
     publicHostOnly: true,
   },
+  {
+    // 2026-11-24：`/dev/tcp` 与 `nc -e` 之外的另一半反弹 shell 形态——`nc -c` / `ncat -e`
+    // 及 `bash -i >& /dev/tcp/...` 早已由 `reverse-shell` 覆盖，此处补「本机管道到远端」：
+    // `cat x | nc host port`、（bash|sh|python…) 管道到远端。裸 `nc` 用法（端口探测、手工会话）
+    // 不含远端输入管道，不命中——这是把规则限定在「反向外带」语义上，而不是见到 nc 就报。
+    id: "reverse-shell-pipe",
+    re: /\b(?:cat|tar|base64)\b[^|\n]{0,200}\|\s*(?:nc|ncat|netcat)\s+\S+\s+\d{1,5}\b|\b(?:ba|z)?sh\b[^|\n]{0,80}\|\s*(?:nc|ncat|netcat)\s+\S+\s+\d{1,5}\b/g,
+    severity: "high",
+  },
+  {
+    // 上游对 agent 的工具调用里索要内容型凭据文件：`cat ~/.ssh/id_rsa`、`cat .env`、
+    // `cat ~/.aws/credentials`、`.npmrc` 等。「上游叫 agent 读出凭据 → agent 回传」
+    // 这条路不经过模型参数读取界面，是凭据出境的实际形态之一。
+    // 只认「文件读取工具/命令 + 凭据文件路径」，不认路径单独出现（文档、配置示例常见）。
+    id: "credential-file-read",
+    // 语义封闭 → 唯一允许阻断的规则（见 Rule.blocking）。
+    blocking: true,
+    // 命中集合全部以字面 "." 起头：前缀字符类展开后必然以非空白收尾，不存在空匹配。
+    // （2026-11-24 实测：前缀若可匹配空串，`\s*` 会在**每次**匹配失败时枚举每个起点上的
+    //  全部空白长度 = O(n²) 分配，一个普通句子就 OOM。）
+    re: /(?:\bcat\b|\bhead\b|\btail\b|\bless\b|\bmore\b|\btype\b|["']path["']\s*:|["']file_path["']\s*:)\s*["']?(?:[^\s"'.]{1,40}\/)?(?:\.ssh\/id_[a-z0-9]+|\.aws\/credentials|\.npmrc|\.pypirc|\.netrc|\.git-credentials|\.gnupg\/|\.env(?:\.[a-z0-9]+)?(?![\w.-])|secrets?\.(?:json|ya?ml|toml)(?![\w]))/gi,
+    severity: "high",
+  },
 ];
 
-/** 内网/回环/链路本地地址不算可疑下载源（本地开发与内网示例是常态）。 */
+/**
+ * 投毒底座的「拉取并落盘 + 随后执行」：单条正则同时匹配「下载到的本地文件名」与
+ * 「之后对同一路径执行」必然要反向引用 + 长距离回溯，实测会灾难性回溯（OOM），
+ * 故拆成两段有界扫描：先定位落盘（`curl -o x` / `wget -O x` / `-OutFile x`），
+ * 再在命中位置之后的定长窗口里找执行原语（chmod 后执行 / ./x / sh x / source x）。
+ * 只认「下载到本地文件名再执行」——`curl -o out.html <URL>` 这类正常下载不命中。
+ */
+const DOWNLOAD_RULE: Rule = {
+  id: "download-then-execute",
+  re: /\b(?:curl|wget|Invoke-WebRequest|iwr)\b[^|\n]{0,200}?(?:-O\w*|-o\s+|--output\s+|-OutFile\s+)\s*["']?([^\s"';&|]{1,64})/g,
+  severity: "high",
+};
+const EXEC_AFTER_DOWNLOAD_WINDOW = 400;
+const EXEC_AFTER_DOWNLOAD = /chmod\b[^\n]{0,40}|\bsource\b|\.\/|\b(?:ba|z)?sh\s+\S+/;
+
+/** 落盘目标是否可判定（排除空串、stdout `-` 与 URL）。 */
+function isLocalDownloadTarget(local: string): boolean {
+  return local !== "" && local !== "-" && !/^[a-z][a-z0-9+.-]*:\/\//i.test(local);
+}
+
+/** 落盘后是否在同一窗口里出现执行原语。 */
+function executesAfter(text: string, endOfMatch: number): boolean {
+  const tail = text.slice(endOfMatch, endOfMatch + EXEC_AFTER_DOWNLOAD_WINDOW);
+  return EXEC_AFTER_DOWNLOAD.test(tail);
+}
+
+function scanDownloadThenExecute(text: string): readonly { readonly offset: number; readonly text: string }[] {
+  const out: { offset: number; text: string }[] = [];
+  for (const m of text.matchAll(DOWNLOAD_RULE.re)) {
+    // 落盘目标可以是绝对路径（/tmp/p.sh）：只要不是 URL、也不是 `-`（stdout）。
+    if (!isLocalDownloadTarget(m[1] ?? "")) continue;
+    if (!executesAfter(text, m.index + m[0].length)) continue;
+    out.push({ offset: m.index, text: m[0] });
+  }
+  return out;
+}
+
+/**
+ * 可阻断规则白名单（0.6.0）：由 Rule.blocking 派生，是 policy 层判定 finding 能否升级为
+ * block 的**唯一来源**。新增阻断规则必须在此登记，且必须有「命中即危险」的语义论证。
+ */
+export const BLOCKING_RULE_IDS: ReadonlySet<string> = Object.freeze(
+  new Set(RULES.filter((r) => r.blocking === true).map((r) => r.id)),
+);
+
+/**
+ * 内网/回环/链路本地地址不算可疑下载源（本地开发与内网示例是常态）。
+ *
+ * 写成「网段表 + 一次区间查找」而不是条件链：条件链每个 `||` / `.some()` 短路都计一个
+ * 分支（CCN 一路涨到 11），而这里要表达的只是"该 /16 落在哪几个枚举区间里"。
+ * 表本身就是这份豁免的完整清单，新增网段只需加一行。
+ */
+interface PrivateRange {
+  /** 第一段（闭区间）。 */
+  readonly first: number;
+  /** 第二段区间（闭区间）；`lo === hi` 即 /16 固定段。 */
+  readonly lo: number;
+  readonly hi: number;
+}
+
+const PRIVATE_IPV4_RANGES: readonly PrivateRange[] = Object.freeze([
+  { first: 0, lo: 0, hi: 255 }, // 0.0.0.0/8 本网络
+  { first: 10, lo: 0, hi: 255 }, // 10.0.0.0/8
+  { first: 127, lo: 0, hi: 255 }, // 127.0.0.0/8 回环
+  { first: 169, lo: 254, hi: 254 }, // 169.254.0.0/16 链路本地
+  { first: 172, lo: 16, hi: 31 }, // 172.16.0.0/12
+  { first: 192, lo: 168, hi: 168 }, // 192.168.0.0/16
+]);
+
 function isPrivateIpv4(hostPort: string): boolean {
-  const host = hostPort.replace(/^https?:\/\//, "").split(":")[0]!;
-  const [a, b] = host.split(".").map(Number) as [number, number, number, number];
-  if (a === 0 || a === 10 || a === 127) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 192 && b === 168) return true;
-  return false;
+  const host = hostPort.replace(/^https?:\/\//, "").split(":")[0] ?? "";
+  const [a, b] = host.split(".").map(Number);
+  // 非点分十进制（缺第二段）不属本函数判定域：它不是 IPv4 字面量，交给调用方。
+  if (a === undefined || b === undefined) return false;
+  return PRIVATE_IPV4_RANGES.some((r) => r.first === a && b >= r.lo && b <= r.hi);
 }
 
 interface RuleHit {
   readonly rule: Rule;
   readonly offsets: readonly number[];
+  /** 命中原文（去重键的一半）；双投影命中时取还原后文本的那一份。 */
+  readonly text: string;
 }
 
-/** 扫一份投影文本；返回每个规则的首批命中偏移（同一规则只报一条 finding）。 */
-function scanOne(text: string, rule: Rule): readonly number[] {
-  const re = new RegExp(rule.re.source, rule.re.flags);
-  const offsets: number[] = [];
-  for (let m = re.exec(text); m !== null; m = re.exec(text)) {
-    if (m.index === re.lastIndex) re.lastIndex++;
+/** 扫一份投影文本；返回每个规则的全部命中偏移与命中原文（finding 由调用方按规则聚合）。 */
+function scanOne(text: string, rule: Rule): readonly { readonly offset: number; readonly text: string }[] {
+  // 用 matchAll 而非 `while (re.exec(text))`：`matchAll` 内部管理副本的 lastIndex，
+  // 不受调用方状态影响，也没有「零宽命中 → 原地重来」这一档（实测：一个 22 字符的
+  // 命中就能让 exec 循环永远停在同一位、把 2 GB 堆吃光，见 docs/KNOWN-ISSUES.md）。
+  const out: { offset: number; readonly text: string }[] = [];
+  for (const m of text.matchAll(rule.re)) {
     if (rule.publicHostOnly === true && isPrivateIpv4(m[0])) continue;
-    offsets.push(m.index);
+    out.push({ offset: m.index ?? 0, text: m[0] });
   }
-  return offsets;
+  return out;
 }
 
 /**
  * 双投影扫描：去掉 offsets 只在「首个投影（原文）」命中时保留——
  * 转义还原后的文本长度口径不同，偏移不可回指原文（与 egress-secret-scan 同纪律）。
+ * 每个规则对每份投影的所有命中都返回（同一规则的不同命令各算一条），
+ * 再由 applyDedup 按「规则 + 命中原文」去掉同一请求内的重复。
  */
-function scanTextsForRules(texts: readonly string[], withOffsets: boolean): readonly RuleHit[] {
-  const hits: RuleHit[] = [];
-  for (const rule of RULES) {
-    for (let i = 0; i < texts.length; i++) {
-      const offsets = scanOne(texts[i]!, rule);
-      if (offsets.length === 0) continue;
-      hits.push({ rule, offsets: withOffsets && i === 0 ? offsets : [] });
-      break;
-    }
-  }
-  return hits;
+/** 一份投影的偏移仅在原文投影（index 0）可回指原文，其余投影不报 offsets。 */
+function offsetsFor(projectionIndex: number, withOffsets: boolean, offset: number): readonly number[] {
+  return withOffsets && projectionIndex === 0 ? [offset] : [];
+}
+
+/** 单条规则跨全部投影的命中。 */
+function hitsForRule(texts: readonly string[], rule: Rule, withOffsets: boolean): readonly RuleHit[] {
+  return texts.flatMap((text, i) =>
+    scanOne(text, rule).map((m) => ({ rule, offsets: offsetsFor(i, withOffsets, m.offset), text: m.text })),
+  );
+}
+
+function scanTextsWithText(texts: readonly string[], withOffsets: boolean): readonly RuleHit[] {
+  const ruleHits = RULES.flatMap((rule) => hitsForRule(texts, rule, withOffsets));
+  const downloadHits = texts.flatMap((text, i) =>
+    scanDownloadThenExecute(text).map((m) => ({ rule: DOWNLOAD_RULE, offsets: offsetsFor(i, withOffsets, m.offset), text: m.text })),
+  );
+  return [...ruleHits, ...downloadHits];
 }
 
 function toFindings(hits: readonly RuleHit[]): readonly Finding[] {
@@ -135,9 +243,47 @@ function toFindings(hits: readonly RuleHit[]): readonly Finding[] {
   }));
 }
 
+/**
+ * 同一请求内跨扫描单元的命中抑制（2026-11-24）：请求体里 `roles[*].content` 这类整组消息
+ * （本机 DSH 会话实测：一次请求带全部历史 tool-result，同一条命令可重复出现数十次）会让
+ * 每条命中都各自产出一条 finding，同一条交互的 tips（真危险命令）被噪声淹没。
+ * 不变量：仍是纯函数——状态只活在一次判定内（调用方构造），不进模块级全局；
+ * 去重键取规则 + 命中文本（同一规则同一文本只报一次，设计上不丢规则维度）。
+ */
+export interface DangerousCommandDedup {
+  readonly seen: Set<string>;
+  /**
+   * 单个规则一次判定最多保留几条命中（0.6.0）。长 DSL 会话会把全部历史 tool-result 一起
+   * 发上来，同一条规则可能命中几十处互不相同的文本；evidence 里堆 40 条同规则 finding
+   * 会把真有价值的那条淹没。上限只截断**条数**，不改变判定（有命中仍是有命中）。
+   */
+  readonly perRuleCount: Map<string, number>;
+}
+
+/** 单规则 findings 上限（观测类噪声控制，非检测阈值）。 */
+export const MAX_FINDINGS_PER_RULE = 5 as const;
+
+export function createDangerousCommandDedup(): DangerousCommandDedup {
+  return { seen: new Set<string>(), perRuleCount: new Map<string, number>() };
+}
+
+function applyDedup(hits: readonly (RuleHit & { readonly text: string })[], dedup?: DangerousCommandDedup): readonly RuleHit[] {
+  if (dedup === undefined) return hits;
+  // 既有命中（另一次调用产生）在新调用里仍作为既有事实出现一次：不清空、只记新键。
+  const fresh = hits.filter((hit) => {
+    const key = `${hit.rule.id}\u0000${hit.text}`;
+    if (dedup.seen.has(key)) return false;
+    dedup.seen.add(key);
+    const n = (dedup.perRuleCount.get(hit.rule.id) ?? 0) + 1;
+    dedup.perRuleCount.set(hit.rule.id, n);
+    return n <= MAX_FINDINGS_PER_RULE;
+  });
+  return fresh;
+}
+
 /** 流式/非流式共用的纯文本判定（无 offsets 语义时传 false）。 */
-function checkTexts(texts: readonly string[], withOffsets: boolean): CheckerResult {
-  const findings = toFindings(scanTextsForRules(texts, withOffsets));
+function checkTexts(texts: readonly string[], withOffsets: boolean, dedup?: DangerousCommandDedup): CheckerResult {
+  const findings = toFindings(applyDedup(scanTextsWithText(texts, withOffsets), dedup));
   return findings.length === 0
     ? { verdict: "clean", evidence: [] }
     : { verdict: "finding", evidence: findings };
@@ -151,6 +297,14 @@ function primaryProjection(unit: ScanUnit): string {
 
 export const checkDangerousCommandNonStream: NonStreamChecker = (unit) =>
   checkTexts(scanTexts(unit), true);
+
+/**
+ * 修复卡（0.6.0）：同一请求的请求侧与响应侧共用一份去重状态时，响应里复述请求中的同一命令
+ * 不再二次告警。可选参数——不传时行为与 0.5.2 完全相同（纯函数契约不变）。
+ */
+export function checkDangerousCommandWithDedup(unit: ScanUnit, dedup: DangerousCommandDedup): CheckerResult {
+  return checkTexts(scanTexts(unit), true, dedup);
+}
 
 export const checkDangerousCommandStream: StreamChecker = (window, chunk) => {
   const prev = typeof window.extra?.[ACC_KEY] === "string" ? (window.extra[ACC_KEY] as string) : "";
@@ -169,6 +323,9 @@ export const checkDangerousCommandStream: StreamChecker = (window, chunk) => {
 export const DANGEROUS_COMMAND_SCAN_SPEC = {
   id: CHECKER_ID,
   side: "response",
+  // 0.6.0：请求侧也要扫——凭据出境与投毒口令都从「请求里的 file_path / command」落地，
+  // 只挂响应侧时这些内容从不进入判定面（见 docs/KNOWN-ISSUES.md 的 2026-11-24 条目）。
+  sides: ["request", "response"],
   synchronous: true,
   safetyClass: false, // 文本规则有正例教程误报面 → finding=warn（policy mapBySpec 兜底）
   threat: THREAT,

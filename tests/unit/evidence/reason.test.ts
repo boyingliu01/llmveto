@@ -306,7 +306,9 @@ describe("SL-03 REGISTRY 声明序（tie-break 单一真相源）", () => {
   });
 
   it("checkersFor 分派序与注册表声明序一致（请求侧 / 响应侧）", () => {
-    expect(checkersFor("request").map((c) => c.id)).toEqual(["egress-secret-scan"]);
+    // 0.6.0：dangerous-command-scan 声明 sides:["request","response"]（凭据出境/投毒口令
+    // 的落点在请求里的 file_path/command），故请求侧分派为两项，顺序仍跟注册表声明序。
+    expect(checkersFor("request").map((c) => c.id)).toEqual(["dangerous-command-scan", "egress-secret-scan"]);
     expect(checkersFor("response").map((c) => c.id)).toEqual([
       "canary-return-scan",
       "dangerous-command-scan",

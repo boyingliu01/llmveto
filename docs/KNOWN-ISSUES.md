@@ -99,6 +99,45 @@
 - **Not covered**: dangerous-command allowlists, semantic intent judgment, or a request that
   declares no `tools` at all (registered as a known miss in the requirements)
 
+#### `dangerous-command-scan` now covers the request side, with rule-level action grading (0.6.0)
+
+- **What changed**: the checker was declared `side: "response"` only. Measured on this machine's
+  real DSL sessions (2026-11-24), **every credential-read went through the request side**: an
+  upstream instructed the agent in a *response* to call a `read` tool whose `path` was
+  `~/.ssh/id_ed25519`, and the file content came back in a tool result. The checker never saw any of
+  it — a whole class of credential egress had zero coverage. The spec now declares
+  `sides: ["request", "response"]` (new optional field; `side` remains the primary side).
+- **Action grading is per rule, not per checker.** The checker carries both
+  "semantically closed" rules (reading `~/.ssh/*`, `.env`, `~/.aws/credentials`, `.npmrc` — a hit
+  *is* egress) and rules where benign text matches are legitimate (`curl … | bash` appears verbatim
+  in install docs, and in this repository's own README and tests). Giving them one action was the
+  root cause of the 2026-11-24 incident below. Now `credential-file-read` is marked `blocking` and
+  every other rule stays observational (`warn`). The authoritative set is
+  `BLOCKING_RULE_IDS`, derived from the rule table in `src/checkers/dangerous-command-scan.ts`.
+- **Residual**: the blocking rule matches credential *paths*, not credential *values*. Reading an
+  unlisted store (custom secrets dir, keychain export, `.config/gh/hosts.yml`) is not blocked by
+  this rule; it is still caught by `egress-secret-scan` if the value itself enters the request.
+- **Noise bound**: at most `MAX_FINDINGS_PER_RULE` (5) findings per rule per exchange. A long DSL
+  session resends its entire tool-result history, so one rule could otherwise emit 40+ findings and
+  drown the one that matters.
+
+#### Incident 2026-11-24: the request-side checker blocked normal sessions
+
+- **What happened**: right after the request-side dispatch was enabled, this session's own traffic
+  was refused six times (`blocked_before_forward`, HTTP 502, 645372-byte request). The cause is
+  instructive: the conversation *was about security*, so its history contained `curl … | bash`,
+  `eval $(curl …)`, `IEX`, and this repository's own test fixtures. Forty findings were recorded,
+  all from a checker that was declared observational and should never have blocked anything.
+- **Why the tests did not catch it**: the integration suite only ever fed the checker *benign*
+  traffic from the response side. There was no case of "a request whose history legitimately quotes
+  dangerous-looking commands", which is the normal shape of a security project's own sessions.
+- **Fix** (all three parts are load-bearing): rule-level grading (only `credential-file-read`
+  blocks), the per-rule noise bound, and regression tests that pin both directions — a tutorial
+  command must pass through to the upstream (`warned`, upstream receives the request), and a
+  credential read must not (`blocked_before_forward`, upstream receives nothing).
+- **Lesson**: enabling a checker on a new side changes its blast radius. An observational checker
+  that starts gating the request path is no longer observational.
+
 ### T2b: Response Injection Protection
 
 - **Status**: Unmitigated
@@ -375,6 +414,7 @@ For security vulnerabilities, contact @boyingliu01 directly (do not post publicl
 
 | Date | Change |
 |------|--------|
+| 2026-11-24 | 0.6.0: `dangerous-command-scan` extended to the request side with rule-level grading; incident and residual coverage registered |
 | 2026-11-02 | v0.3.0: canary engine and four checkers shipped; corrected v2a status, budget semantics, and removed unverified bug claims |
 | 2026-10-16 | Initial compilation for internal trial |
 | 2026-09-27 | v2a sprint completed; canary/evil-relay merged but not yet released |

@@ -4,6 +4,45 @@ All notable changes to this project are documented in this file. The format is a
 take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2026-11-24
+
+### Added
+
+- **`dangerous-command-scan` covers the request side** (`sides: ["request", "response"]`). Measured
+  on real DSL sessions on 2026-11-24, every credential read travelled the request path — an upstream
+  told the agent to call a `read` tool with `path: ~/.ssh/id_ed25519` — and the response-only
+  checker never saw it. New optional `CheckerSpec.sides`; `side` stays the primary side.
+- **Three rules** for shapes the old set could not express: `credential-file-read` (reading
+  `~/.ssh/*`, `.env`, `~/.aws/credentials`, `.npmrc`, … through a tool argument or `cat`),
+  `download-then-execute` (`curl -o x … && chmod +x x && ./x`, matched in two bounded passes so the
+  regex cannot backtrack catastrophically), and `reverse-shell-pipe` (`cat secret | nc host port`).
+  `raw-ip-download` now captures the whole URL so its offsets point at the real text.
+- **Rule-level action grading** (`mapBySpecWithRules` + exported `BLOCKING_RULE_IDS`):
+  `credential-file-read` maps to `block`; every other rule stays observational. Per-rule finding cap
+  `MAX_FINDINGS_PER_RULE = 5`.
+- **Cross-unit dedup** for the checker: one dedup state per exchange, shared between the request and
+  response paths, so a response echoing a command already seen in the request is not reported twice.
+
+### Fixed
+
+- **A regex loop that could exhaust the heap.** `scanOne` advanced its cursor with
+  `if (m.index === re.lastIndex) re.lastIndex++`, which is never true after a successful `exec`
+  (the engine has already advanced it), and any branch that skipped the push left `lastIndex` at 0
+  while still matching. A 22-byte input was enough to spin forever and OOM the worker. Replaced with
+  `String.prototype.matchAll`, which owns its cursor. `dangerous-command-scan` previously emitted a
+  single finding per rule per unit; it now reports each distinct hit (bounded by the per-rule cap).
+- **Duplicate findings amplified by long sessions.** A DSL request resends its full tool-result
+  history, so one rule produced up to 40 findings for the same exchange.
+
+### Security
+
+- **Regression of the 2026-11-24 incident.** Enabling the checker on the request side without
+  change its action semantics blocked this project's own development session six times
+  (`blocked_before_forward`, 502, a 645 KB request). The trigger was ordinary work: the conversation
+  was about security, so its history quoted `curl … | bash`, `IEX`, and the repository's fixtures.
+  Tests pinned both directions afterwards: a tutorial command reaches the upstream (`warned`), a
+  credential read does not (`blocked_before_forward`, upstream receives zero requests).
+
 ## [0.4.0] - 2026-11-19
 
 ### Added

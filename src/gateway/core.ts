@@ -19,6 +19,7 @@ import { encodeVetoEvent, parseSseFrames, tryParseJson, type SseFrame } from "./
 import { decide, pickScenario, pickTopReasonFromErrorFindings, type BehaviorScenario } from "../policy/engine.ts";
 import type { PolicyInput } from "../policy/engine.ts";
 import { resolveActionTaken } from "../policy/mapping.ts";
+import { directionsOf } from "../shared/types.ts";
 import type {
   CheckerResult,
   CheckerSpec,
@@ -36,6 +37,7 @@ import type { ActionTaken } from "../shared/types.ts";
 import { CanaryStore } from "../canary/store.ts";
 import { deriveSessionKey } from "../canary/session-key.ts";
 import { inject } from "../canary/inject.ts";
+import { checkDangerousCommandWithDedup, createDangerousCommandDedup } from "../checkers/dangerous-command-scan.ts";
 
 /**
  * @test REQ-VETO-002
@@ -120,6 +122,9 @@ function createCanaryStore(cfg: GatewayConfig): CanaryStore | null {
   return cfg.canaryRegistryPath !== undefined ? new CanaryStore(cfg.canaryRegistryPath) : null;
 }
 
+/** 0.6.0：需要在一次请求内跨单元去重的 checker（同一命令被 DSH 全历史重放 20 次是常态）。 */
+const DEDUP_CHECKER_IDS: ReadonlySet<string> = Object.freeze(new Set(["dangerous-command-scan"]));
+
 export class GatewayCore {
   /** canary：D-02 单写者 store（null = 未配置，判定域外）；计数面恒在（进程内，durable 聚合属 SL-12），未配置全零。 */
   readonly canary: CanaryStore | null;
@@ -133,7 +138,7 @@ export class GatewayCore {
   private checkersIncludingInjected(side: Direction): readonly CheckerSpec[] {
     const extra = this.cfg.extraCheckers;
     if (extra === undefined || extra.length === 0) return checkersFor(side);
-    return [...checkersFor(side), ...extra.filter((c) => c.side === side)];
+    return [...checkersFor(side), ...extra.filter((c) => directionsOf(c).includes(side))];
   }
 
   /**
@@ -146,7 +151,12 @@ export class GatewayCore {
   }
 
   /** 请求侧扫描 + policy → action；返回 action 与 evidence findings。 */
-  scanRequest(bodyText: string, headers: Readonly<Record<string, string>>, transport: "stream" | "non-stream"): {
+  scanRequest(
+    bodyText: string,
+    headers: Readonly<Record<string, string>>,
+    transport: "stream" | "non-stream",
+    cmdDedup: ReturnType<typeof createDangerousCommandDedup> = createDangerousCommandDedup(),
+  ): {
     inputs: PolicyInput[];
     scanUnit: ScanUnit;
   } {
@@ -158,10 +168,20 @@ export class GatewayCore {
     for (const spec of this.checkersIncludingInjected("request")) {
       const fn = spec.runNonStream as NonStreamChecker | undefined;
       if (!fn) continue;
-      const r = safeRun(fn, scanUnit, this.budgetFor(spec.id, defaultBudget));
+      const r = DEDUP_CHECKER_IDS.has(spec.id)
+        ? safeRun((u: ScanUnit) => checkDangerousCommandWithDedup(u, cmdDedup), scanUnit, this.budgetFor(spec.id, defaultBudget))
+        : safeRun(fn, scanUnit, this.budgetFor(spec.id, defaultBudget));
       inputs.push({ checkerId: spec.id, safetyClass: spec.safetyClass, threat: spec.threat, result: r });
     }
     return { inputs, scanUnit };
+  }
+
+  /** 危险命令去重入口（0.6.0）：请求侧与响应侧共用一份状态；其它 checker 不受影响。 */
+  scanWithDangerousCommandDedup(unit: ScanUnit, dedup: ReturnType<typeof createDangerousCommandDedup>): PolicyInput[] {
+    const spec = this.checkersIncludingInjected(unit.direction).find((c) => c.id === "dangerous-command-scan");
+    if (spec === undefined) return [];
+    const result = safeRun((u: ScanUnit) => checkDangerousCommandWithDedup(u, dedup), unit, this.budgetFor(spec.id, G1_PER_CHUNK));
+    return [{ checkerId: spec.id, safetyClass: spec.safetyClass, threat: spec.threat, result }];
   }
 
   /** 响应侧非流式扫描 + policy。 */
@@ -403,6 +423,21 @@ function responseMetaFor(canaryMeta: CanaryRequestMeta | null, declaredMeta: Rec
 }
 
 /**
+ * 0.6.0：把「共享去重」的第二遍扫描结果与常规响应侧结果合并——只替换
+ * dangerous-command-scan 这一项（其它 checker 结果原样）。若注入的 checker 集合里
+ * 没有该 checker（登记域外），则保留常规结果不动。
+ */
+function withDedupScan(
+  _meta: Record<string, unknown>,
+  regular: readonly PolicyInput[],
+  dedup: readonly PolicyInput[],
+): readonly PolicyInput[] {
+  if (dedup.length === 0) return regular;
+  const id = dedup[0]!.checkerId;
+  return [...regular.filter((i) => i.checkerId !== id), ...dedup];
+}
+
+/**
  * 流式扫描的上下文解析（D-09）：advance 缺省为 true；只有 advance 且 windows 本身是
  * WindowStore 时才启用窗口账本；归并重投影（advance=false）给单元打 reprojected 标记，
  * 让 checker 知道这段文本是"已消费内容的重放"。
@@ -428,12 +463,19 @@ interface NonStreamResponseParams {
   readonly forwardedBody: string;
   readonly canaryMeta: CanaryRequestMeta | null;
   readonly gwReasons: readonly string[] | undefined;
+  readonly cmdDedup: ReturnType<typeof createDangerousCommandDedup>;
 }
 
 function handleNonStreamResponse(p: NonStreamResponseParams): ChatOutcome {
   const respInputs = p.core.scanResponseNonStream(p.text, p.requestedModel, p.responseMeta);
-  const respDecision = decide([...p.requestInputs, ...respInputs]);
-  const allFindings = [...p.reqFindings, ...flattenFindings(respInputs)];
+  // 0.6.0：与请求侧共享去重的第二遍（响应复述请求里的同一命令不再二次告警）。
+  const dedupInputs = p.core.scanWithDangerousCommandDedup(
+    buildResponseScanUnit(p.text, tryParseJson(p.text), p.requestedModel, "non-stream", p.responseMeta),
+    p.cmdDedup,
+  );
+  const combinedResp = withDedupScan(p.responseMeta, respInputs, dedupInputs);
+  const respDecision = decide([...p.requestInputs, ...combinedResp]);
+  const allFindings = [...p.reqFindings, ...flattenFindings(combinedResp)];
   if (respDecision.action === "block") {
     return {
       status: 502,
@@ -485,7 +527,8 @@ export async function handleChatCompletions(
   // transport 由 server 层判定后下传（单一真相源）：本层不再自行从 headers/body 重判。
   const { transport } = req;
   const stream = transport === "stream";
-  const reqScan = core.scanRequest(req.body, req.headers, transport);
+  const cmdDedup = createDangerousCommandDedup();
+  const reqScan = core.scanRequest(req.body, req.headers, transport, cmdDedup);
   // SL-01/D-12：请求体 tools 声明面（declared_tools/declared_required）提取自请求扫描
   // 单元 meta，下传给响应侧全部扫描单元（非流式 / 流式逐帧 / 归并单元）。
   const declaredMeta = declaredToolsMeta(reqScan.scanUnit.meta);
@@ -507,6 +550,7 @@ export async function handleChatCompletions(
     // canary meta 随声明面并入全部响应侧扫描单元（SL-08 return-scan 判定面）；判定域外保持 declaredMeta 原样。
     responseMeta: responseMetaFor(canaryStep.meta, declaredMeta),
     requestInputs: reqScan.inputs,
+    cmdDedup,
     degraded: reqDecision.degraded,
     reqFindings,
     forwardedBody: canaryStep.forwardedBody,
@@ -533,6 +577,8 @@ interface UpstreamDelivery {
   readonly forwardedBody: string;
   readonly canaryMeta: CanaryRequestMeta | null;
   readonly gwReasons: readonly string[] | undefined;
+  /** 危险命令去重状态（请求侧已消费），透传给响应侧各路径。 */
+  readonly cmdDedup: ReturnType<typeof createDangerousCommandDedup>;
 }
 
 async function deliverUpstream(d: UpstreamDelivery): Promise<ChatOutcome> {
@@ -558,6 +604,7 @@ async function deliverUpstream(d: UpstreamDelivery): Promise<ChatOutcome> {
       forwardedBody: d.forwardedBody,
       canaryMeta: d.canaryMeta,
       gwReasons: d.gwReasons,
+      cmdDedup: d.cmdDedup,
     });
   }
   // 流式：tee（逐帧交付逻辑独立成 handleStreaming，主 handler 只保留分支骨架）
@@ -572,6 +619,7 @@ async function deliverUpstream(d: UpstreamDelivery): Promise<ChatOutcome> {
     forwardedBody: d.forwardedBody,
     canaryMeta: d.canaryMeta,
     gwReasons: d.gwReasons,
+    cmdDedup: d.cmdDedup,
   });
 }
 
@@ -587,6 +635,7 @@ interface StreamParams {
   readonly forwardedBody: string;
   readonly canaryMeta: CanaryRequestMeta | null;
   readonly gwReasons: readonly string[] | undefined;
+  readonly cmdDedup: ReturnType<typeof createDangerousCommandDedup>;
 }
 
 /** 流式交付的跨帧可变状态：扫描窗口、归并桶与交付计数同住一处，收束时由 getter 读真值。 */
@@ -597,6 +646,8 @@ interface StreamState {
   readonly responseMeta: Record<string, unknown>;
   readonly requestInputs: readonly PolicyInput[];
   readonly argsMerger: ReturnType<typeof createToolCallArgsMerger>;
+  /** 危险命令去重（0.6.0）：与请求侧共持一份，响应里复述请求中的同一命令不再二次告警。 */
+  readonly cmdDedup: ReturnType<typeof createDangerousCommandDedup>;
   readonly allFindings: EvidenceFinding[];
   pending: string;
   deliveredChunks: number;
@@ -609,8 +660,11 @@ interface StreamState {
 function scanDelivered(st: StreamState, text: string): boolean {
   const scan = st.core.scanResponseStreamChunk(st.windows, text, st.requested, st.responseMeta);
   st.argsMerger.feed(scan.parsed); // 帧内 delta 片段进归并桶（归并后统一扫描，不逐 chunk 扫碎片）
-  st.allFindings.push(...flattenFindings(scan.inputs));
-  const d = decide([...st.requestInputs, ...scan.inputs]);
+  // 0.6.0 去重只覆盖非流式与归并单元：逐帧窗口才承载跨帧命令拼接（dangerous-command-scan 的
+  // 流式语义），用逐帧原文另做一遍去重扫描会丢跨帧命中（2026-11-24 实测回归）。
+  const inputs = scan.inputs;
+  st.allFindings.push(...flattenFindings(inputs));
+  const d = decide([...st.requestInputs, ...inputs]);
   if (d.degraded) st.degradedSeen = true;
   return d.action === "block";
 }
@@ -647,9 +701,12 @@ function scanMergedArgs(st: StreamState): boolean {
   }
   const merged = st.argsMerger.mergedText();
   if (merged === "") return false;
-  const scan = st.core.scanResponseStreamUnit(st.windows, buildMergedToolCallScanUnit(merged, st.responseMeta), { advance: false });
-  st.allFindings.push(...flattenFindings(scan.inputs));
-  const d = decide([...st.requestInputs, ...scan.inputs]);
+  const mergedUnit = buildMergedToolCallScanUnit(merged, st.responseMeta);
+  const scan = st.core.scanResponseStreamUnit(st.windows, mergedUnit, { advance: false });
+  const dedupInputs = st.core.scanWithDangerousCommandDedup(mergedUnit, st.cmdDedup);
+  const inputs = withDedupScan(st.responseMeta, scan.inputs, dedupInputs);
+  st.allFindings.push(...flattenFindings(inputs));
+  const d = decide([...st.requestInputs, ...inputs]);
   if (d.degraded) st.degradedSeen = true;
   return d.action === "block";
 }
@@ -771,6 +828,7 @@ function handleStreaming(p: StreamParams): ChatOutcome {
   const st: StreamState = {
     core, windows: createWindowStore(), requested, responseMeta, requestInputs,
     argsMerger: createToolCallArgsMerger(),
+    cmdDedup: p.cmdDedup,
     allFindings: [...reqFindings],
     pending: "",
     deliveredChunks: 0,

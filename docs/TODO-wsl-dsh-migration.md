@@ -1,7 +1,7 @@
 # TODO — 从 Windows+Qoder 迁移到 WSL+dsh（llmveto 收尾清单）
 
-> 基线快照（2026-11-23）
-> - 仓库：`D:\projects\llmveto`，`main@c14444e`，工作区干净；npm `llmveto@0.4.1` 已发布（latest）。
+> 基线快照（2026-11-23，WSL 实测后更新）
+> - 仓库：`D:\projects\llmveto`，`main@eaf985e`（本清单与 WSL 安装手册均已入库）；npm `llmveto@0.4.1` 已发布（latest）。
 > - 已完成并已随 0.4.0/0.4.1 入库：`dangerous-command-scan`（T2a 观测类）、`dsh/cliproxy` canary 路由、
 >   `scripts/provider-probe.ts`、lint 迁移到 Biome、`architecture.yaml` 可被 Gate 6 解析。
 > - 当前运行面（Windows）：网关 8787 由计划任务 `llmveto-gateway-autostart` 拉起；capture-proxy 8790
@@ -9,16 +9,30 @@
 > - 当前运行面（WSL Ubuntu-22.04）：`dsh web --no-open --port 3080`；dsh-model engine 8317；
 >   WSL 网络为 **mirrored 模式**（与 Windows 共享 localhost），故 dsh 经
 >   `http://127.0.0.1:8787/dsh/cliproxy/v1` 直连 Windows 网关（已实测可用）。
-> - 本清单只列**未完成**事项；已完成的能力与验证记录见 README、CHANGELOG 与 0.4.x release notes。
+> - WSL 工具链实测（只读探测）：node 24.22.3 / npm 11.19.1 / gh 2.105.0（已登录）/ gitleaks 8.30.1 /
+>   semgrep、checkov、lizard 原生可用；**缺口**：bun 未装、jscpd/archlint 解析到 `/mnt/c`、`~/.local/bin`
+>   不在 PATH、xp-gate 0.38.9（npm latest 0.38.125）、`[interop]` 未关、git 邮箱为占位。
+> - 重建命令（幂等脚本 + 逐项验收）见 `docs/WSL-ENV-SETUP.md`；本清单只列**未完成**事项，
+>   已完成的能力与验证记录见 README、CHANGELOG 与 0.4.x release notes。
 
 ## 1. 迁移前准备
 
 - [ ] TODO 备份 Windows 侧 `C:\Users\admin\.llmveto\`（`canary-registry.json`、`evidence.jsonl`、`models-snapshot.json`、`autostart.ps1`）到 WSL 之外的独立备份目录，并记录备份时间点。
 - [ ] TODO 确认 WSL 已启用 systemd（`/etc/wsl.conf` 中 `systemd=true`；`wsl --shutdown` 后 `systemctl --user status` 可用）。
-- [ ] TODO 在 WSL 内确认/安装运行依赖：`node -v`（需 ≥24，当前 24.22.1 可用）、`npm`、`git`、可选 `bun`；跑一遍 `npm ci && npm run typecheck && npm test` 确认 WSL 侧基线全绿（仓库无 `package-lock.json` 时按 `bun.lock` 用 bun，勿用 npm install 造 lock 文件）。
+- [ ] TODO 按 `docs/WSL-ENV-SETUP.md` 执行 WSL 重建脚本（幂等），其覆盖范围之外的验收点见下方 1.1。
 - [ ] TODO 把 `LLMVETO_UPSTREAMS` 的当前值写入 WSL 私密 env 文件（如 `~/.config/llmveto/env`，`chmod 600`），不得进仓库、不得复制进文档或 issue。
 - [ ] TODO 读出现有网关 env 全集（仅本次迁移用）：确认除 `LLMVETO_UPSTREAMS` 外没有其他 `LLMVETO_*` 覆盖项需要迁移。
 - [ ] TODO 公司代理：WSL 内确认 `curl`/`git`/`gh` 能出网；需要时按既有方案用 Windows `no_proxy` + `WSLENV` 透传（curl 7.81 不认 `10.*` 绕过写法）。
+
+### 1.1 WSL 实测缺口（2026-11-23 只读探测）
+
+- [ ] TODO `/etc/wsl.conf` 加 `[interop] appendWindowsPath = false` 后在 PowerShell 执行 `wsl --shutdown`（会同时关闭 Ubuntu 26.04）；重启后确认 `command -v jscpd` 不再指向 `/mnt/c`。
+- [ ] TODO 安装 bun 1.4.3 到 `~/.bun/bin`（与 `test.yml` 对齐；latest 1.4.5 不采用）。
+- [ ] TODO 把 `~/.local/bin`、`~/.npm-global/bin`、`~/.bun/bin` 追加到 `~/.zshrc` 末尾——默认 shell 是 **zsh**；必须追加在末尾，防止被更早的硬编码 `export PATH` 覆盖（26.04 发行版有该坑）。
+- [ ] TODO 升级 xp-gate 0.38.9 → latest（0.38.125）：`npm i -g @boyingliu01/xp-gate@latest` → `xp-gate update-hooks --global` → `xp-gate bootstrap`；随后用临时仓库真实提交探针确认 13 门触发（以 `.xp-gate/reports/pre-commit/*.json` 有新报告为准）。
+- [ ] TODO 安装原生 `jscpd@5.4.3`（当前解析到 Windows 版）；确认 `detect-secrets` 在 PATH 中可见——已安装但不可见等于门禁静默降级。
+- [ ] TODO 修正 `git config --global user.email`（当前 `boyingliu01@example.com` 是占位，GitHub 不接受）。
+- [ ] TODO 代理可选：Windows 侧 `WSLENV=no_proxy` 已设，但 WSL 内 `no_proxy` 为空；出网正常可忽略，否则按 WSL-ENV-SETUP 第 3 节补全透传。
 
 ## 2. 代码仓位置
 
@@ -46,7 +60,7 @@
 - [ ] TODO 迁移后跑 `llmveto doctor`：受管配置路径将从 Windows 的 `%USERPROFILE%` 切到 WSL 的 `~/.config/...`，确认无 drift 或按提示重写。
 - [ ] TODO 清理 Windows 残留：停用并删除计划任务、归档 `autostart.ps1`、删除 Windows 侧 `gateway.pid`/`gateway.url`（registry/evidence 保留备份）。
 - [ ] TODO 实测启动顺序：先起 dsh web 再起网关时，第一笔请求会 fail-closed 502 且可恢复；把结论写进迁移笔记（是否需要 systemd `After=`/延迟启动策略）。
-- [ ] TODO WSL 侧 xp-gate 重装/校验：用 `xp-gate-reinstall` 流程（快照→卸载清残留→装最新→逐项校验真实生效），不要手改门禁脚本。
+- [ ] TODO WSL 侧 xp-gate 重装/校验：用 `xp-gate-reinstall` 流程（快照→卸载清残留→装最新→逐项校验真实生效），不要手改门禁脚本；当前 WSL 为 0.38.9，latest 0.38.125，升级后须重跑真实提交探针。
 
 ## 4. 迁移后验收清单
 
@@ -109,6 +123,8 @@
 |---|---|---|
 | 提交卡在某 Gate / 全 PASS 却不落库 | 钩子跑超时被杀 | 给 commit 显式 timeout ≥600s 重跑 |
 | WSL 里 Gate 7 扫描异常 | 命中 `/mnt/c` 的 Windows shim | 装原生工具；查 PATH 顺序 |
+| WSL 里 `which jscpd/xp-gate` 指向 `/mnt/c` | `appendWindowsPath` 默认为 true | 关 `[interop]` + `wsl --shutdown` 后重开 |
+| 工具装了但门禁说 Not found | `~/.local/bin` 不在 PATH（zsh rc 被硬编码 PATH 覆盖） | PATH 块追加到 rc **末尾** |
 | Gate 8 说 PASS 但密钥没拦 | 夹具本身不被识别 + 回退路径 | 用公认会被报的串做端到端对账 |
 | Gate 6 报 `layer_config_unparsable` | `architecture.yaml` 用了序列形态 | 保持 map 形式（0.4.0 已修） |
 | Gate 6 报 FAIL 但提交成功 | xp-gate #852 fail-open | 以报告 JSON 为准，别把「提交成功」当通过 |

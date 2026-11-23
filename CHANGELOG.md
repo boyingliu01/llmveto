@@ -49,6 +49,25 @@ take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
   `dangerous-command-scan`): assignment-in-condition loops rewritten, long/IO-heavy helpers split
   with contextual error messages, unused fields/imports removed. No behaviour change.
 
+## [0.5.0] - 2026-11-23
+
+### Added
+
+- **Canary hit attribution (`origin`).** A cross-session canary hit used to report only *that* a
+  leak had happened. The evidence finding now carries the **originating session key** in an optional
+  `origin` field, answering *which* session leaked into which. Implemented via a new
+  `CanaryStore.snapshotWithOrigin()` that mirrors `snapshot()`'s set and self-exclusion semantics
+  while retaining each canary's source session. `evidence_version` stays `1`: the field only adds
+  information and `validateEvidence`'s required-field + validator model does not reject it, so
+  existing chains still verify.
+
+### Notes
+
+- Two silent-drop points had to be fixed together — `toEvidenceFinding()` and `responseMetaFor()`
+  both build objects field by field, so a new field vanishes without any type error or existing
+  test failing. Each is now pinned by an integration test whose reverse probe fails when the
+  passthrough is removed.
+
 ## [0.4.1] - 2026-11-19
 
 ### Fixed

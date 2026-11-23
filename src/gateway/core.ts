@@ -27,6 +27,7 @@ import type {
   ScanUnit,
   ScanWindow,
   NonStreamChecker,
+  StreamChecker,
   BodyCapture,
 } from "../shared/types.ts";
 import type { EvidenceWriter } from "../evidence/writer.ts";
@@ -107,7 +108,12 @@ export const CANARY_MANAGED_ROUTES: ReadonlySet<string> = Object.freeze(new Set(
 export type CanaryMetrics = { inject_skipped: number; registry_unavailable: number; canary_injected: number };
 
 /** 响应侧扫描单元 meta 的 canary 形状（SL-08 return-scan 判定面）：快照不可用时 canary_candidates 键缺席。 */
-export interface CanaryRequestMeta { readonly canary_injected: boolean; readonly canary_candidates?: readonly string[]; }
+export interface CanaryRequestMeta {
+  readonly canary_injected: boolean;
+  readonly canary_candidates?: readonly string[];
+  /** P1-2 归因面：与 canary_candidates 同集合，附带来源会话键；缺席时 checker 退化为只报命中。 */
+  readonly canary_candidates_with_origin?: readonly { readonly canary: string; readonly origin: string }[];
+}
 
 /** canary 域的装配点（类体不直接 new 依赖：测试仍可经 config 注入路径构造替身）。 */
 function createCanaryStore(cfg: GatewayConfig): CanaryStore | null {
@@ -192,11 +198,7 @@ export class GatewayCore {
     unit: ScanUnit,
     opts?: { readonly advance?: boolean },
   ): { inputs: PolicyInput[]; nextWindows: ReadonlyMap<string, ScanWindow> } {
-    const advance = opts?.advance !== false;
-    const ledger: WindowStore | undefined = advance && isWindowStore(windows) ? windows : undefined;
-    const effectiveUnit = advance
-      ? unit
-      : { ...unit, meta: { ...unit.meta, [REPROJECTION_META_KEY]: true } };
+    const { advance, ledger, effectiveUnit } = resolveStreamScanContext(windows, unit, opts);
     // D-09 默认接线（AC-V2a-27①）：流式路径每次 checker 调用走 G1 每 chunk 门。
     // advance:false 的归并重投影再扫描（归并文本 = 已消费内容的重放）按"每次调用"
     // 字面同样包裹与裁决（含注入 override）；超时只改写 result，窗口推进语义不变。
@@ -204,23 +206,14 @@ export class GatewayCore {
     const nextWindows = new Map<string, ScanWindow>();
     for (const spec of this.checkersIncludingInjected("response")) {
       const prev = windows.get(spec.id) ?? initialWindow();
-      if (spec.runStream) {
-        const [result, returned] = runStreamWithBudget(
-          spec.runStream,
-          prev,
-          effectiveUnit,
-          this.budgetFor(spec.id, G1_PER_CHUNK),
-        );
-        inputs.push(this.policyInput(spec, result));
-        nextWindows.set(spec.id, advance ? this.advanceWindow(ledger, spec.id, prev, returned, unit.text) : prev);
-      } else if (spec.runNonStream) {
-        const result = safeRun(
-          spec.runNonStream as NonStreamChecker,
-          effectiveUnit,
-          this.budgetFor(spec.id, G1_PER_CHUNK),
-        );
-        inputs.push(this.policyInput(spec, result));
-      }
+      const step = this.runStreamSpec(spec, prev, effectiveUnit, {
+        advance,
+        ledger,
+        sourceText: unit.text,
+      });
+      if (step === null) continue;
+      inputs.push(step.input);
+      if (step.window !== undefined) nextWindows.set(spec.id, step.window);
     }
     return { inputs, nextWindows };
   }
@@ -241,6 +234,27 @@ export class GatewayCore {
   }
 
   /** 响应侧流式扫描：per-chunk → policy；返回 action + evidence。 */
+  /**
+   * 单 checker 在流式单元上的执行（D-09 逐调用 G1 门）：runStream 优先，
+   * 否则退到 runNonStream；两者都没有时返回 null（该 spec 不参与本单元）。
+   * advance=false（归并重投影）不推进窗口，窗口原样回收。
+   */
+  private runStreamSpec(
+    spec: { readonly id: string; readonly runStream?: StreamChecker; readonly runNonStream?: NonStreamChecker },
+    prev: ScanWindow,
+    unit: ScanUnit,
+    ctx: { readonly advance: boolean; readonly ledger: WindowStore | undefined; readonly sourceText: string },
+  ): { readonly input: PolicyInput; readonly window?: ScanWindow } | null {
+    if (spec.runStream) {
+      const [result, returned] = runStreamWithBudget(spec.runStream, prev, unit, this.budgetFor(spec.id, G1_PER_CHUNK));
+      const window = ctx.advance ? this.advanceWindow(ctx.ledger, spec.id, prev, returned, ctx.sourceText) : prev;
+      return { input: this.policyInput(spec as CheckerSpec, result), window };
+    }
+    if (!spec.runNonStream) return null;
+    const result = safeRun(spec.runNonStream, unit, this.budgetFor(spec.id, G1_PER_CHUNK));
+    return { input: this.policyInput(spec as CheckerSpec, result) };
+  }
+
   scanResponseStreamChunk(
     windows: ReadonlyMap<string, ScanWindow>,
     chunkData: string,
@@ -300,13 +314,20 @@ function orchestrateCanary(core: GatewayCore, req: { body: string; headers: Reco
   const sessionKey = deriveSessionKey(req.headers, req.body);
   const { canary } = store.assign(sessionKey); // 分配点 = 过闸时
   const candidates = store.snapshot(sessionKey); // 冻结只读快照（跨客户端共享；在途请求不受后续轮换影响）
+  // P1-2 归因面：同一集合、同一排除语义，额外保留来源会话键（命中时可报「谁串进了谁」）。
+  const candidatesWithOrigin = store.snapshotWithOrigin(sessionKey);
   const result = inject(req.body, canary);
+  const meta = (injected: boolean): CanaryRequestMeta => ({
+    canary_injected: injected,
+    canary_candidates: candidates,
+    canary_candidates_with_origin: candidatesWithOrigin,
+  });
   if (!result.injected) {
     core.canaryMetrics.inject_skipped += 1;
-    return { forwardedBody: result.body, meta: { canary_injected: false, canary_candidates: candidates }, gatewayReason: "inject_skipped" };
+    return { forwardedBody: result.body, meta: meta(false), gatewayReason: "inject_skipped" };
   }
   core.canaryMetrics.canary_injected += 1;
-  return { forwardedBody: result.body, meta: { canary_injected: true, canary_candidates: candidates } };
+  return { forwardedBody: result.body, meta: meta(true) };
 }
 
 /** handler 的统一返回形状：流式路径用 getter，交付完成时才读终止真值。 */
@@ -373,7 +394,28 @@ function responseMetaFor(canaryMeta: CanaryRequestMeta | null, declaredMeta: Rec
     ...declaredMeta,
     canary_injected: canaryMeta.canary_injected,
     ...(canaryMeta.canary_candidates !== undefined ? { canary_candidates: canaryMeta.canary_candidates } : {}),
+    // P1-2：归因面必须一并并入扫描单元。此处的逐键构造是第二个"静默丢弃"点——
+    // 编排层算出了 with_origin，但未并入 meta 时 checker 永远读不到它。
+    ...(canaryMeta.canary_candidates_with_origin !== undefined
+      ? { canary_candidates_with_origin: canaryMeta.canary_candidates_with_origin }
+      : {}),
   };
+}
+
+/**
+ * 流式扫描的上下文解析（D-09）：advance 缺省为 true；只有 advance 且 windows 本身是
+ * WindowStore 时才启用窗口账本；归并重投影（advance=false）给单元打 reprojected 标记，
+ * 让 checker 知道这段文本是"已消费内容的重放"。
+ */
+function resolveStreamScanContext(
+  windows: ReadonlyMap<string, ScanWindow>,
+  unit: ScanUnit,
+  opts?: { readonly advance?: boolean },
+): { readonly advance: boolean; readonly ledger: WindowStore | undefined; readonly effectiveUnit: ScanUnit } {
+  const advance = opts?.advance !== false;
+  const ledger = advance && isWindowStore(windows) ? windows : undefined;
+  const effectiveUnit = advance ? unit : { ...unit, meta: { ...unit.meta, [REPROJECTION_META_KEY]: true } };
+  return { advance, ledger, effectiveUnit };
 }
 
 interface NonStreamResponseParams {
@@ -585,18 +627,22 @@ function scanDelivered(st: StreamState, text: string): boolean {
  * 已发出时无法再收敛为 HTTP 错误，且未处理的 rejection 可能杀 daemon（fail-open）。
  * 因此注册表缺项也不得抛错——合成 scanner_error 条目并照常 block。
  */
+/** 归并缓冲溢出只报一次（window_overflow）；注册表缺项也不得抛错，合成 scanner_error 的威胁面兜底。 */
+function reportArgsOverflow(st: StreamState): void {
+  if (st.mergedOverflowReported) return;
+  st.mergedOverflowReported = true;
+  const spec = REGISTRY.find((c) => c.id === "tool-call-shape");
+  st.allFindings.push({
+    checker: "tool-call-shape",
+    threat: spec?.threat ?? CHECKER_THREAT_BY_ID["tool-call-shape"] ?? "T2a",
+    verdict: "error",
+    rule_id: "window_overflow",
+  });
+}
+
 function scanMergedArgs(st: StreamState): boolean {
   if (st.argsMerger.overflowed) {
-    if (!st.mergedOverflowReported) {
-      st.mergedOverflowReported = true;
-      const spec = REGISTRY.find((c) => c.id === "tool-call-shape");
-      st.allFindings.push({
-        checker: "tool-call-shape",
-        threat: spec?.threat ?? CHECKER_THREAT_BY_ID["tool-call-shape"] ?? "T2a",
-        verdict: "error",
-        rule_id: "window_overflow",
-      });
-    }
+    reportArgsOverflow(st);
     return true;
   }
   const merged = st.argsMerger.mergedText();
@@ -616,14 +662,17 @@ type FrameStep =
  * transport=stream 由本端判定（`?stream=1` / 头），与上游模态可能不一致，免检直通会让
  * 该子类的响应侧 checker 全部落空（R2-N1 扫描回归）。 */
 function stepForFrame(st: StreamState, f: SseFrame): FrameStep {
-  if (f.data === undefined) {
-    if (scanDelivered(st, f.raw)) return { kind: "veto" };
-    return { kind: "emit", text: f.raw + "\n\n", delivers: false };
-  }
+  if (f.data === undefined) return stepRawFrame(st, f.raw);
   if (f.data === "[DONE]") return { kind: "emit", text: `data: ${f.data}\n\n`, delivers: false };
   // SL-01：归并增量扫描在交付当前帧之前——跨帧才完整的载荷此刻已可判定
   if (scanDelivered(st, f.data) || scanMergedArgs(st)) return { kind: "veto" };
   return { kind: "emit", text: `data: ${f.data}\n\n`, delivers: true };
+}
+
+/** 无 data 字段的帧：按原文扫描，命中即 veto。 */
+function stepRawFrame(st: StreamState, raw: string): FrameStep {
+  if (scanDelivered(st, raw)) return { kind: "veto" };
+  return { kind: "emit", text: raw + "\n\n", delivers: false };
 }
 
 /** EOF 残尾（未以空行收束的最后一帧，含"上游返回非 SSE JSON 体"的整段内容）：
@@ -648,32 +697,51 @@ async function* streamSseFrames(
     const { value, done } = await reader.read();
     if (done) break;
     st.pending += decoder.decode(value, { stream: true });
-    const { frames, rest } = parseSseFrames(st.pending);
-    st.pending = rest;
-    for (const f of frames) {
-      const step = stepForFrame(st, f);
-      if (step.kind === "veto") {
-        yield encodeVetoEvent(st.deliveredChunks);
-        st.terminated = true;
-        return;
-      }
-      yield step.text;
-      if (step.delivers) st.deliveredChunks += 1;
-    }
-  }
-  if (st.pending.length > 0) {
-    if (scanPendingTail(st)) {
+    const batch = takeFrames(st);
+    // 先交付本批已判定通过的帧，再按需收束——命中前的 benign 帧必须已送达客户端
+    // （AC-VETO-014：delivered_chunks 反映真实交付数，不可因后帧 veto 而回退）。
+    yield* batch.texts;
+    if (batch.veto) {
       yield encodeVetoEvent(st.deliveredChunks);
       st.terminated = true;
       return;
     }
-    yield st.pending;
   }
-  // SL-01：残尾帧可能补进最后的 arguments 片段——流收束前对归并文本做末次整体扫描
-  if (scanMergedArgs(st)) {
+  yield* flushStreamTail(st);
+}
+
+/**
+ * 从 st.pending 切出一批完整帧并逐帧判定：遇 veto 立即停止（后续帧不再交付），
+ * 记录已交付计数。返回值里 texts 是待交给客户端的帧文本。
+ */
+function takeFrames(st: StreamState): { readonly texts: string[]; readonly veto: boolean } {
+  const { frames, rest } = parseSseFrames(st.pending);
+  st.pending = rest;
+  const texts: string[] = [];
+  for (const f of frames) {
+    const step = stepForFrame(st, f);
+    if (step.kind === "veto") return { texts, veto: true };
+    texts.push(step.text);
+    if (step.delivers) st.deliveredChunks += 1;
+  }
+  return { texts, veto: false };
+}
+
+/**
+ * 流收束：残尾（未以空行收束的最后一帧）先行判定与交付，再对归并文本做末次整体扫描
+ * （SL-01：残尾帧可能补进最后的 arguments 片段）。命中则产 veto 并置 terminated。
+ */
+async function* flushStreamTail(st: StreamState): AsyncIterable<string> {
+  if (st.pending.length === 0) return;
+  if (scanPendingTail(st)) {
     yield encodeVetoEvent(st.deliveredChunks);
     st.terminated = true;
     return;
+  }
+  yield st.pending;
+  if (scanMergedArgs(st)) {
+    yield encodeVetoEvent(st.deliveredChunks);
+    st.terminated = true;
   }
 }
 
@@ -761,6 +829,9 @@ function toEvidenceFinding(f: Finding): EvidenceFinding {
     ...(f.severity !== undefined ? { severity: f.severity } : {}),
     ...(f.offsets !== undefined ? { offsets: f.offsets } : {}),
     ...(f.rule_id !== undefined ? { rule_id: f.rule_id } : {}),
+    // P1-2：命中来源会话键（canary 串入归因）。逐字段构造会静默丢弃它，必须显式透传，
+    // 否则 checker 算出了 origin 却永远进不了证据链（"看起来实现了、实际没生效"）。
+    ...(f.origin !== undefined ? { origin: f.origin } : {}),
   };
 }
 

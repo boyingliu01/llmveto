@@ -73,6 +73,74 @@ describe("SL-08 canary-return-scan (REQ-V2a-05)", () => {
     expect(r.verdict).toBe("finding"); // 在途请求按原始快照判
   });
 
+  // ── P1-2 归因：命中能报出「哪个会话串入」 ──
+  describe("P1-2 origin 归因", () => {
+    it("带 canary_candidates_with_origin → finding 携带对应会话键", () => {
+      const r = checkCanaryReturnScan(unit("leak: CAN_A here", {
+        canary_candidates: ["CAN_A", "CAN_B"],
+        canary_candidates_with_origin: [
+          { canary: "CAN_A", origin: "session-alpha" },
+          { canary: "CAN_B", origin: "session-beta" },
+        ],
+      }));
+      expect(r.verdict).toBe("finding");
+      expect(r.evidence[0]?.origin).toBe("session-alpha"); // 命中的是 CAN_A
+    });
+
+    it("命中第二个候选时归因随之正确（不是固定取第一个）", () => {
+      const r = checkCanaryReturnScan(unit("leak: CAN_B here", {
+        canary_candidates: ["CAN_A", "CAN_B"],
+        canary_candidates_with_origin: [
+          { canary: "CAN_A", origin: "session-alpha" },
+          { canary: "CAN_B", origin: "session-beta" },
+        ],
+      }));
+      expect(r.verdict).toBe("finding");
+      expect(r.evidence[0]?.origin).toBe("session-beta");
+    });
+
+    it("只给 canary_candidates（无归因）→ 仍 finding，origin 缺席（向后兼容）", () => {
+      const r = checkCanaryReturnScan(unit("leak: CAN_A", { canary_candidates: ["CAN_A"] }));
+      expect(r.verdict).toBe("finding");
+      expect(r.evidence[0]?.origin).toBeUndefined();
+      expect(r.evidence[0]?.rule_id).toBe("canary-detected-in-response");
+    });
+
+    it("归因里没有该 canary（形状不匹配）→ finding 但不带 origin，不抛错", () => {
+      const r = checkCanaryReturnScan(unit("leak: CAN_X", {
+        canary_candidates: ["CAN_X"],
+        canary_candidates_with_origin: [{ canary: "CAN_OTHER", origin: "session-other" }],
+      }));
+      expect(r.verdict).toBe("finding");
+      expect(r.evidence[0]?.origin).toBeUndefined();
+    });
+
+    it("归因数组形状非法（缺字段 / 非对象）→ 忽略，退化为只报命中", () => {
+      const r = checkCanaryReturnScan(unit("leak: CAN_A", {
+        canary_candidates: ["CAN_A"],
+        canary_candidates_with_origin: [{ canary: "CAN_A" }, "not-an-object", { origin: "x" }],
+      }));
+      expect(r.verdict).toBe("finding");
+      expect(r.evidence[0]?.origin).toBeUndefined();
+    });
+
+    it("origin 与会话键同源：store.snapshotWithOrigin 的 origin 即会话键", () => {
+      const fake = {
+        snapshot: () => ["CAN_S", "CAN_T"],
+        snapshotWithOrigin: () => [
+          { canary: "CAN_S", origin: "sess-S" },
+          { canary: "CAN_T", origin: "sess-T" },
+        ],
+      };
+      const withOrigin = fake.snapshotWithOrigin();
+      const r = checkCanaryReturnScan(unit("leak CAN_T", {
+        canary_candidates: fake.snapshot(),
+        canary_candidates_with_origin: withOrigin,
+      }));
+      expect(r.evidence[0]?.origin).toBe("sess-T");
+    });
+  });
+
   it("纯函数性 + spec 声明", () => {
     const u = unit("test CANARY_z", { canary_candidates: ["CANARY_z"] });
     expect(checkCanaryReturnScan(u)).toEqual(checkCanaryReturnScan(u));

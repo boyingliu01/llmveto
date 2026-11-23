@@ -70,28 +70,38 @@ export class CanaryStore {
     this.loadStatus = this.load();
   }
 
+  /** 读注册表原文；文件不可读（含缺失）返回 null = 首启空态。 */
+  private readRawOrNull(): string | null {
+    try {
+      return readFileSync(this.filePath, "utf8");
+    } catch {
+      return null;
+    }
+  }
+
   private load(): RegistryLoadStatus {
-    let raw: string;
-    try {
-      raw = readFileSync(this.filePath, "utf8");
-    } catch {
-      return { status: "ok" }; // 文件缺失 = 首启空态（三个损坏类之外，首笔 assign 落盘）
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      return { status: "registry_unavailable", cause: "invalid_json" };
-    }
-    const checked = validateRegistryFile(parsed);
+    const raw = this.readRawOrNull();
+    if (raw === null) return { status: "ok" }; // 文件缺失 = 首启空态（三个损坏类之外，首笔 assign 落盘）
+    const parsed = tryParseJson(raw);
+    if (!parsed.ok) return { status: "registry_unavailable", cause: "invalid_json" };
+    const checked = validateRegistryFile(parsed.value);
     if (typeof checked === "string") return { status: "registry_unavailable", cause: checked };
-    for (const [session, entry] of Object.entries(checked.entries)) {
-      this.entries.set(session, { canary: entry.canary, last_seen: entry.last_seen });
-    }
+    this.applyLoaded(checked);
+    return { status: "ok" };
+  }
+
+  /** 把校验通过的注册表内容装入内存（含惰性淘汰 ①：加载时只清内存，不回写）。 */
+  private applyLoaded(checked: RegistryFile): void {
+    this.replaceEntries(checked.entries);
     this.rotations = checked.rotation_count;
     this.rotatedAtMs = checked.last_rotated_at === null ? null : Date.parse(checked.last_rotated_at);
-    this.prune(this.now()); // 惰性淘汰 ①：加载时（只清内存，不回写）
-    return { status: "ok" };
+    this.prune(this.now());
+  }
+
+  private replaceEntries(entries: RegistryFile["entries"]): void {
+    for (const [session, entry] of Object.entries(entries)) {
+      this.entries.set(session, { canary: entry.canary, last_seen: entry.last_seen });
+    }
   }
 
   /** 分配（幂等）：已有 session 刷新 lastSeen 返回旧串；否则用熵源分配新串并落盘。 */
@@ -139,6 +149,21 @@ export class CanaryStore {
     return Object.freeze(out);
   }
 
+  /**
+   * 带归因的匹配域快照（P1-2 / D-05 扩展）：与 snapshot 同一集合、同一排除语义，
+   * 但保留每个 canary 的来源会话键，使命中时能报出「串入的是哪个会话」而不是只知道「有串入」。
+   *
+   * 只单调**增加**信息：调用方仍按 canary 字符串匹配，会话键仅用于命中后的证据归属。
+   * canary 明文不进证据链的约束不变（会话键是摘要/UUID，不是密钥本身）。
+   */
+  snapshotWithOrigin(selfSession: string): readonly { canary: string; origin: string }[] {
+    const out: { canary: string; origin: string }[] = [];
+    for (const [session, entry] of this.entries) {
+      if (session !== selfSession) out.push({ canary: entry.canary, origin: session });
+    }
+    return Object.freeze(out.map((e) => Object.freeze(e)));
+  }
+
   get rotationCount(): number {
     return this.rotations;
   }
@@ -184,5 +209,16 @@ export class CanaryStore {
       throw new Error(`canary registry persist failed: ${this.filePath} (${err instanceof Error ? err.message : String(err)})`);
     }
     this.lastPersistAt = this.now();
+  }
+}
+
+/** JSON 解析结果：区分"解析失败"与"合法值"，避免用 null 兼任哨兵。 */
+type JsonParseResult = { readonly ok: true; readonly value: unknown } | { readonly ok: false };
+
+function tryParseJson(raw: string): JsonParseResult {
+  try {
+    return { ok: true, value: JSON.parse(raw) as unknown };
+  } catch {
+    return { ok: false };
   }
 }

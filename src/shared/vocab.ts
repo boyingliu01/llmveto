@@ -34,4 +34,13 @@ export interface Finding {
   readonly severity?: "low" | "medium" | "high" | "critical";
   readonly offsets?: readonly number[];
   readonly rule_id?: string;
+  /**
+   * 命中来源的归属标识（P1-2）：目前仅 canary-return-scan 使用，记录**串入的会话键**
+   * （canary 所属会话），使证据从「检测到串流」升级为「谁串进了谁」。
+   *
+   * 为什么是可选位而非新增 evidence_version：它只增加信息、不改变既有字段语义，
+   * `validateEvidence` 的必需字段 + 字段验证器模型不会拒绝它，故 v1 链的 verify 语义不变。
+   * 值为会话键（sha256 前 16 位或 DSH sessionId），**不是 canary 明文**，不违反 D-05。
+   */
+  readonly origin?: string;
 }

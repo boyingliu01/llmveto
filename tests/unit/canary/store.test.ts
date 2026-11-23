@@ -121,6 +121,38 @@ describe("SL-05 canary registry store (REQ-V2a-07 / D-01+D-02+D-05)", () => {
       expect(store.snapshot("s2")).toEqual(["can-000"]);
     });
 
+    // ── P1-2：带归因的快照 ──
+    it("snapshotWithOrigin：集合与 snapshot 一致，且附带来源会话键", () => {
+      const store = newStore({ entropy: fixedEntropy(ENTROPY), clock: fixedClock(T0) });
+      store.assign("s1");
+      store.assign("s2");
+      const withOrigin = store.snapshotWithOrigin("s1");
+      // 集合面与既有 snapshot 完全一致（不改变判定域）
+      expect(withOrigin.map((e) => e.canary)).toEqual([...store.snapshot("s1")]);
+      expect(withOrigin).toEqual([{ canary: "can-001", origin: "s2" }]);
+    });
+
+    it("snapshotWithOrigin：排除请求方自身（与 snapshot 同语义）", () => {
+      const store = newStore({ entropy: fixedEntropy(ENTROPY), clock: fixedClock(T0) });
+      store.assign("s1");
+      store.assign("s2");
+      expect(store.snapshotWithOrigin("s1").map((e) => e.origin)).not.toContain("s1");
+      expect(store.snapshotWithOrigin("unknown").map((e) => e.origin)).toEqual(["s1", "s2"]);
+    });
+
+    it("snapshotWithOrigin 只读：frozen，且后续 assign 不改变已取快照", () => {
+      const store = newStore({ entropy: fixedEntropy(ENTROPY), clock: fixedClock(T0) });
+      store.assign("s1");
+      store.assign("s2");
+      const snap = store.snapshotWithOrigin("s1");
+      expect(Object.isFrozen(snap)).toBe(true);
+      store.assign("s3");
+      // 已取的快照不被后续写入改变（新快照当然会多出 s3，那不是"快照被改"）
+      expect(snap.length).toBe(1);
+      expect(snap[0]?.origin).toBe("s2");
+      expect(store.snapshotWithOrigin("s1").length).toBe(2);
+    });
+
     it("请求方尚无 canary 时快照 = 全集", () => {
       const store = newStore({ entropy: fixedEntropy(ENTROPY), clock: fixedClock(T0) });
       store.assign("s1");

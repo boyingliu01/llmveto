@@ -30,6 +30,11 @@ export interface EvidenceFinding {
   readonly severity?: "low" | "medium" | "high" | "critical";
   readonly offsets?: readonly number[];
   readonly rule_id?: string;
+  /**
+   * P1-2 归因位（可选）：canary 串入的**来源会话键**，回答「谁串进了谁」而非仅「检测到串流」。
+   * 只增加信息、不修改既有字段语义，故 evidence_version 保持 1；旧记录无此键仍 valid。
+   */
+  readonly origin?: string;
 }
 
 export interface ResponseDelivered {
@@ -127,22 +132,27 @@ const FIELD_VALIDATORS: readonly ((
   (r, push) => { if ("canary" in r && r.canary !== null) push("canary must be null in v1"); },
 ];
 
+/** 必填键缺席检查。 */
+function collectMissing(r: Record<string, unknown>): string[] {
+  return REQUIRED_FIELDS.filter((f) => !(f in r)).map((f) => `missing: ${f}`);
+}
+
+/** 顶层 reason（D-10）：可选位 —— 键缺席合法；在场则必须是 §4.5 词表值（REQ-V2a-14）。 */
+function checkReason(r: Record<string, unknown>, push: (m: string) => void): void {
+  if (!("reason" in r)) return;
+  const reason = r.reason;
+  if (typeof reason === "string" && REASON_VOCAB.includes(reason)) return;
+  push(`reason: must be absent or one of §4.5 values (${REASON_VOCAB.join("|")}), got ${String(reason)}`);
+}
+
 /** 运行时 schema 断言：verify 消费入口 + writer 落盘前调用。 */
 export function validateEvidence(rec: unknown): { ok: true } | { ok: false; errors: readonly string[] } {
-  const errors: string[] = [];
   if (typeof rec !== "object" || rec === null) {
     return { ok: false, errors: ["root: not an object"] };
   }
   const r = rec as Record<string, unknown>;
-  for (const f of REQUIRED_FIELDS) {
-    if (!(f in r)) errors.push(`missing: ${f}`);
-  }
+  const errors: string[] = collectMissing(r);
   for (const check of FIELD_VALIDATORS) check(r, (m) => errors.push(m));
-  // 顶层 reason（D-10）：可选位 —— 键缺席合法；在场则必须是 §4.5 词表值（REQ-V2a-14）。
-  if ("reason" in r) {
-    if (typeof r.reason !== "string" || !REASON_VOCAB.includes(r.reason)) {
-      errors.push(`reason: must be absent or one of §4.5 values (${REASON_VOCAB.join("|")}), got ${String(r.reason)}`);
-    }
-  }
+  checkReason(r, (m) => errors.push(m));
   return errors.length === 0 ? { ok: true } : { ok: false, errors };
 }

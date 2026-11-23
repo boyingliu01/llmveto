@@ -265,6 +265,29 @@ The following clients are **not officially onboarded** in v0.3.0:
 
 ---
 
+### Discussing credential formats conflicts with blocking-class secret scanning
+
+- **Observed 2026-11-23/24**: while fixing `egress-secret-scan`, the agent created
+  format-valid probe keys to verify gitleaks and detect-secrets, and printed an API key from the
+  shell environment while surveying the toolchain. All of that entered the session transcript.
+  Because the gateway forwards the whole conversation on every request, and the checker is
+  blocking-class, **every subsequent request was refused** — 17 distinct strings, one of them a
+  real (balance-exhausted)SiliconFlow key, the other 16 self-made test values.
+- **The scanner was right in each case.** The real key should be blocked; the probe values are
+  indistinguishable from keys by construction. This is not a defect to patch away by widening the
+  allowlist — an allowlist that grows every time it interrupts its own author has stopped being an
+  allowlist.
+- **Operational consequence**: a session that quotes credential samples (writing fixture keys,
+  debugging this checker, reviewing a leak) cannot send traffic through the gateway afterwards.
+  Start a fresh session instead: it carries no earlier transcript, so nothing matches.
+- **Working practice that avoids it**: refer to credentials indirectly (`the SiliconFlow key`,
+  `sk-xxxx`) instead of pasting them; when a value must be printed for debugging, print a
+  length/count rather than the value (`grep -c`, `${#VAR}`), which is what the tooling surveys
+  should have done from the start.
+- **Verified**: with the documented-example allowlist (0.5.2) the two vendor examples no longer
+  trigger blocking; the remaining matches in a polluted transcript are genuine-looking values and
+  blocking on them is the intended behaviour.
+
 ### Providers pointing straight at the upstream are unprotected
 
 - **Measured 2026-11-24**: the dsh profile lists `ailb` with

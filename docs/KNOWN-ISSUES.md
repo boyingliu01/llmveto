@@ -247,6 +247,24 @@ The following clients are **not officially onboarded** in v0.3.0:
 
 ---
 
+### ACP CLI clients (trae, codebuddy) bypass the gateway by design
+
+- **What they are**: `traecli acp serve` and the codebuddy link are **first-party vendor CLIs**
+  launched by DSH as ACP subprocesses. DSH talks to them over a pipe, not HTTP, and their provider
+  configuration carries no `baseURL` — there is nothing for the gateway to rewrite.
+- **Consequence**: canary injection, the command scan and the evidence trail do **not** cover
+  traffic from these two clients. This is the same boundary the README states for any non-onboarded
+  client ("installing the gateway ≠ being protected").
+- **Why it is accepted rather than fixed riding v1**: covering a process that dials the vendor
+  itself needs TLS interception (`HTTPS_PROXY` + a trusted CA), which is a v3 item and conflicts
+  with the current "no CA installation" property.
+- **Threat-model note**: their model backends are first-party vendor services (ByteDance Seed via
+  trae, Tencent for codebuddy), not third-party relay stations. The relay-poisoning risk this
+  project targets does not apply to them, which is why model-authenticity probing of their model
+  lists is explicitly **not** planned (see `docs/TODO-PLAN-2026-11-23.md` P1-6).
+- **If this changes**: a future CLI that accepts a configurable base URL should be onboarded like
+  any other provider (managed config id + route + doctor assertion).
+
 ### OpenCode v2 Integration Quirks
 
 **Known symptom**: `doctor --write-managed-config` succeeds but OpenCode still connects directly

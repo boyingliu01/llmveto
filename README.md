@@ -133,6 +133,18 @@ Requirements: **Bun ≥ 1.1** (package management + test/build driver) and **Nod
 > `npx vitest run --coverage <changed tests>` for TypeScript projects and requires `coverage/coverage-summary.json`.
 > Standardizing on vitest avoids local-green/commit-red splits and additionally verifies Node compatibility of the runtime.
 
+**Running the gateway as a service (WSL/Linux).** The daemon can be supervised by systemd
+instead of `llmveto start`. Two details are load-bearing: `LLMVETO_DAEMON_CHILD=1` must be set,
+because `start` otherwise detaches a child and immediately exits (systemd would then restart it
+in a loop); and `ExecStart` should point at a system Node such as `/usr/bin/node` rather than a
+version-manager path, which breaks on every runtime switch. Once supervised, stop the gateway
+with `systemctl --user stop llmveto` — `llmveto stop` kills the process, and the unit's
+`Restart=on-failure` brings it back.
+
+Environment variables (`LLMVETO_PORT`, `LLMVETO_UPSTREAMS`, …) belong in an
+`EnvironmentFile` readable only by the service user (for example `~/.config/llmveto/env`,
+mode `600`); `LLMVETO_UPSTREAMS` carries provider endpoints and must not be committed.
+
 ## CLI
 
 v2a extends the command set 5→6 by adding `llmveto canary rotate` (v2a design D-14; no stubs for unimplemented commands). The distribution artifact is `dist/cli/index.js` (`llmveto`); in development mode use `bun run llmveto <cmd>` or `bun run src/cli/index.ts <cmd>`:

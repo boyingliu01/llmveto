@@ -73,6 +73,24 @@
 - **Note**: eviction only weakens detection for *evicted* sessions. Detection between the 64 most
   recently active sessions is unaffected.
 
+#### Canary attribution: session-level, not provider-level
+
+- **What is recorded**: since 0.5.0 a cross-session canary hit carries `origin`, the key of the
+  session whose canary appeared in another session's response. That answers *who leaked into
+  whom*.
+- **What is not**: for dsh, every OpenAI-compatible provider shares one route key
+  (`dsh/cliproxy`), so the evidence can say a leak came from dsh but not which upstream provider
+  served it. The same route key is also what makes canary injection apply there at all —
+  splitting routes per provider would require adding each split to
+  `MANUAL_CANARY_MANAGED_ROUTES`, and a provider pointed at its own path is currently **not**
+  injected.
+- **Why it is registered rather than changed**: splitting is an operational choice (each split
+  needs a `LLMVETO_UPSTREAMS` entry and a managed-route entry), not a defect. Session-level
+  attribution already closes the harder question for the threat this project models.
+- **Workaround**: point a provider at its own path (`/dsh/<provider>`) *and* add that route to
+  `MANUAL_CANARY_MANAGED_ROUTES` to get per-provider evidence; without the second half the route
+  is scanned but never injected.
+
 ### T2a: Tool-Call Structure Judgment
 
 - **Status**: Implemented in v0.3.0 (`tool-call-shape`, safety class)

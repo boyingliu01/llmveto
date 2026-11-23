@@ -122,6 +122,16 @@ llmveto stop
 > `npx vitest run --coverage <changed tests>`，并要求 `coverage/coverage-summary.json`。
 > 统一用 vitest 可避免本地绿、提交红的分裂，同时顺带验证运行时的 Node 兼容性。
 
+**以服务方式运行网关（WSL/Linux）。** 可以让 systemd 托管守护进程，而不是用 `llmveto start`。
+有两个点必须写对：一是 **`LLMVETO_DAEMON_CHILD=1` 必须设置**，因为 `start` 默认会派生脱离终端的
+子进程后立即退出，systemd 会把它当作崩溃并反复重启；二是 `ExecStart` 应指向系统 Node（如
+`/usr/bin/node`），而不是版本管理器路径——否则每次切换运行时都会失效。托管之后请用
+`systemctl --user stop llmveto` 停止网关：`llmveto stop` 只是杀掉进程，而单元的
+`Restart=on-failure` 会立刻把它拉回来。
+
+环境变量（`LLMVETO_PORT`、`LLMVETO_UPSTREAMS` 等）应放在只有服务用户可读的 `EnvironmentFile`
+里（例如 `~/.config/llmveto/env`，权限 `600`）；`LLMVETO_UPSTREAMS` 含供应商端点，不得入库。
+
 ## CLI
 
 v2a 将命令集由 5 扩为 6（新增 `llmveto canary rotate`；未实现的命令仍不留 stub）。分发物为 `dist/cli/index.js`（`llmveto`）；开发态用 `bun run llmveto <cmd>` 或 `bun run src/cli/index.ts <cmd>`：

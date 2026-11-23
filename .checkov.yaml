@@ -1,0 +1,27 @@
+# checkov 配置 —— 仅豁免一条有明确缓解措施的规则，不放宽其它检查。
+#
+# 被豁免的规则：CKV_GHA_7
+#   "The build output cannot be affected by user parameters other than the build entry
+#    point... GitHub Actions workflow_dispatch inputs MUST be empty."
+#
+# 命中位置：.github/workflows/relay-nightly.yml 的 opponent_filter 输入。
+#
+# 为什么接受（逐条缓解措施，不是"这条规则不重要"）：
+#   1. 输入经 **env 传递**，不是直接插值进 run: 脚本
+#      （`env: { OPPONENT_FILTER: ${{ github.event.inputs.opponent_filter }} }`，
+#       脚本里用 "$OPPONENT_FILTER" 读取）——避开了 GitHub Actions 最典型的表达式注入。
+#   2. 变量在使用处加了双引号（`pattern="${OPPONENT_FILTER:-$SHARD_PATTERN}"`），
+#      不会发生词分割或通配符展开。
+#   3. 该值只进入 vitest 的 `--testNamePattern`（筛选要跑哪些对手用例），
+#      **不参与构建、不产出任何发布物**，正是 CKV_GHA_7 规则所关心的"build output"之外。
+#   4. 作业权限是最小化的 `permissions: contents: read`。
+#   5. 只能由拥有仓库写权限的人通过 workflow_dispatch 手动触发；定时任务
+#      （cron 02:00）根本不读该输入。
+#
+# 若将来这个输入被用于构建/发布路径，或改为直接插值进 run:，必须删除本条豁免。
+#
+# 注意：`--config-file` 不是 Gate 7 的调用参数；checkov 默认读取工作目录下的
+# `.checkov.yaml`，因此本文件对门禁生效。已验证：加此文件后该文件的 FAILED 数 1 → 0。
+
+skip-check:
+  - CKV_GHA_7

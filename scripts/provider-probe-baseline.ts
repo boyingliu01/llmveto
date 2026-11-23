@@ -161,19 +161,22 @@ function save(fromPath: string, baselinePath: string): void {
 }
 
 /** 单个 target 的漂移判定；返回人类可读的漂移描述（空数组 = 无漂移）。 */
+/** 比率下降判定的入参（用对象而非 7 个位置参数：可读性 + 免 Long Parameter List）。 */
+interface RateDropSpec {
+  readonly name: string;
+  readonly label: string;
+  readonly base: { readonly num: number; readonly den: number };
+  readonly cur: { readonly num: number; readonly den: number };
+  readonly thresholdPp: number;
+}
+
 /** 单条比率下降判定（pp 口径）；未达阈值返回 null。 */
-function rateDrop(
-  name: string,
-  label: string,
-  baseNum: number,
-  baseDen: number,
-  curNum: number,
-  curDen: number,
-  thresholdPp: number,
-): string | null {
-  const drop = pct(baseNum, baseDen) - pct(curNum, curDen);
-  if (drop < thresholdPp) return null;
-  return `${name}: ${label} ${fmtPct(baseNum, baseDen)} → ${fmtPct(curNum, curDen)}（降 ${drop.toFixed(1)}pp）`;
+function rateDrop(spec: RateDropSpec): string | null {
+  const drop = pct(spec.base.num, spec.base.den) - pct(spec.cur.num, spec.cur.den);
+  if (drop < spec.thresholdPp) return null;
+  const from = fmtPct(spec.base.num, spec.base.den);
+  const to = fmtPct(spec.cur.num, spec.cur.den);
+  return `${spec.name}: ${spec.label} ${from} → ${to}（降 ${drop.toFixed(1)}pp）`;
 }
 
 /** p50 上涨判定：比率与绝对增量双条件同时满足才算（抑制小样本抖动）。 */
@@ -185,10 +188,22 @@ function p50Drift(name: string, base: TargetStats, cur: TargetStats): string | n
 
 function driftOf(name: string, base: TargetStats, cur: TargetStats): string[] {
   const passRate = base.judged > 0 && cur.judged > 0
-    ? rateDrop(name, "passRate", base.pass, base.judged, cur.pass, cur.judged, PASS_RATE_DROP_PP)
+    ? rateDrop({
+        name,
+        label: "passRate",
+        base: { num: base.pass, den: base.judged },
+        cur: { num: cur.pass, den: cur.judged },
+        thresholdPp: PASS_RATE_DROP_PP,
+      })
     : null;
   const candidates = [
-    rateDrop(name, "okRate", base.ok, base.total, cur.ok, cur.total, OK_RATE_DROP_PP),
+    rateDrop({
+      name,
+      label: "okRate",
+      base: { num: base.ok, den: base.total },
+      cur: { num: cur.ok, den: cur.total },
+      thresholdPp: OK_RATE_DROP_PP,
+    }),
     passRate,
     p50Drift(name, base, cur),
   ];

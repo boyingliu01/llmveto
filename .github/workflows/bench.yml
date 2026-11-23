@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
-        with: { bun-version: latest }
+        with: { bun-version: "1.4.3" }
       - run: bun install --frozen-lockfile
       # 纯单测面（含 Minor 登记处完整性守卫，R7-B2；强制面由 R10R1-A-M1/C-M1 收口、R10R2-A-m2/B-2/C-m1
       # 扩面、R10R3-A-M1 定形为显式**文件**列表）：显式文件列表而非全量 vitest ——全量的
@@ -124,7 +124,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
-        with: { bun-version: latest }
+        with: { bun-version: "1.4.3" }
       - run: bun install --frozen-lockfile
       - name: Record baseline (G1/G2/G3, warmup 50 + n=200, 10 runs → min)
         run: bun run bench:record

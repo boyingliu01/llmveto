@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Adapter, ConfigId, Env } from "./index.ts";
-import { deepMerge, readJsonConfig, readJsonConfigStrict, writeJsonConfig } from "./config-io.ts";
+import { applyManagedPatch, readManagedConfig } from "./config-io.ts";
 
 /**
  * @test REQ-VETO-009
@@ -32,35 +32,38 @@ export const opencodeAdapter: Adapter = {
     };
   },
   detectDrift(current: Record<string, unknown>, gatewayBaseUrl: string): readonly ConfigId[] {
-    const providerUrl = (key: string) => joinBase(joinBase(gatewayBaseUrl, "opencode"), key);
-    const drift: ConfigId[] = [];
     const provider = (current.provider ?? {}) as Record<string, { options?: { baseURL?: string } }>;
-    for (const id of MANAGED_CONFIG_IDS) {
-      if (id.id === "opencode.env.OPENCODE_MODELS_URL") {
-        const env = (current.env ?? {}) as Record<string, string>;
-        if (env.OPENCODE_MODELS_URL !== joinBase(gatewayBaseUrl, "opencode") + "/models") drift.push(id);
-        continue;
-      }
-      const key = id.id.split(".")[2]; // "opencode.provider.<KEY>.options.baseURL"
-      if (!key) continue;
-      const url = provider[key]?.options?.baseURL;
-      if (url !== providerUrl(key)) drift.push(id);
-    }
-    return drift;
+    const env = (current.env ?? {}) as Record<string, string>;
+    return MANAGED_CONFIG_IDS.filter((id) => isDrifted(id, provider, env, gatewayBaseUrl));
   },
   defaultConfigPath(env: Env): string {
     return env.LLMVETO_OPENCODE_CONFIG ?? join(homedir(), ".config", "opencode", "opencode.json");
   },
   readCurrentConfig(env: Env): Record<string, unknown> {
-    return readJsonConfig(this.defaultConfigPath(env));
+    return readManagedConfig(this, env);
   },
   applyManagedConfig(env: Env, gatewayBaseUrl: string): string {
-    const path = this.defaultConfigPath(env);
-    const merged = deepMerge(readJsonConfigStrict(path), this.buildPatch(gatewayBaseUrl));
-    writeJsonConfig(path, merged);
-    return path;
+    return applyManagedPatch(this, env, gatewayBaseUrl);
   },
 };
+
+/**
+ * 单条受管配置是否漂移：MODELS_URL 与 env 比对，其余条目与 provider.<KEY>.options.baseURL 比对。
+ * 拆出来是为了让 detectDrift 本体只剩一次 filter（原实现循环内两层分支，CCN 8）。
+ */
+function isDrifted(
+  id: ConfigId,
+  provider: Record<string, { options?: { baseURL?: string } }>,
+  env: Record<string, string>,
+  gatewayBaseUrl: string,
+): boolean {
+  if (id.id === "opencode.env.OPENCODE_MODELS_URL") {
+    return env.OPENCODE_MODELS_URL !== joinBase(gatewayBaseUrl, "opencode") + "/models";
+  }
+  const key = id.id.split(".")[2]; // "opencode.provider.<KEY>.options.baseURL"
+  if (!key) return false;
+  return provider[key]?.options?.baseURL !== joinBase(joinBase(gatewayBaseUrl, "opencode"), key);
+}
 
 function joinBase(base: string, seg: string): string {
   return base.replace(/\/$/, "") + "/" + seg;

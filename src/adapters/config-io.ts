@@ -30,21 +30,33 @@ export function readJsonConfig(path: string): Record<string, unknown> {
 }
 
 /** 写路径专用读取：读失败必须显式抛出，绝不以空基覆写用户配置。 */
+/** 读取配置原文并 trim；不可读时抛错（携带 path 与原始原因）。 */
+function readTrimmedOrThrow(path: string): string {
+  try {
+    return readFileSync(path, "utf8").trim();
+  } catch (err) {
+    throw new Error(`config exists but is unreadable: ${path} (${describeError(err)})`);
+  }
+}
+
+/** JSON 解析；失败时抛错（携带 path 与原始原因）。 */
+function parseJsonOrThrow(path: string, raw: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch (err) {
+    throw new Error(`config is not valid JSON: ${path} (${describeError(err)})`);
+  }
+}
+
+function describeError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 export function readJsonConfigStrict(path: string): Record<string, unknown> {
   if (!existsSync(path)) return {};
-  let raw: string;
-  try {
-    raw = readFileSync(path, "utf8").trim();
-  } catch (err) {
-    throw new Error(`config exists but is unreadable: ${path} (${err instanceof Error ? err.message : String(err)})`);
-  }
+  const raw = readTrimmedOrThrow(path);
   if (!raw) return {};
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    throw new Error(`config is not valid JSON: ${path} (${err instanceof Error ? err.message : String(err)})`);
-  }
+  const parsed = parseJsonOrThrow(path, raw);
   if (!isPlainObject(parsed)) throw new Error(`config exists but is not a JSON object: ${path}`);
   return parsed;
 }
@@ -65,4 +77,32 @@ export function deepMerge(base: Record<string, unknown>, patch: Record<string, u
     out[k] = isPlainObject(v) && isPlainObject(cur) ? deepMerge(cur, v) : v;
   }
   return out;
+}
+
+/**
+ * 受管配置的读取原语：适配器各自只提供 defaultConfigPath，
+ * 读盘这一层两个适配器曾逐字重复（jscpd 14 行克隆），收拢到这里。
+ */
+export function readManagedConfig(adapter: {
+  readonly defaultConfigPath: (env: Env) => string;
+}, env: Env): Record<string, unknown> {
+  return readJsonConfig(adapter.defaultConfigPath(env));
+}
+
+/**
+ * 受管配置的写回原语（深度合并后落盘，返回写入路径）。
+ * 与 readManagedConfig 同因由：避免适配器之间复制粘贴同一段合并-写入流程。
+ */
+export function applyManagedPatch(
+  adapter: {
+    readonly defaultConfigPath: (env: Env) => string;
+    readonly buildPatch: (gatewayBaseUrl: string) => Record<string, unknown>;
+  },
+  env: Env,
+  gatewayBaseUrl: string,
+): string {
+  const path = adapter.defaultConfigPath(env);
+  const merged = deepMerge(readJsonConfigStrict(path), adapter.buildPatch(gatewayBaseUrl));
+  writeJsonConfig(path, merged);
+  return path;
 }

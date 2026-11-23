@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Adapter, ConfigId, Env } from "./index.ts";
-import { deepMerge, readJsonConfig, readJsonConfigStrict, writeJsonConfig } from "./config-io.ts";
+import { applyManagedPatch, readManagedConfig } from "./config-io.ts";
 
 /**
  * @test REQ-VETO-009
@@ -43,13 +43,10 @@ export const delphiAdapter: Adapter = {
     return env.LLMVETO_DELPHI_CONFIG ?? join(homedir(), ".delphi-config.json");
   },
   readCurrentConfig(env: Env): Record<string, unknown> {
-    return readJsonConfig(this.defaultConfigPath(env));
+    return readManagedConfig(this, env);
   },
   applyManagedConfig(env: Env, gatewayBaseUrl: string): string {
-    const path = this.defaultConfigPath(env);
-    const merged = deepMerge(readJsonConfigStrict(path), this.buildPatch(gatewayBaseUrl));
-    writeJsonConfig(path, merged);
-    return path;
+    return applyManagedPatch(this, env, gatewayBaseUrl);
   },
 };
 

@@ -26,10 +26,11 @@ jobs:
       - uses: actions/setup-node@v4
         # registry-url 是 NODE_AUTH_TOKEN 生效的前提：没有它 setup-node 不写
         # ~/.npmrc，npm publish 只见 env 变量而找不到凭据，直接 ENEEDAUTH。
-        with: { node-version: "20", registry-url: "https://registry.npmjs.org" }
+        with: { node-version: "24", registry-url: "https://registry.npmjs.org" }
       - uses: oven-sh/setup-bun@v2
-        # 与 test.yml 同版本钉死（bun 1.3.14）：绿灯构成"同一执行面"证据。
-        with: { bun-version: "1.3.14" }
+        # 与 test.yml / bench.yml / relay-nightly.yml 同为 1.4.3：绿灯构成"同一执行面"证据。
+        # 改版本请同时改这四处 —— 四份硬编码曾漂移成 1.3.14 / 1.4.3 / latest 三值。
+        with: { bun-version: "1.4.3" }
 
       - name: "Install (retry: registry/mirror 5xx is transient, not a release failure)"
         run: |

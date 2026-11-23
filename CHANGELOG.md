@@ -49,6 +49,28 @@ take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
   `dangerous-command-scan`): assignment-in-condition loops rewritten, long/IO-heavy helpers split
   with contextual error messages, unused fields/imports removed. No behaviour change.
 
+## [0.5.1] - 2026-11-23
+
+### Changed
+
+- **Shared adapter config I/O.** `opencode.ts` and `delphi.ts` carried byte-identical
+  read → merge → write flows; both now call `readManagedConfig` / `applyManagedPatch` from
+  `config-io.ts`. Behaviour is unchanged — verified through the real `doctor
+  --write-managed-config` path (write + drift assertions pass).
+
+### Fixed
+
+- **CI toolchain versions were inconsistent.** The four workflows pinned bun at `1.3.14`,
+  `1.4.3` and `latest` at once, and `release.yml` carried a comment claiming it matched
+  `test.yml` while the two values had already diverged. All five `bun-version` entries are now
+  `1.4.3`; `release.yml`'s `node-version` moves `20` → `24` to match the runner and the other
+  workflows. Verified: every workflow parses, and `bun install --frozen-lockfile` produces no
+  changes under 1.4.3.
+- **`.gitattributes` was missing** despite day-to-day development on both Windows and WSL. Line
+  endings are now pinned (`* text=auto eol=lf`, CRLF retained for PowerShell scripts, binaries
+  marked as such) with a note on `core.autocrlf=input`. `git add --renormalize .` produces an
+  empty diff, so the repository was already LF and no mass rewrite follows.
+
 ## [0.5.0] - 2026-11-23
 
 ### Added

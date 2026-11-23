@@ -1,0 +1,54 @@
+# 行尾归一策略 —— 与 core.autocrlf=input 配套使用。
+#
+# 背景：本仓库同时在 Windows（D:\ 旧路径）与 WSL 上开发。没有本文件时，
+# 行尾由每个克隆者的 core.autocrlf 决定：Windows 默认 true（检出 CRLF、提交 LF），
+# Linux 默认 false（原样）。同一个文件在两台机器上「看起来改了一整行」而实际
+# 只差 CR，会让 diff / blame / Gate MP 哈希对比产生大量假差异（xp-gate #824）。
+#
+# 策略：文本一律存 LF，检出端由 core.autocrlf 决定（建议 input）。二进制不做任何转换，
+# 否则 Git 会试图「归一」它们并损坏文件。
+#
+# 注意：已有文件的行尾不会因新增本文件而自动改变；需要一次性重归一化时用
+#   git add --renormalize . && git commit
+
+# --- 默认：文本用 LF，并在 diff 时识别为文本 ---
+* text=auto eol=lf
+
+# --- 源码与配置：显式声明为文本（防止被 text=auto 误判为二进制）---
+*.ts    text eol=lf
+*.js    text eol=lf
+*.mjs   text eol=lf
+*.cjs   text eol=lf
+*.tsx   text eol=lf
+*.json  text eol=lf
+*.jsonc text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.toml  text eol=lf
+*.md    text eol=lf
+*.sh    text eol=lf
+*.txt   text eol=lf
+VERSION text eol=lf
+
+# Windows 专属脚本必须保留 CRLF，否则 PowerShell / cmd 可能解析异常。
+*.ps1   text eol=crlf
+*.cmd   text eol=crlf
+*.bat   text eol=crlf
+
+# --- 二进制：禁止任何转换 ---
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.svg   text eol=lf
+*.woff  binary
+*.woff2 binary
+*.zip   binary
+*.gz    binary
+*.tgz   binary
+*.wasm  binary
+
+# --- 锁文件：文本，但通常不参与 diff（bun.lock 需保持可读以便 review）---
+bun.lock text eol=lf
+package-lock.json text eol=lf merge=ours

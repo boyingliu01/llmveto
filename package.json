@@ -35,6 +35,7 @@
   ],
   "scripts": {
     "llmveto": "bun run src/cli/index.ts",
+    "postinstall": "node scripts/patch-archlint-musl.mjs",
     "build": "tsc -p tsconfig.build.json",
     "start": "bun run src/cli/index.ts start",
     "stop": "bun run src/cli/index.ts stop",
@@ -62,3 +63,4 @@
     "vitest": "latest"
   }
 }
+

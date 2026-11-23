@@ -9,8 +9,8 @@
 
 ### T1a: Data Exfiltration Detection (Canaries)
 
-- **Status**: Implemented in v0.3.0 on managed routes (`opencode/openai`, `opencode/anthropic`,
-  `opencode/mock`, `delphi/default`)
+- **Status**: Implemented on managed routes (`opencode/openai`, `opencode/anthropic`,
+  `opencode/mock`, `delphi/default`, and — since the dsh onboarding — `dsh/cliproxy`)
 - **What it does**: allocates a 27-character canary per session, appends it to the last user text
   before forwarding, and blocks (stream termination for streaming) when a response contains
   **another session's** canary
@@ -21,8 +21,11 @@
   integration tests across the six injection branches and by end-to-end managed-route tests, but
   not by a fresh real-agent replay. Treat this as an accepted residual, not a proven zero-impact
   change.
-- **Operational note**: injection only applies to the four managed routes above; traffic routed
-  through other `client/provider` paths is scanned but never injected.
+- **Operational note**: injection only applies to the managed routes listed above; traffic routed
+  through other `client/provider` paths is scanned but never injected. For dsh, this means every
+  OpenAI-compatible provider that shares the `/dsh/cliproxy` base URL is covered, but a provider
+  pointed at its own path (for example `/dsh/whalecloud`) is not — such a route must be added to
+  `MANUAL_CANARY_MANAGED_ROUTES` first.
 - **Admin boundary**: `POST /_llmveto/canary/rotate` and `GET /_llmveto/metrics` are protected only
   by the daemon binding to loopback. Do not expose `/_llmveto/*` through a reverse proxy; v0.3.0
   has no Host/Origin/token check on the admin surface.
@@ -35,6 +38,40 @@
 - **Single-writer assumption**: the registry is designed for one gateway process per `stateDir`.
   Running two daemons against the same state directory is not detected or locked; the last writer
   wins and the other process's session state can be silently dropped.
+
+#### Canary session-key collisions (fallback key)
+
+- **Fixed for DSH clients in 0.5.0; remains for clients that send no session header.**
+- **Mechanism**: without an `x-llmveto-session-id` header the key is
+  `sha256(first role="user" text)`. Clients that inject system notices as `role: "user"`
+  (approval-policy changes, runtime context, model-selection notices, `<system-reminder>` blocks)
+  produce **identical** first messages across sessions, so those sessions share one canary.
+- **Measured 2026-11-23** on 13 real DSH sessions: six distinct sessions shared the single key
+  `54442a56dc3a791e` because each started with the same approval-policy notice. Consequence: a leak
+  between those sessions could not be detected, violating the intent of `AC-V2a-17`
+  ("distinct sessions get distinct keys").
+- **Mitigation**: a DSH host plugin (`llmveto-session-header`) now sends the DSH session id as
+  `x-llmveto-session-id`, which takes the header path and makes every session's key unique.
+  Verified against real traffic: distinct sessions got distinct keys, and one session stayed constant.
+- **Residual**: a client that neither sends the header nor has distinct first user text still
+  collides. Registering such a client requires either an equivalent header hook or accepting the
+  shared canary.
+
+#### Canary capacity: LRU eviction blinds cross-session detection
+
+- **Capacity** (spec §4.2/§4.3): TTL 24 h, LRU 64 — fixed constants, not runtime-configurable.
+- **Measured behaviour**: allocating 100 sessions leaves exactly 64 in the active set. A session
+  pushed out by the LRU no longer contributes its canary to `snapshot()`, so a response echoing
+  that session's canary is judged `clean`. Verified 2026-11-23 with a direct probe: session A's
+  canary disappears after 70 later sessions are assigned, and the leak check then returns `clean`.
+- **Real-world headroom**: 7 active sessions on this machine's daily use, i.e. ~9x headroom under
+  64. Eviction needs 65+ distinct sessions inside a 24 h TTL window, which one human developer
+  does not reach — but many parallel agents or a shared gateway host could.
+- **If it ever binds**: raising `CANARY_LRU_CAPACITY` requires updating the spec constant and the
+  tests that pin the value; bucketing by client would need a registry format change. Do not raise
+  it silently — the capacity is a documented §4.2 value.
+- **Note**: eviction only weakens detection for *evicted* sessions. Detection between the 64 most
+  recently active sessions is unaffected.
 
 ### T2a: Tool-Call Structure Judgment
 
@@ -74,6 +111,19 @@
 ---
 
 ## Architectural Limitations
+
+### Streaming warn is recorded but not reflected in `action_taken`
+
+- **Observed**: on the streaming path, an observational (non-blocking) checker hit such as
+  `dangerous-command-scan` appears in `findings[]`, but `action_taken` stays `allowed`
+  (`src/gateway/core.ts`, D-11). On the non-streaming path the same hit yields `warned`.
+- **Why it is registered rather than fixed**: the streaming value is resolved from the delivery
+  outcome (allowed / terminated / degraded) because bytes already forwarded cannot be recalled;
+  folding an observational finding into it would change a v1 semantic that the policy mapping and
+  several evidence assertions depend on. Unifying the two needs its own review.
+- **Practical impact**: consumers filtering on `action_taken == "warned"` see streaming
+  observational hits only if they also read `findings[]`. Integration coverage:
+  `tests/integration/dangerous-command-scan.test.ts`.
 
 ### Streaming Byte Irrevocability
 

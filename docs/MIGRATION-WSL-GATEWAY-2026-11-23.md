@@ -92,15 +92,26 @@ Windows 侧 `evidence.jsonl` 已有 **1676 条**记录。直接让 WSL 新建 st
 
 `--write-managed-config` 会把枚举内 provider 写向网关并通过 drift 检查，**但不会改动 `whalecloud`**。
 
-### 5.2 ⚠️ 实际在用的 provider 未过闸（**这是本次迁移暴露的真问题**）
+### 5.2 ~~实际在用的 provider 未过闸~~ → **2026-11-23 已修复**
 
-`whalecloud` 的 `baseURL` 仍是 `https://lab.iwhalecloud.com/gpt-proxy` —— **直连上游，完全不经网关**。
+`whalecloud` 原 `baseURL` 为 `https://lab.iwhalecloud.com/gpt-proxy` —— **直连上游、完全不经网关**，
+即当时主要使用路径上 canary / 命令扫描 / evidence 均未生效。
 
-即：在你当前的主要使用路径上，canary / 命令注入扫描 / evidence **都没有生效**。这与 README 声明的边界一致（"Installing the gateway ≠ being protected"），但值得明确记录。
+**修复**：
+1. `~/.config/llmveto/env` 的 `LLMVETO_UPSTREAMS` 新增
+   `"opencode/whalecloud": "https://lab.iwhalecloud.com/gpt-proxy"`；
+2. `~/.config/opencode/opencode.json` 中 `whalecloud.options.baseURL` 改为
+   `http://127.0.0.1:8787/opencode/whalecloud`（`apiKey` 与 5 个模型定义原样保留）；
+3. `systemctl --user restart llmveto`。
 
-**可选处置**：
-- (a) 在 `opencode.json` 手加 `whalecloud` 指向 `http://127.0.0.1:8787/opencode/whalecloud`，并在 `LLMVETO_UPSTREAMS` 加对应路由；
-- (b) 若 opencode 已不常用（主力是 dsh），先接受现状并登记。
+**验证**：模拟 opencode 调用经网关 `g-deepseek-flash` / `g-glm-5.3-flash` → HTTP 200 正常回复，
+证据落链且出现 `model-label-mismatch` 告警（`g-deepseek-flash` → 上游返回 `deepseek-v4-1-flash-261017`，
+`g-` 是供应商命名空间前缀，语义一致，`warn` 而非 `block` 是正确行为）。
+
+**注意**：`g-glm-5.3-flash` 在 `max_tokens=20` 时正文为空、`reasoning_tokens=20`（推理吃光预算），
+放大到 2000 后才正常输出 "OK"。这是该模型特性，非网关故障。
+
+**回退**：备份在 `~/.config/llmveto/backup-<ts>/`（`env.bak`、`opencode.json.bak`）。
 
 ### 5.3 `dsh/cliproxy` 路由指向 8317，但该引擎当前未运行
 

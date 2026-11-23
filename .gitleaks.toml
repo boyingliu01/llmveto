@@ -1,0 +1,31 @@
+# gitleaks 配置 —— 仅豁免 detect-secrets 的基线文件，不放宽任何检测规则
+#
+# 背景：`.secrets.baseline` 由 `detect-secrets scan` 生成，格式要求把每条已登记
+# 发现的原始片段与摘要写进文件，否则无法做后续比对。gitleaks 的 generic-api-key
+# 规则读到这些 JSON 字段即判为泄漏（实测 16 处命中全部来自该文件），属结构性误报。
+#
+# 两个扫描器职责不同，不应互相污染：
+#   - gitleaks（Gate 8 主防线，fail-closed）：扫真实密钥
+#   - detect-secrets（次防线，baseline-diff）：只拦"不在 baseline 里的新密钥"
+#
+# ⚠️ 必须写 `[extend] useDefault = true`。
+#    实测（gitleaks 8.30.1）：只要存在自定义配置文件，gitleaks 就**不再自动加载
+#    内置规则集**；此时仅写 `[allowlist]` 会让整个 Gate 8 变成沉默的假绿灯 ——
+#    连 ghp_ 开头的 GitHub Token 和 AKIA 开头的 AWS Key 都扫不出来
+#    （对照：无配置时同一批文件报 18 处，加坏配置后报 0 处）。
+#    注意是 `[extend] useDefault`，不是顶层的 `extends = "default"`（后者同样失效）。
+#
+# 已验证（本机实测）：
+#   (a) baseline 的 16 处误报消失；
+#   (b) 新建 ghp_ Token 仍被拦（rule=github-pat）；
+#   (c) 新建 AWS Key 仍被拦（rule=aws-access-token）；
+#   (d) detect-secrets-hook 对同一探针独立报出 3 类密钥。
+
+[extend]
+useDefault = true
+
+[allowlist]
+  description = "detect-secrets 基线文件按设计内含已登记的秘密片段"
+  paths = [
+    '''^\.secrets\.baseline$''',
+  ]

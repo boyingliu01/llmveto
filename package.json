@@ -48,6 +48,7 @@
     "typecheck:dist": "tsc -p tsconfig.build.json --noEmit",
     "lint": "biome check . --no-errors-on-unmatched",
     "bench:record": "bun run bench/record-baseline.ts",
+    "probe:baseline": "bun run scripts/provider-probe-baseline.ts",
     "release:gate": "node scripts/release-gate.mjs",
     "prepublishOnly": "npm run release:gate",
     "clean": "rimraf dist coverage"

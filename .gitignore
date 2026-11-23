@@ -57,3 +57,6 @@ Thumbs.db
 !.env.example
 *.pem
 *.key
+
+# provider 探针基线：本地机器实测值，不应跨机共享（不同网络/机型 p50 不可比）
+var/provider-probe-baseline.json

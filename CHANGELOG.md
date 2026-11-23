@@ -49,6 +49,33 @@ take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
   `dangerous-command-scan`): assignment-in-condition loops rewritten, long/IO-heavy helpers split
   with contextual error messages, unused fields/imports removed. No behaviour change.
 
+## [0.5.2] - 2026-11-24
+
+### Fixed
+
+- **A credential false positive blocked its own development sessions.** `egress-secret-scan`
+  matched vendor *documentation example* values (`AKIAIOSFODNN7EXAMPLE`,
+  `ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij`) as if they were real credentials. Because the
+  checker is blocking-class, any conversation quoting those strings — including the repository's
+  own `tests/fixtures/threats/T1b/secrets.yaml` — was refused before anything left the machine:
+  measured on a 1.9 MB request carrying 7 × `openai-sk`, 6 × `github-ghp` and 15 × `aws-akia`
+  hits, all of them fixture text. The fix adds a **verbatim, fixed-length** allowlist for values
+  that appear as examples in the vendors' own documentation; it is not a pattern exemption, so a
+  key that differs by one character, or a non-example placeholder such as
+  `sk-ant-api03-AbCdEf…`, is still reported. A real key colliding with an example would need to
+  reproduce all 20 characters, about 1e-11.
+- Fixture and unit-test values that used the documented examples were replaced with
+  format-valid but non-example keys, so those assertions keep testing the rules rather than the
+  allowlist.
+
+### Documentation
+
+- The v1 risk register gains a dated addendum mapping each threat to its 0.5.x status, because
+  the frozen table still described canary, `tool-call-shape` and usage reconciliation as
+  unimplemented.
+- KNOWN-ISSUES records that a provider with a direct-upstream `baseURL` receives none of the
+  gateway's protections, and how to tell which path a request took.
+
 ## [0.5.1] - 2026-11-23
 
 ### Changed

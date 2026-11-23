@@ -38,8 +38,11 @@ describe("egress-secret-scan (REQ-VETO-003)", () => {
     expect(r.evidence.some((f) => f.rule_id === "github-ghp")).toBe(true);
   });
 
-  it("AC-VETO-003-01: AWS AKIA 命中", () => {
-    const r = egressSecretScan(req("aws access key: AKIAIOSFODNN7EXAMPLE"));
+  // 注意：这里**不能**用 AKIAIOSFODNN7EXAMPLE —— 那是 AWS 官方文档示例值，
+  // 已被 DOCUMENTED_EXAMPLE_VALUES 放行（见文件头）。用合规但非示例的假值，
+  // 验证的仍是"AWS 格式能被检出"这一件事。
+  it("AC-VETO-003-01: AWS AKIA 命中（非官方示例值）", () => {
+    const r = egressSecretScan(req("aws access key: AKIAXXXXXXXXXXXXXXXX"));
     expect(r.verdict).toBe("finding");
     expect(r.evidence.some((f) => f.rule_id === "aws-akia")).toBe(true);
   });
@@ -50,6 +53,34 @@ describe("egress-secret-scan (REQ-VETO-003)", () => {
     );
     expect(r.verdict).toBe("finding");
     expect(r.evidence.some((f) => f.rule_id === "pem-private-key")).toBe(true);
+  });
+
+  // ── 官方文档示例值放行（防止"开发本项目的会话被自己拦下"）──
+  it("官方文档示例值 AKIAIOSFODNN7EXAMPLE → clean（不阻断）", () => {
+    const r = egressSecretScan(req("aws_access_key_id = AKIAIOSFODNN7EXAMPLE"));
+    expect(r.verdict).toBe("clean");
+  });
+
+  it("官方文档示例值 ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij → clean", () => {
+    const r = egressSecretScan(req("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij pushed"));
+    expect(r.verdict).toBe("clean");
+  });
+
+  it("白名单是逐字匹配：示例值被改动一位后仍命中（不是模式豁免）", () => {
+    const r = egressSecretScan(req("AKIAXXXXXXXXXXXXXXXX"));
+    expect(r.verdict).toBe("finding");
+    expect(r.evidence.some((f) => f.rule_id === "aws-akia")).toBe(true);
+  });
+
+  it("同一请求里示例值与真实密钥并存 → 仍因真实密钥命中", () => {
+    const r = egressSecretScan(req("example AKIAIOSFODNN7EXAMPLE real AKIAXXXXXXXXXXXXXXXX"));
+    expect(r.verdict).toBe("finding");
+    expect(r.evidence.some((f) => f.rule_id === "aws-akia")).toBe(true);
+  });
+
+  it("非示例的 sk- / sk-ant- 占位串仍被检出（白名单不扩大）", () => {
+    expect(egressSecretScan(req("sk-abcdefghijklmnopqrstuvwxyz1234")).verdict).toBe("finding");
+    expect(egressSecretScan(req("sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWx")).verdict).toBe("finding");
   });
 
   it("AC-VETO-003-04: 纯函数 —— 同输入两次调用结果 deep-equal", () => {
@@ -72,7 +103,7 @@ describe("egress-secret-scan (REQ-VETO-003)", () => {
   it("AC-VETO-003-01 edge: 多处命中 → 全部落 findings，每条 rule_id 独立", () => {
     const r = egressSecretScan(
       req(
-        "key1=sk-abcdefghijklmnopqrstuvwxyz012345 key2=AKIAIOSFODNN7EXAMPLE",
+        "key1=sk-abcdefghijklmnopqrstuvwxyz012345 key2=AKIAXXXXXXXXXXXXXXXX",
       ),
     );
     expect(r.verdict).toBe("finding");

@@ -265,6 +265,24 @@ The following clients are **not officially onboarded** in v0.3.0:
 
 ---
 
+### Providers pointing straight at the upstream are unprotected
+
+- **Measured 2026-11-24**: the dsh profile lists `ailb` with
+  `baseURL: https://lab.iwhalecloud.com/gpt-proxy/v1`, i.e. **straight at the vendor**, while
+  `whalecloud` points at `http://127.0.0.1:8787/dsh/cliproxy`. Traffic from `ailb` never reaches
+  the gateway: no canary, no command scan, no evidence record.
+- **How to tell which side a request took**: `curl -s http://127.0.0.1:8787/_llmveto/metrics`
+  should increase, and `~/.llmveto/evidence.jsonl` should gain a record whose `client` is `dsh`.
+  During the 2026-11-24 session the gateway logged **zero** records over 15 minutes of `ailb`
+  traffic while those were happening — the counter is a reliable check.
+- **Why it is left as is**: a direct-upstream provider is the deliberate escape hatch when the
+  gateway itself is the problem (see the documented-example false positive fixed in 0.5.2 —
+  before that fix, any conversation containing `AKIAIOSFODNN7EXAMPLE` was blocked, so a working
+  bypass was needed to keep developing).
+- **Consequence to state plainly**: while working through a direct-upstream provider, the
+  protections described in the README do not apply. Switch the provider to the gateway route to
+  get them; the trade is that a checker false positive then interrupts the session.
+
 ### ACP CLI clients (trae, codebuddy) bypass the gateway by design
 
 - **What they are**: `traecli acp serve` and the codebuddy link are **first-party vendor CLIs**

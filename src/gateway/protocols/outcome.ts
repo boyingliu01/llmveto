@@ -87,9 +87,10 @@ function coverageShape(direction: Direction, body: Record<string, unknown>, prot
   const present = presentFor(direction, body, proto);
   const projection = projectionFor(direction, body, proto);
   const coverage = coverageReason(present, projection.handled);
-  // 兜底：协议已知、载荷都覆盖了，但还有字符串内容没被任何投影器看过 → 覆盖不足。
-  // 这一条独立于 CoverageSpec，因为它要覆盖的恰恰是清单之外的字段。
-  if (coverage === null && unseenContent(direction, body, projection.parts.join("\n"))) {
+  // 兜底**必须先于**豁免判定（R3 C1）：豁免的判据是"present 为空或容器为空"，
+  // 而"凭据藏在未登记字段、恰好没有任何载荷字段"正是 present 为空的情形——
+  // 把兜底放在豁免之后就等于给它留了一道门。
+  if (unseenContent(direction, body, projection.parts.join("\n"))) {
     return "shape_partial_coverage";
   }
   return reasonFor(direction, body, present, coverage);
@@ -117,44 +118,69 @@ function unseenContent(direction: Direction, body: Record<string, unknown>, scan
   return false;
 }
 
-/** 递归收集 JSON 里的全部字符串值（跳过结构字段与非文本载体）。 */
-function collectStrings(value: unknown, key?: string): string[] {
-  if (STRUCTURAL_KEYS.has(key ?? "")) return [];
-  if (typeof value === "string") return [value];
+/**
+ * 递归收集 JSON 里的全部**可能是载荷**的字符串值。
+ *
+ * 第三条评审（R3 C2）推翻了按**裸键名**豁免的做法：`{"content":"hi","id":"sk-ant-..."}`
+ * 里 `id` 命中豁免表，整条凭据被跳过——豁免表本身成了绕过面。
+ *
+ * 现在的判据只看**值的形态**，不看键名：
+ *   - 短标识符（模型名、ID、状态码：无空格、长度 ≤ 80）→ 豁免；
+ *   - 非文本载体（URL / data URI / base64 大块）→ 豁免；
+ *   - **其余所有字符串都必须出现在投影文本里**。
+ * 代价是可能把某些元数据判成"没看过"而 fail-closed——那是安全方向。
+ */
+function collectStrings(value: unknown): string[] {
+  if (typeof value === "string") return maybePayload(value) ? [value] : [];
   if (Array.isArray(value)) return value.flatMap((v) => collectStrings(v));
   if (value && typeof value === "object") {
-    return Object.entries(value as Record<string, unknown>).flatMap(([k, v]) => collectStrings(v, k));
+    return Object.entries(value as Record<string, unknown>).flatMap(([k, v]) =>
+      NON_TEXT_CARRIERS.has(k) ? [] : collectStrings(v),
+    );
   }
   return [];
 }
 
 /**
- * 只进 meta、不进文本投影的结构性字段（与 scan-unit 的 meta 口径一致）。
- * 这些字段的值不要求出现在扫描文本里，否则每条正常请求都会被判"未看过"。
+ * 凭据形状：无论多短都算载荷。
+ *
+ * `sk-ant-api03-REALKEYabcdefghijklmnop` 只有 34 个字符，曾被"短标识符"判据豁免——
+ * 而那正是本项目最关心的东西。**长度不是安全信号**：一条 34 字符的凭据与一个
+ * 34 字符的模型名在长度上不可区分，所以判据必须先看形状。
  */
-const STRUCTURAL_KEYS: ReadonlySet<string> = new Set([
-  "model",
-  "usage",
-  "finish_reason",
-  "stop_reason",
-  "id",
-  "object",
-  "type",
-  "role",
-  "call_id",
-  "tool_use_id",
-  "cache_control",
-  "created",
-  "created_at",
-  "system_fingerprint",
-  // 非文本载体：图片/文件 URL、base64 数据、MIME 类型。它们从设计上就不进文本投影
-  // （scan-unit 只取 `seg.text`），把它们算作"没看过"会让每条带图请求都被误阻断。
+const CREDENTIALISH = /(^|[-_])(sk|pk|ghp|gho|ghs|xox[abps]|akia|aiza)[-_][A-Za-z0-9_-]{8,}|-----BEGIN [A-Z ]*PRIVATE KEY-----/;
+
+/** 该字符串是否"可能是载荷"（值得要求它出现在投影文本里）。 */
+function maybePayload(value: string): boolean {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return false;
+  // 凭据形状 → 一定算载荷，不看长度
+  if (CREDENTIALISH.test(trimmed)) return true;
+  // 短标识符：无内部空白且不长 → 模型名 / ID / 状态
+  if (trimmed.length <= SHORT_ID_MAX && !/\s/.test(trimmed)) return false;
+  // 非文本载体：data URI、URL、base64 大块
+  if (/^(data:|https?:\/\/|blob:)/.test(trimmed)) return false;
+  if (trimmed.length > BASE64_LOOKING_MIN && /^[A-Za-z0-9+/=_-]+$/.test(trimmed)) return false;
+  return true;
+}
+
+/** 短标识符上限：足够覆盖 model / id / 状态码，又不至于放过一整段凭据。 */
+const SHORT_ID_MAX = 40;
+/** 超过这个长度且全为 base64 字符集 → 视为二进制载荷，不是文本。 */
+const BASE64_LOOKING_MIN = 256;
+
+/**
+ * 键名层面的非文本载体（子树整体不进文本投影）：图片/文件内容、URL 等。
+ * 这**不是**按键名给"值"开豁免——它排除的是从设计上就不该被当文本扫的载体。
+ */
+const NON_TEXT_CARRIERS: ReadonlySet<string> = new Set([
   "url",
   "data",
-  "media_type",
-  "mimeType",
   "b64_json",
   "image_url",
+  "media_type",
+  "mimeType",
+  "mime_type",
   "source",
   "file_id",
   "filename",

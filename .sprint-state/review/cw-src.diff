@@ -73,10 +73,10 @@ index 0000000..4d81395
 +};
 diff --git a/src/adapters/codex-io.ts b/src/adapters/codex-io.ts
 new file mode 100644
-index 0000000..50217e7
+index 0000000..94dba04
 --- /dev/null
 +++ b/src/adapters/codex-io.ts
-@@ -0,0 +1,150 @@
+@@ -0,0 +1,172 @@
 +// @no-test-required: 测试在 tests/unit/adapters/codex.test.ts（定点编辑原语由适配器用例覆盖）（本项目测试布局为 tests/ 目录；Gate 5a 仅识别同目录/根 tests/ 六种路径）
 +import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 +import { dirname } from "node:path";
@@ -128,6 +128,23 @@ index 0000000..50217e7
 +    }
 +  }
 +  return { header, end };
++}
++
++/**
++ * 该表是否以内联表写法存在（父表里一行 `leaf = { ... }`）。
++ * 例：`[model_providers]` 段内出现 `llmveto = { name = "x" }`。
++ */
++function hasInlineTable(lines: readonly string[], table: string): boolean {
++  const dot = table.lastIndexOf(".");
++  if (dot === -1) return false;
++  const parent = table.slice(0, dot);
++  const leaf = table.slice(dot + 1);
++  const parentRange = tableRange(lines, parent);
++  if (parentRange === null) return false;
++  for (let i = parentRange.header + 1; i < parentRange.end; i += 1) {
++    if (new RegExp(`^\\s*${leaf}\\s*=\\s*\\{`).test(lines[i]!)) return true;
++  }
++  return false;
 +}
 +
 +/** 在给定区间里找某个键的所有行号（用于检出重复）。 */
@@ -200,6 +217,11 @@ index 0000000..50217e7
 +  const range = tableRange(lines, edit.table);
 +  const headers = lines.filter((l) => tableHeaderOf(l) === edit.table).length;
 +  if (headers > 1) throw new Error(`多处同形目标表：${edit.table} 出现 ${headers} 次，拒绝写入`);
++  // 内联表写法（`[model_providers]` + `llmveto = { ... }`）无法用行级编辑安全改写：
++  // 追加同名表会生成非法 TOML。定位不确定就拒绝写入——这是本模块自己的原则。
++  if (range === null && hasInlineTable(lines, edit.table)) {
++    throw new Error(`目标表 ${edit.table} 以内联表写法出现，无法安全定点编辑；请改成 [${edit.table}] 表头后重试`);
++  }
 +  const next = range === null ? appendTable(lines, edit) : applyKeys(lines, range, edit.keys);
 +  const text = joinLikeOriginal(next, raw, eol);
 +  if (text === raw) return false;
@@ -429,10 +451,10 @@ index 0000000..795cfba
 +}
 diff --git a/src/adapters/promptfoo.ts b/src/adapters/promptfoo.ts
 new file mode 100644
-index 0000000..87b198d
+index 0000000..23b0410
 --- /dev/null
 +++ b/src/adapters/promptfoo.ts
-@@ -0,0 +1,177 @@
+@@ -0,0 +1,185 @@
 +// @no-test-required: 测试在 tests/unit/adapters/promptfoo.test.ts（本项目测试布局为 tests/ 目录；Gate 5a 仅识别同目录/根 tests/ 六种路径）
 +import { existsSync, readFileSync } from "node:fs";
 +import { join } from "node:path";
@@ -570,11 +592,19 @@ index 0000000..87b198d
 +  readCurrentConfig(env: Env): Record<string, unknown> {
 +    const path = this.defaultConfigPath(env);
 +    if (!existsSync(path)) return { providers: [] };
++    let text = "";
 +    try {
-+      return { providers: scanProviders(readFileSync(path, "utf8")) };
++      text = readFileSync(path, "utf8");
 +    } catch {
-+      return { providers: [] };
++      return { providers: [], __unreadable: true };
 +    }
++    // 有内容却扫不出一条 provider：可能是"空项目"，也可能是"格式不认识"。
++    // 把"一个 provider 都没有但文件非空"标出来，由 doctor 报 drift 而不是绿灯
++    // （code-walkthrough R2：坏配置此前落 coverage_unknown，状态不对）。
++    const providers = scanProviders(text);
++    const hasProviderKey = /^providers:\s*$/m.test(text);
++    if (providers.length === 0 && hasProviderKey) return { providers: [], __unreadable: true };
++    return { providers };
 +  },
 +  detectDrift(current: Record<string, unknown>, gatewayBaseUrl: string): readonly ConfigId[] {
 +    // 没有任何 provider = 这个项目还没用 promptfoo（或没配 provider），属"未配置"而不是"漂移"。
@@ -1005,10 +1035,10 @@ index af605bb..73d1c41 100644
  /** 逐个投影扫一条规则，首个命中的投影即停（同一 rule 只报一条）。 */
 diff --git a/src/cli/client-coverage.ts b/src/cli/client-coverage.ts
 new file mode 100644
-index 0000000..5a099f2
+index 0000000..71fa0ce
 --- /dev/null
 +++ b/src/cli/client-coverage.ts
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,169 @@
 +// @no-test-required: 测试在 tests/unit/cli/doctor-v2b.test.ts（本项目测试布局为 tests/ 目录；Gate 5a 仅识别同目录/根 tests/ 六种路径）
 +import { existsSync, readFileSync } from "node:fs";
 +import { dirname } from "node:path";
@@ -1132,7 +1162,10 @@ index 0000000..5a099f2
 +
 +/** 配置文件存在、但读回来的对象是空的（解析失败）→ 视为损坏。 */
 +function isUnreadableConfig(path: string, current: Record<string, unknown>): boolean {
-+  return existsSync(path) && Object.keys(current).length === 0 && readFileSync(path, "utf8").trim().length > 0;
++  if (!existsSync(path)) return false;
++  // 适配器可以自己申报"读到了但解析不出来"（如 promptfoo 的 providers 为空块）
++  if (current.__unreadable === true) return true;
++  return Object.keys(current).length === 0 && readFileSync(path, "utf8").trim().length > 0;
 +}
 +
 +/**
@@ -1238,7 +1271,7 @@ index 82289a2..1711fe8 100644
  
  export interface EvidenceFinding {
 diff --git a/src/gateway/core.ts b/src/gateway/core.ts
-index d9444d3..51f78e5 100644
+index d9444d3..b7a094e 100644
 --- a/src/gateway/core.ts
 +++ b/src/gateway/core.ts
 @@ -16,9 +16,13 @@ import {
@@ -1425,29 +1458,56 @@ index d9444d3..51f78e5 100644
  /**
   * 流式扫描的上下文解析（D-09）：advance 缺省为 true；只有 advance 且 windows 本身是
   * WindowStore 时才启用窗口账本；归并重投影（advance=false）给单元打 reprojected 标记，
-@@ -428,12 +499,19 @@ interface NonStreamResponseParams {
+@@ -428,13 +499,36 @@ interface NonStreamResponseParams {
    readonly forwardedBody: string;
    readonly canaryMeta: CanaryRequestMeta | null;
    readonly gwReasons: readonly string[] | undefined;
 +  readonly cmdDedup: ReturnType<typeof createDangerousCommandDedup>;
++}
++
++/**
++ * 响应侧的两轴判定（REQ-V2bA-14「响应侧同样跑两轴」，code-walkthrough R2 MAJOR-1）。
++ *
++ * 响应侧此前只接了投影、没有覆盖闸门：受管路由上若投影片段为空、或内容落在未投影字段，
++ * 既无 `shape_*` reason 也不 fail-closed。响应同样是"上游写给 agent 的东西"，
++ * 它没有理由比请求侧更宽。非受管路由按既有分权只记录不阻断。
++ */
++function responseShapeReason(p: NonStreamResponseParams): string | undefined {
++  const fmt = p.responseMeta.wire_format;
++  // 只对**新协议**启用响应侧闸门：Chat 响应的既有语义（上游可能带各种字段）
++  // 不在本 sprint 的改动面内，贸然收紧会误伤存量流量。两种新协议没有这样的历史包袱。
++  if (fmt !== "anthropic-messages" && fmt !== "openai-responses") return undefined;
++  return shapeVerdict("response", tryParseJson(p.text), null, true).reason ?? undefined;
  }
  
  function handleNonStreamResponse(p: NonStreamResponseParams): ChatOutcome {
    const respInputs = p.core.scanResponseNonStream(p.text, p.requestedModel, p.responseMeta);
 -  const respDecision = decide([...p.requestInputs, ...respInputs]);
 -  const allFindings = [...p.reqFindings, ...flattenFindings(respInputs)];
+-  if (respDecision.action === "block") {
 +  // 0.6.0：与请求侧共享去重的第二遍（响应复述请求里的同一命令不再二次告警）。
 +  const dedupInputs = p.core.scanWithDangerousCommandDedup(
 +    buildResponseScanUnit(p.text, tryParseJson(p.text), p.requestedModel, "non-stream", p.responseMeta),
 +    p.cmdDedup,
 +  );
 +  const combinedResp = withDedupScan(p.responseMeta, respInputs, dedupInputs);
++  const shapeReason = responseShapeReason(p);
 +  const respDecision = decide([...p.requestInputs, ...combinedResp]);
 +  const allFindings = [...p.reqFindings, ...flattenFindings(combinedResp)];
-   if (respDecision.action === "block") {
++  if (respDecision.action === "block" || shapeReason !== undefined) {
      return {
        status: 502,
-@@ -480,12 +558,23 @@ async function postToUpstream(url: string, forwardedBody: string, authorization:
+       body: "",
+@@ -443,7 +537,7 @@ function handleNonStreamResponse(p: NonStreamResponseParams): ChatOutcome {
+         ...(respDecision.degraded ? (["degraded_observational"] as const) : []),
+       ]),
+       findings: allFindings,
+-      reason: reasonOf(allFindings, p.gwReasons),
++      reason: reasonOf(allFindings, gatewayReasonsOf(shapeReason, p.gwReasons?.[0])),
+       forwardedBody: p.forwardedBody, canaryMeta: p.canaryMeta,
+       deliveredChunks: 0,
+       scenario: "2",
+@@ -480,12 +574,23 @@ async function postToUpstream(url: string, forwardedBody: string, authorization:
   */
  export async function handleChatCompletions(
    core: GatewayCore,
@@ -1473,7 +1533,7 @@ index d9444d3..51f78e5 100644
    // SL-01/D-12：请求体 tools 声明面（declared_tools/declared_required）提取自请求扫描
    // 单元 meta，下传给响应侧全部扫描单元（非流式 / 流式逐帧 / 归并单元）。
    const declaredMeta = declaredToolsMeta(reqScan.scanUnit.meta);
-@@ -496,7 +585,7 @@ export async function handleChatCompletions(
+@@ -496,7 +601,7 @@ export async function handleChatCompletions(
      return blockedBeforeForward(reqFindings, reqDecision.degraded, req.body);
    }
    // canary 注入编排（D-04）：先于 fetch，注入后体作为转发体；请求侧扫描仍以客户端原体为准。
@@ -1482,7 +1542,7 @@ index d9444d3..51f78e5 100644
    // 转发到 upstream（体 = 注入编排产出：受管路径为注入后体，其余为原体）
    const upstream = await postToUpstream(req.upstreamUrl, canaryStep.forwardedBody, req.headers.authorization);
    return deliverUpstream({
-@@ -507,14 +596,25 @@ export async function handleChatCompletions(
+@@ -507,14 +612,25 @@ export async function handleChatCompletions(
      // canary meta 随声明面并入全部响应侧扫描单元（SL-08 return-scan 判定面）；判定域外保持 declaredMeta 原样。
      responseMeta: responseMetaFor(canaryStep.meta, declaredMeta),
      requestInputs: reqScan.inputs,
@@ -1509,7 +1569,7 @@ index d9444d3..51f78e5 100644
  /** 请求扫描单元里声明的 response model（缺声明即 null）。 */
  function requestedModelOf(unit: ScanUnit): string | null {
    return (unit.meta.model_requested as string | undefined) ?? null;
-@@ -533,6 +633,8 @@ interface UpstreamDelivery {
+@@ -533,6 +649,8 @@ interface UpstreamDelivery {
    readonly forwardedBody: string;
    readonly canaryMeta: CanaryRequestMeta | null;
    readonly gwReasons: readonly string[] | undefined;
@@ -1518,7 +1578,7 @@ index d9444d3..51f78e5 100644
  }
  
  async function deliverUpstream(d: UpstreamDelivery): Promise<ChatOutcome> {
-@@ -558,6 +660,7 @@ async function deliverUpstream(d: UpstreamDelivery): Promise<ChatOutcome> {
+@@ -558,6 +676,7 @@ async function deliverUpstream(d: UpstreamDelivery): Promise<ChatOutcome> {
        forwardedBody: d.forwardedBody,
        canaryMeta: d.canaryMeta,
        gwReasons: d.gwReasons,
@@ -1526,7 +1586,7 @@ index d9444d3..51f78e5 100644
      });
    }
    // 流式：tee（逐帧交付逻辑独立成 handleStreaming，主 handler 只保留分支骨架）
-@@ -572,6 +675,7 @@ async function deliverUpstream(d: UpstreamDelivery): Promise<ChatOutcome> {
+@@ -572,6 +691,7 @@ async function deliverUpstream(d: UpstreamDelivery): Promise<ChatOutcome> {
      forwardedBody: d.forwardedBody,
      canaryMeta: d.canaryMeta,
      gwReasons: d.gwReasons,
@@ -1534,7 +1594,7 @@ index d9444d3..51f78e5 100644
    });
  }
  
-@@ -587,6 +691,7 @@ interface StreamParams {
+@@ -587,6 +707,7 @@ interface StreamParams {
    readonly forwardedBody: string;
    readonly canaryMeta: CanaryRequestMeta | null;
    readonly gwReasons: readonly string[] | undefined;
@@ -1542,7 +1602,7 @@ index d9444d3..51f78e5 100644
  }
  
  /** 流式交付的跨帧可变状态：扫描窗口、归并桶与交付计数同住一处，收束时由 getter 读真值。 */
-@@ -597,6 +702,8 @@ interface StreamState {
+@@ -597,6 +718,8 @@ interface StreamState {
    readonly responseMeta: Record<string, unknown>;
    readonly requestInputs: readonly PolicyInput[];
    readonly argsMerger: ReturnType<typeof createToolCallArgsMerger>;
@@ -1551,7 +1611,7 @@ index d9444d3..51f78e5 100644
    readonly allFindings: EvidenceFinding[];
    pending: string;
    deliveredChunks: number;
-@@ -609,8 +716,11 @@ interface StreamState {
+@@ -609,8 +732,11 @@ interface StreamState {
  function scanDelivered(st: StreamState, text: string): boolean {
    const scan = st.core.scanResponseStreamChunk(st.windows, text, st.requested, st.responseMeta);
    st.argsMerger.feed(scan.parsed); // 帧内 delta 片段进归并桶（归并后统一扫描，不逐 chunk 扫碎片）
@@ -1565,7 +1625,7 @@ index d9444d3..51f78e5 100644
    if (d.degraded) st.degradedSeen = true;
    return d.action === "block";
  }
-@@ -647,9 +757,12 @@ function scanMergedArgs(st: StreamState): boolean {
+@@ -647,9 +773,12 @@ function scanMergedArgs(st: StreamState): boolean {
    }
    const merged = st.argsMerger.mergedText();
    if (merged === "") return false;
@@ -1581,7 +1641,7 @@ index d9444d3..51f78e5 100644
    if (d.degraded) st.degradedSeen = true;
    return d.action === "block";
  }
-@@ -771,6 +884,7 @@ function handleStreaming(p: StreamParams): ChatOutcome {
+@@ -771,6 +900,7 @@ function handleStreaming(p: StreamParams): ChatOutcome {
    const st: StreamState = {
      core, windows: createWindowStore(), requested, responseMeta, requestInputs,
      argsMerger: createToolCallArgsMerger(),
@@ -2154,10 +2214,10 @@ index 0000000..c1a03b8
 +}
 diff --git a/src/gateway/protocols/outcome.ts b/src/gateway/protocols/outcome.ts
 new file mode 100644
-index 0000000..cace3e0
+index 0000000..a68e5c1
 --- /dev/null
 +++ b/src/gateway/protocols/outcome.ts
-@@ -0,0 +1,174 @@
+@@ -0,0 +1,246 @@
 +// @no-test-required: 测试在 tests/integration/protocol-outcome.test.ts（本项目测试布局为 tests/ 目录；Gate 5a 仅识别同目录/根 tests/ 六种路径）
 +import { coverageReason, coverageVerdict, presentPaths } from "./coverage.ts";
 +import { protocolFor, recognize } from "./registry.ts";
@@ -2245,8 +2305,80 @@ index 0000000..cace3e0
 +/** 覆盖轴：由 present 与投影器上报的 handled 求差集。 */
 +function coverageShape(direction: Direction, body: Record<string, unknown>, proto: WireProtocol): ShapeReason | null {
 +  const present = presentFor(direction, body, proto);
-+  return reasonFor(direction, body, present, coverageReason(present, projectionFor(direction, body, proto).handled));
++  const projection = projectionFor(direction, body, proto);
++  const coverage = coverageReason(present, projection.handled);
++  // 兜底：协议已知、载荷都覆盖了，但还有字符串内容没被任何投影器看过 → 覆盖不足。
++  // 这一条独立于 CoverageSpec，因为它要覆盖的恰恰是清单之外的字段。
++  if (coverage === null && unseenContent(direction, body, projection.parts.join("\n"))) {
++    return "shape_partial_coverage";
++  }
++  return reasonFor(direction, body, present, coverage);
 +}
++
++/**
++ * 协议已知、载荷字段都覆盖了，但 body 里还有**没有被任何投影器看过**的内容。
++ *
++ * 这是 code-walkthrough R2 的 CRITICAL：`CoverageSpec` 列的是**载荷**清单，
++ * 凭据放进同一协议里合法但未登记的字段（如 Anthropic 的 `metadata.user_id`）时，
++ * `present` 非空且全部 handled → 判 `full` → 不写 reason、不阻断，凭据原样出境。
++ * 那正是本 sprint 要消灭的失效形态，只是换了字段名。
++ *
++ * 判据：把 body 里所有**字符串值**取出来，逐个比对扫描单元实际看过的文本。
++ * 有任何一个字符串值没出现在扫描文本里，就说明它没被任何人看过。
++ * 这不是"更聪明的识别"，恰恰相反——它假设"没看过的内容都可能是载荷"。
++ */
++function unseenContent(direction: Direction, body: Record<string, unknown>, scannedText: string): boolean {
++  for (const value of collectStrings(body)) {
++    if (value.trim().length === 0) continue;
++    // 结构化字段（model / usage 计数等）本来就只进 meta，不要求逐字出现；
++    // 但只要它有实质长度且不在扫描文本里，就算"没被看过"。
++    if (!scannedText.includes(value)) return true;
++  }
++  return false;
++}
++
++/** 递归收集 JSON 里的全部字符串值（跳过结构字段与非文本载体）。 */
++function collectStrings(value: unknown, key?: string): string[] {
++  if (STRUCTURAL_KEYS.has(key ?? "")) return [];
++  if (typeof value === "string") return [value];
++  if (Array.isArray(value)) return value.flatMap((v) => collectStrings(v));
++  if (value && typeof value === "object") {
++    return Object.entries(value as Record<string, unknown>).flatMap(([k, v]) => collectStrings(v, k));
++  }
++  return [];
++}
++
++/**
++ * 只进 meta、不进文本投影的结构性字段（与 scan-unit 的 meta 口径一致）。
++ * 这些字段的值不要求出现在扫描文本里，否则每条正常请求都会被判"未看过"。
++ */
++const STRUCTURAL_KEYS: ReadonlySet<string> = new Set([
++  "model",
++  "usage",
++  "finish_reason",
++  "stop_reason",
++  "id",
++  "object",
++  "type",
++  "role",
++  "call_id",
++  "tool_use_id",
++  "cache_control",
++  "created",
++  "created_at",
++  "system_fingerprint",
++  // 非文本载体：图片/文件 URL、base64 数据、MIME 类型。它们从设计上就不进文本投影
++  // （scan-unit 只取 `seg.text`），把它们算作"没看过"会让每条带图请求都被误阻断。
++  "url",
++  "data",
++  "media_type",
++  "mimeType",
++  "b64_json",
++  "image_url",
++  "source",
++  "file_id",
++  "filename",
++]);
 +
 +/**
 + * 把"覆盖结论"落到四种情形上（顺序即优先级）：

@@ -151,3 +151,38 @@ describe("SL-05 未登记字段的兜底（R2 CRITICAL 回归）", () => {
     expect(g.records().at(-1)!.reason).toBeUndefined();
   });
 });
+
+// @test REQ-V2bA-15（code-walkthrough R3 CRITICAL C1/C2 回归）
+// @intent 兜底扫描必须**先于**豁免判定；结构性豁免不能按裸键名在任意深度开洞。
+describe("SL-05 兜底顺序与键名豁免（R3 回归）", () => {
+  it("C1：没有任何载荷字段、凭据只在未登记的 note 里 → 阻断（豁免不能抢先）", async () => {
+    const g = await boot();
+    const res = await post(`${g.url}/claude/anthropic/v1/messages`, {
+      model: "claude-3-5-sonnet",
+      messages: [{ role: "user", note: "sk-ant-api03-REALKEYabcdefghijklmnop" }],
+    });
+    expect(res.status).toBe(502);
+    expect(g.records().at(-1)!.reason).toBe("shape_partial_coverage");
+  });
+
+  it("C2：凭据放在结构性键名（id）下 → 阻断（键名不再豁免值）", async () => {
+    const g = await boot();
+    const res = await post(`${g.url}/claude/anthropic/v1/messages`, {
+      model: "m",
+      max_tokens: 8,
+      messages: [{ role: "user", content: "hi", id: "sk-ant-api03-REALKEYabcdefghijklmnop" }],
+    });
+    expect(res.status).toBe(502);
+  });
+
+  it("对照：短标识符（模型名、ID）不会被当成未看过的载荷", async () => {
+    const g = await boot();
+    const res = await post(`${g.url}/claude/anthropic/v1/messages`, {
+      model: "claude-3-5-sonnet-20241022",
+      max_tokens: 8,
+      messages: [{ role: "user", content: [{ type: "text", text: "hello there friend" }] }],
+      metadata: { user_id: "user-abc-123" },
+    });
+    expect(res.status).toBe(200);
+  });
+});

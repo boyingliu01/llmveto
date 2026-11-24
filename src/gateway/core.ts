@@ -500,6 +500,8 @@ interface NonStreamResponseParams {
   readonly canaryMeta: CanaryRequestMeta | null;
   readonly gwReasons: readonly string[] | undefined;
   readonly cmdDedup: ReturnType<typeof createDangerousCommandDedup>;
+  /** 该请求是否走在受管路由上（响应侧闸门据此决定阻断还是只记录）。 */
+  readonly managedRoute: boolean;
 }
 
 /**
@@ -514,7 +516,9 @@ function responseShapeReason(p: NonStreamResponseParams): string | undefined {
   // 只对**新协议**启用响应侧闸门：Chat 响应的既有语义（上游可能带各种字段）
   // 不在本 sprint 的改动面内，贸然收紧会误伤存量流量。两种新协议没有这样的历史包袱。
   if (fmt !== "anthropic-messages" && fmt !== "openai-responses") return undefined;
-  return shapeVerdict("response", tryParseJson(p.text), null, true).reason ?? undefined;
+  // 受管标志必须与请求侧同源（R3：此前硬编码 true，使任何新协议响应都 502，
+  // 与非受管"只记录不阻断"的分权直接矛盾）。
+  return shapeVerdict("response", tryParseJson(p.text), null, p.managedRoute === true).reason ?? undefined;
 }
 
 function handleNonStreamResponse(p: NonStreamResponseParams): ChatOutcome {
@@ -618,6 +622,7 @@ export async function handleChatCompletions(
     forwardedBody: canaryStep.forwardedBody,
     canaryMeta: canaryStep.meta,
     gwReasons: gatewayReasonsOf(canaryStep.gatewayReason, degradedReason),
+    managedRoute: req.managedRoute === true,
   });
 }
 
@@ -649,6 +654,8 @@ interface UpstreamDelivery {
   readonly forwardedBody: string;
   readonly canaryMeta: CanaryRequestMeta | null;
   readonly gwReasons: readonly string[] | undefined;
+  /** 该请求是否走在受管路由上（响应侧闸门据此决定阻断还是只记录）。 */
+  readonly managedRoute: boolean;
   /** 危险命令去重状态（请求侧已消费），透传给响应侧各路径。 */
   readonly cmdDedup: ReturnType<typeof createDangerousCommandDedup>;
 }
@@ -677,6 +684,7 @@ async function deliverUpstream(d: UpstreamDelivery): Promise<ChatOutcome> {
       canaryMeta: d.canaryMeta,
       gwReasons: d.gwReasons,
       cmdDedup: d.cmdDedup,
+      managedRoute: d.managedRoute,
     });
   }
   // 流式：tee（逐帧交付逻辑独立成 handleStreaming，主 handler 只保留分支骨架）

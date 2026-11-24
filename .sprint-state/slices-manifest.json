@@ -26,7 +26,7 @@
       "verify": [
         "npx vitest run tests/unit/gateway/protocols/recognize.test.ts tests/unit/gateway/scan-unit.test.ts"
       ],
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "SL-02",
@@ -42,7 +42,7 @@
       "verify": [
         "npx vitest run tests/unit/gateway/protocols/anthropic.test.ts"
       ],
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "SL-03",
@@ -58,7 +58,7 @@
       "verify": [
         "npx vitest run tests/unit/gateway/protocols/responses.test.ts"
       ],
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "SL-04",
@@ -75,7 +75,7 @@
       "verify": [
         "npx vitest run tests/unit/gateway/protocols/stream-frames.test.ts"
       ],
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "SL-05",

@@ -3,7 +3,7 @@
   "evidence_schema_version": 2,
   "id": "sprint-20261124-54",
   "task_description": "llmveto v2b slice A: multi-client onboarding (Claude Code / Codex / promptfoo) into MANAGED_CONFIG_IDS with doctor drift assertions and end-to-end vetting probes. Deferred: fingerprint patrol with trust score (v2b-C), billing reconciliation report CLI (v2b-B)",
-  "phase": 1,
+  "phase": 2,
   "status": "in_progress",
   "started_at": "2026-11-24T01:13:46.716Z",
   "phase_history": [
@@ -14,6 +14,14 @@
       "started_at": "2026-11-24T01:13:46.716Z",
       "completed_at": "2026-11-24T01:14:37.718Z",
       "duration_seconds": 51
+    },
+    {
+      "phase": 2,
+      "phase_name": "DESIGN",
+      "status": "completed",
+      "started_at": "2026-11-24T03:47:45.941Z",
+      "completed_at": "2026-11-24T03:47:45.941Z",
+      "duration_seconds": 0
     }
   ],
   "isolation": {
@@ -31,7 +39,9 @@
     "deferred": "v2b-B report CLI, v2b-C fingerprint patrol",
     "decisions": [
       "DR-029",
-      "DR-030"
+      "DR-030",
+      "DR-031",
+      "DR-032"
     ],
     "risks_for_phase2": [
       "R-PRE-1 no local client installs",
@@ -39,7 +49,13 @@
       "R-PRE-3 Responses protocol vs scan unit",
       "R-PRE-4 no real-client E2E",
       "R-PRE-5 reviewer seats unprovable"
-    ]
+    ],
+    "specification": "specification.yaml (SPEC-V2BA-001, 21 REQ / 49 AC)",
+    "design": "docs/plans/2026-11-24-v2b-a-design.md",
+    "slices": "15 (topology verified, 21/21 REQ covered)",
+    "review": "R1 two rounds (5 seats) + R2 one round (2 seats), all REQUEST_CHANGES, all Critical/Major absorbed",
+    "delphi_gate": "NOT met (0% APPROVED); user approved via DR-031",
+    "new_dependency": "smol-toml@1.9.1 (BSD-3-Clause, zero deps)"
   },
   "metrics": {}
 }

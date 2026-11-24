@@ -1,90 +1,53 @@
-# Phase 2/6: DESIGN — Phase Summary
+# Phase 2/6 DESIGN 小结 — llmveto v2b-A
 
-- **Sprint**: sprint-20260914-49
-- **Branch**: sprint/2026-09-14-01
-- **Completed at**: 2026-09-15
-- **Duration**: 跨会话（2026-09-14 起始）
+- Sprint `sprint-20261124-54` / 日期 2026-11-24
+- 用户拍板：批准设计进 BUILD（DR-031）
 
-## Gate 通过状态
+## 产出
 
-| 门禁 | 状态 | 证据 |
+| 类别 | 文件 |
+|---|---|
+| 需求（定稿） | `.sprint-state/review/r1-requirements-r3draft.md`（21 REQ / 14 验收项） |
+| 设计 | `docs/plans/2026-11-24-v2b-a-design.md`（D-01~D-09 + 15 切片） |
+| 机读契约 | `specification.yaml`（SPEC-V2BA-001，21 REQ / 49 AC） |
+| 切片 | `.sprint-state/slices-manifest.json`（15 切片，拓扑校验通过，21/21 REQ 覆盖） |
+| 评审证据 | `r1-consensus.md`、`r1-consensus-r2.md`、`r2-consensus.md` |
+| 面板 | `.delphi-config.json` + `.sprint-state/review/delphi-panel-v2b.md` |
+| 决策 | DR-029 / DR-030 / DR-031 / DR-032 |
+| 证据脚本 | `var/probes/scan-unit-probe.mjs`（gitignored，可复现 §1.1/§1.2 矩阵） |
+
+## 评审统计（诚实版）
+
+| 轮次 | 席位 | 结果 |
 |---|---|---|
-| R1 需求评审（威胁模型 / REQ 冻结） | ✅ APPROVED | `.sprint-state/review/requirements-reviewed.json` |
-| 设计文档用户 APPROVAL | ✅ 用户批准（选「进入 BUILD（推荐）」） | `.sprint-state/decisions.md` |
-| R2 delphi-review（≥ 91% 共识 + 零 Critical/Major） | ✅ APPROVED 100% | `.sprint-state/review/delphi-reviewed.json` (R1→R2→R3，Round 3 三专家全票 APPROVED_WITH_CONDITIONS) |
-| BUILD-ENTRY-CONTRACT | ✅ 14 REQ ↔ 14 slice 一一覆盖，无缺口无孤儿；拓扑无环 | `specification.yaml` + `.sprint-state/slices-manifest.json` |
+| R1 第 1 轮 | hy4std / hy4flash / hy4flash-free（space-bunny 两次超时） | 3/3 REQUEST_CHANGES |
+| R1 第 2 轮 | hy4std（失败→hy4flash 补位）/ hy4flash / hy4flash-free | 3/3 REQUEST_CHANGES |
+| R2 设计 | hy4std / hy4flash / space-bunny（超时缺位） | 2/2 REQUEST_CHANGES |
 
-## 评审团（Delphi panel）
+**没有一轮 APPROVED。** 设计与需求是**吸收全部 Critical/Major 后的版本**，而不是"通过评审的版本"。
+这一点必须如实记录：`DELPHI-GATE` 的"≥90% APPROVED"在本 sprint **未达成**，用户以 DR-031 明确批准进 BUILD。
 
-Provider：`example-provider` → `https://internal-gateway.invalid/redacted/v1`（OpenAI 兼容），凭据来自环境变量 `OPENCODE_EXAMPLE_API_KEY`（不落盘）。
+## 本轮最有价值的四次实测修正
 
-| Expert | 视角 | agent | model |
-|---|---|---|---|
-| A | 架构 / 需求对齐 | `delphi-reviewer-architecture` | `example-provider/g-deepseek-flash` |
-| B | 技术 / 实现正确性 | `delphi-reviewer-technical` | `example-provider/g-glm-5.3-flash` |
-| C | 可行性 / 风险仲裁 | `delphi-reviewer-feasibility` | `example-provider/g-qwen3.8-flash` |
+1. **凭据出境未阻断**：`sk-` 探针经 `/claude/anthropic/v1/messages` 与 `/codex/openai/v1/responses` 得到 `warned` + HTTP 200。
+2. **流式全空**：Responses 与 Anthropic 的 SSE 每帧投影为 `""`（Chat 对照正常）。
+3. **识别规则会阻断目标流量**：特征键方案下三种真实请求全部判歧义 → 直接 fail-closed 会打死自己。
+4. **覆盖判据缺 oracle**：`shape_partial_coverage` 只能由投影器自证，等于没有判据 → 改为协议声明清单 + 两轴判定。
 
-三家不同厂家，满足"≥ 2 家"与"禁三专家同厂"。调用约束与配置变更详见 `docs/delphi-panel.md`。
+## 交付形态
 
-## 三轮评审收敛数据
-
-| Round | Verdicts | Consensus | 新问题 (C/M/m) | Fix Commit |
-|---|---|---|---|---|
-| R1 | REQUEST_CHANGES × 3 | — | 7 / 7 / 8（共 22） | `2545042` |
-| R2 | REQUEST_CHANGES × 2 + APPROVED_WITH_CONDITIONS | 86.4%（低于 91% 阈值） | 2 / 7 / 5 | `9af9633` |
-| R3（聚焦复审） | APPROVED_WITH_CONDITIONS × 3 | **100%** | 0 / 1→0 / 0 | 提交前闭合 |
-
-零容忍清单：全部 Critical/Major 均通过文档修订闭合，未使用降级跳过。
-
-## 需求冻结关键决策（DR-005..DR-010 + DD-VETO-*）
-
-- 术语两层：`verdict`(clean/finding/error) vs `action`(allow/warn/redact/block)；redact 移出 v1
-- 受管配置封闭枚举 `MANAGED_CONFIG_IDS` 替换"全部流量过闸"不可证伪命题
-- 零缓冲 + 终止流：流式已转发字节不可撤回；阻断粒度 = 响应级/流终止级；"零缓冲"精化为"≤1 chunk 瞬态持有窗口"
-- mock-upstream 进 v1，evil-relay 归 v2；v1 验收不依赖 v2/v3
-- evidence 信任边界：SHA-256 链不抗本机同权限整链重写；`llmveto verify` 提入 v1
-- 三台独立性能门 G1/G2/G3；G3 按 body 分档；超时 = 拒绝
-- v1 残余风险登记表 13 行威胁 × 6 列，显式登记未缓解面
-- 扫描单元排除标准认证头（阻断类 FP=0 物理前提）；副作用（header 路径盲区）已登记 T1b
-
-## 冻结件产物（Phase 3 输入）
-
-| 类别 | 文件 | 说明 |
-|---|---|---|
-| 需求规范 | `specification.yaml` | 14 REQ + 58 AC + 10 DD + API 契约 + 非目标 + v1 残余风险镜像 |
-| 构建切片 | `.sprint-state/slices-manifest.json` | 14 SL ↔ 14 REQ 一一映射，拓扑排序，per-slice verify 命令 |
-| 权威文档 | `docs/issues/1..5-*.md` | REQ/DESIGN/REUSE/TEST/ROADMAP（v1 验收条目以 ROADMAP §v1 为唯一权威清单） |
-| 分层契约 | `architecture.yaml` | 7 层：shared/checkers/policy/evidence/adapters/gateway/cli |
-| 评审证据 | `.sprint-state/review/{r1,r2,r3}-consensus.md` + `{r1,r2,r3}-expert-{A,B,C}.md` | 三专家独立意见 + 共识矩阵 |
-| 面板配置 | `docs/delphi-panel.md` | example-provider provider + 3 agent + mode=all 约束 |
-
-## Phase 3 输入要点
-
-- **ralph-loop 顺序**：按 slices-manifest 的 `depends_on` 拓扑序 dispatch subagent
-- **每 slice 完成前必跑**：`npx vitest run` + `npx tsc --noEmit` + `npx xp-gate check --all`（回归门禁）
-- **架构边界断言**：`tests/unit/architecture-boundaries.test.ts` 与 `architecture.yaml` 双重锁 checker 纯函数性
-- **前置门 G-LIC / G-FP / G-BENCH** 必须先关（SL-01），否则范围会中途漂移
-- **禁止 redact / 禁止 v2/v3 交付物出现在 v1 验收**（分期纪律）
+- 新增运行时依赖 `smol-toml@1.9.1`（BSD-3-Clause，零依赖），只用于**定位** Codex 配置键，不做 stringify。
+- 15 切片：SL-01..SL-06 协议线（注册表/两种非流式/流式/两轴处置/路由），SL-07 分层声明，
+  SL-08..SL-10 三个适配器，SL-11 doctor，SL-12 金丝雀边界，SL-13 四段全链 E2E，SL-14 审计与守卫，SL-15 文档。
 
 ## status
 
 ```
-status: completed
-outputs:
-  - specification.yaml
-  - .sprint-state/slices-manifest.json
-  - .sprint-state/review/requirements-reviewed.json
-  - .sprint-state/review/delphi-reviewed.json
-  - .sprint-state/review/r1-consensus.md
-  - .sprint-state/review/r2-consensus.md
-  - .sprint-state/review/r3-consensus.md
-  - docs/delphi-panel.md
-decisions:
-  - DR-005 规模 = complex
-  - DR-006 范围 = 仅 v1 MVP
-  - DR-007..DR-010 R1 冻结决策
-  - 设计文档用户 APPROVAL（Phase 2 出口）
+status: completed（DELPHI-GATE 未达 90% 共识，用户 DR-031 明确批准进 BUILD）
+outputs: 见上表
+decisions: DR-029, DR-030, DR-031, DR-032
 next_phase_context:
-  - 14 slices 按拓扑序进入 ralph-loop
-  - Phase 3 入口三门（GITHOOKS-GATE / DELPHI-GATE / BUILD-ENTRY-CONTRACT）全部已满足
+  - ralph-loop 按 manifest 拓扑序执行 15 个切片
+  - 每切片：RED → GREEN → REFACTOR，收尾跑全量 vitest + tsc --noEmit + xp-gate check --all
+  - SL-01 必须先落地（Chat 对照锁），否则任何共享函数改动都没有回归基线
 ```

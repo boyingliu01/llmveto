@@ -260,3 +260,50 @@ describe("SL-05 扫原始文本而非重建副本（R5 回归）", () => {
     expect(r.status).toBe(200);
   });
 });
+
+// @test REQ-V2bA-15（code-walkthrough R6 / GLM 席 C1 回归）
+// @intent `\uXXXX` 全转义写法的凭据，在原始文本里没有任何字面凭据字符，
+//         扫描器对原始文本与换行还原版都是全盲。必须扫**JSON 解码后**的形态。
+describe("SL-05 转义写法不构成盲区（R6 回归）", () => {
+  it("凭据用 \\uXXXX 全转义 → 阻断", async () => {
+    const g = await boot();
+    const raw = '{"model":"m","junk":"\\u0073k-ant-api03-REALKEYabcdefghij\\u006blmnop"}';
+    const r = await fetch(`${g.url}/claude/anthropic/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: raw,
+    });
+    await r.text();
+    expect(r.status).toBe(502);
+    expect(g.records().at(-1)!.reason).toBe("shape_partial_coverage");
+  });
+
+  it("转义凭据 + 正常消息（coverage 本会判 full）→ 仍阻断", async () => {
+    const g = await boot();
+    const raw =
+      '{"model":"m","max_tokens":8,"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}],' +
+      '"junk":"\\u0073k-ant-api03-REALKEYabcdefghij\\u006blmnop"}';
+    const r = await fetch(`${g.url}/claude/anthropic/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: raw,
+    });
+    await r.text();
+    expect(r.status).toBe(502);
+  });
+
+  it("对照：正常请求与 body 内认证头均不误伤", async () => {
+    const g = await boot();
+    for (const body of [
+      { model: "claude-3", max_tokens: 8, messages: [{ role: "user", content: [{ type: "text", text: "hello there" }] }] },
+    ]) {
+      const r = await fetch(`${g.url}/claude/anthropic/v1/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      await r.text();
+      expect(r.status).toBe(200);
+    }
+  });
+});

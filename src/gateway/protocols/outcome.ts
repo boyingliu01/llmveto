@@ -113,26 +113,60 @@ function coverageShape(direction: Direction, body: Record<string, unknown>, prot
  * 判据就是扫描器自己的规则集，与真正拦截时用的是同一套，不需要猜"哪些字符串像载荷"。
  */
 function unseenSecret(body: Record<string, unknown>, rawText: string, scannedText: string): boolean {
-  // 扫**原始 body 文本**（不是 JSON.parse→JSON.stringify 的重建副本）：
-  // 重建会丢重复键（后者覆盖前者）并把换行写成 `\n` 两字符，PEM 规则因此在重建串上恒不命中。
-  // 与此同时原始文本里的认证头按 AC-VETO-002-06 是**设计上排除**的，不能算成覆盖缺口。
-  // 两种形态都扫：原始文本，以及**换行已还原**的版本。
-  // 扫描器的 PEM 规则要求真实换行（0.6.1 为消除"讨论 PEM 格式即被拦"而引入），
-  // 而 JSON 里的私钥块换行是转义的 `\n` 两字符——只扫原始文本会漏掉它。
-  const unescaped = rawText.replace(/\\n/g, "\n").replace(/\\r/g, "\r");
-  const scan = egressSecretScan({ direction: "request", transport: "non-stream", text: rawText, meta: {} });
-  const scan2 = unescaped === rawText ? { verdict: "clean", evidence: [] } : egressSecretScan({ direction: "request", transport: "non-stream", text: unescaped, meta: {} });
-  const hits = scan.verdict === "finding" || scan2.verdict === "finding";
-  if (!hits) return false;
-  const all = [...scan.evidence, ...scan2.evidence];
-  return all.some((finding) => {
-    const start = finding.offsets?.[0];
-    // 设计上排除在扫描单元之外的认证头：它出现在投影之外是**预期**，不是覆盖缺口。
-    if (start !== undefined && isExcludedHeaderHit(rawText, start)) return false;
-    // 未还原文本里找得到、或还原后找得到，都算"看过"
-    const hit = tokenedAt(rawText, finding.offsets).replace(/\\\\n/g, "\n");
-    return !visibleInProjection(hit, scannedText) && !visibleInProjection(tokenedAt(rawText, finding.offsets), scannedText);
+  // 三种形态都要扫（GLM 席第 6 轮指出转义盲区，实测成立）：
+  //   ① 原始文本：字面凭据
+  //   ② 换行还原：PEM 块在 JSON 里是 `\n` 两字符，扫描器的 PEM 规则要真实换行
+  //   ③ **JSON 解码后的文本**：`\u0073k-ant-…` 这种全转义写法，字面上没有任何凭据字符，
+  //      扫描器对①和②都是全盲。解码后才是上游真正拿到的东西。
+  // 坐标系各自独立：每趟的 offsets 只在它自己那趟的文本里切片。
+  const variants = [
+    rawText,
+    rawText.replace(/\\n/g, "\n").replace(/\\r/g, "\r"),
+    decodeVariants(body),
+  ].filter((v, i, arr) => v.length > 0 && arr.indexOf(v) === i);
+
+  return variants.some((text) => {
+    const scan = egressSecretScan({ direction: "request", transport: "non-stream", text, meta: {} });
+    if (scan.verdict !== "finding") return false;
+    return scan.evidence.some((finding) => {
+      const start = finding.offsets?.[0];
+      // 设计上排除在扫描单元之外的认证头：出现在投影之外是**预期**，不是覆盖缺口。
+      if (start !== undefined && isExcludedHeaderHit(text, start)) return false;
+      const hit = tokenedAt(text, finding.offsets);
+      return !visibleInProjection(hit, scannedText);
+    });
   });
+}
+
+/**
+ * 解码形态的候选人：把所有 JSON 字符串值**解码后**重新拼成一份可扫描文本。
+ *
+ * 为什么不能用 `JSON.stringify(body)`：那会把换行再转义回去，等于回到①。
+ * 这里直接按解码后的字面值拼接，得到的就是上游解析后真正看到的内容。
+ */
+function decodeVariants(body: Record<string, unknown>): string {
+  const out: string[] = [];
+  const walk = (v: unknown, parentKey?: string): void => {
+    if (typeof v === "string") {
+      out.push(v);
+      return;
+    }
+    if (Array.isArray(v)) {
+      for (const item of v) walk(item);
+      return;
+    }
+    if (v && typeof v === "object") {
+      for (const [k, item] of Object.entries(v as Record<string, unknown>)) {
+        // 认证头的**值**按 AC-VETO-002-06 设计上不进扫描单元，这里同样不收：
+        // 收了它就会在解码坐标系里成为"未被看过"的命中，把正常请求打成 502。
+        if (parentKey === "extra_headers" && isAuthHeader(k)) continue;
+        out.push(k);
+        walk(item, k);
+      }
+    }
+  };
+  walk(body);
+  return out.join("\n");
 }
 
 /**

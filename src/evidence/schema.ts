@@ -21,6 +21,12 @@ export const REASON_VOCAB: readonly string[] = Object.freeze([
   "checker_timeout",
   "scanner_error",
   "input_malformed",
+  // v2b-A（REQ-V2bA-14）：协议线格式的两轴判定结果。
+  // 三者都是"网关没能覆盖这段流量"的可观测事实，不是 checker 的业务命中——
+  // 所以它们落在顶层 reason，而不是 findings[]，与 registry_unavailable 同族。
+  "shape_unrecognized",
+  "shape_known_empty",
+  "shape_partial_coverage",
 ]);
 
 export interface EvidenceFinding {

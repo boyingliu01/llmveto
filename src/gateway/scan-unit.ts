@@ -1,7 +1,6 @@
 import type { ScanUnit, Transport } from "../shared/types.ts";
 import type { Projection, WireFormat } from "./protocols/types.ts";
-import { anthropicMessagesProtocol } from "./protocols/anthropic.ts";
-import { responsesProtocol } from "./protocols/responses.ts";
+import { protocolFor } from "./protocols/table.ts";
 import { exceedsWindowOverflowLimit } from "./window-store.ts";
 
 /**
@@ -210,14 +209,8 @@ interface ProtocolProjection {
   readonly format: WireFormat;
 }
 
-/** 线格式 → 投影器（显式映射，避免嵌套三元带来的分支）。 */
-const PROTOCOL_IMPL: ReadonlyMap<WireFormat, { projectRequest: (p: Record<string, unknown>) => Projection; projectFrame: (p: Record<string, unknown>) => Projection; projectResponse: (p: Record<string, unknown>, m: string | null) => Projection }> = new Map([
-  ["anthropic-messages", anthropicMessagesProtocol],
-  ["openai-responses", responsesProtocol],
-]);
-
 function projectVia(direction: "request" | "response", parsed: Record<string, unknown>, format: WireFormat | undefined, transport: Transport, requestedModel: string | null): ProtocolProjection | null {
-  const proto = format === undefined ? undefined : PROTOCOL_IMPL.get(format);
+  const proto = format === undefined ? undefined : protocolFor(format);
   if (proto === undefined) return null;
   const p = direction === "request" ? proto.projectRequest(parsed) : transport === "stream" ? proto.projectFrame(parsed) : proto.projectResponse(parsed, requestedModel);
   return { text: p.parts.join("\n"), derived: p.derived, format: format as WireFormat };

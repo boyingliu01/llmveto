@@ -94,7 +94,7 @@
       "verify": [
         "npx vitest run tests/integration/protocol-outcome.test.ts"
       ],
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "SL-06",
@@ -109,7 +109,7 @@
       "verify": [
         "npx vitest run tests/integration/route-passthrough.test.ts"
       ],
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "SL-07",

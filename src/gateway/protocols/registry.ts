@@ -1,6 +1,6 @@
 // @no-test-required: 测试在 tests/unit/gateway/protocols/registry.test.ts（含"跨格式相似性"三条回归）（本项目测试布局为 tests/ 目录；Gate 5a 仅识别同目录/根 tests/ 六种路径）
-import type { Direction, RecognizedFormat, WireFormat, WireProtocol } from "./types.ts";
-import { chatProtocol } from "./chat.ts";
+import type { Direction, RecognizedFormat, WireFormat } from "./types.ts";
+import { protocolFor } from "./table.ts";
 
 /**
  * @test REQ-V2bA-03 / REQ-V2bA-04 / REQ-V2bA-10
@@ -30,12 +30,7 @@ export const WIRE_ROUTE_PREFIXES: ReadonlyMap<string, WireFormat> = Object.freez
   ]),
 );
 
-const PROTOCOLS: ReadonlyMap<WireFormat, WireProtocol> = new Map<WireFormat, WireProtocol>([["chat", chatProtocol]]);
-
-/** 已注册的协议（未注册的格式不会出现在 WIRE_ROUTE_PREFIXES 的可达集里）。 */
-export function protocolFor(format: WireFormat): WireProtocol | undefined {
-  return PROTOCOLS.get(format);
-}
+export { protocolFor };
 
 /** 前缀 → 线格式；未知前缀返回 undefined（= 没有权威）。 */
 export function formatForPrefix(prefix: string | null | undefined): WireFormat | undefined {

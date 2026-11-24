@@ -84,6 +84,9 @@ export interface RouteInfo {
 // 保留段：不是客户端名，而是 API 版本前缀（兼容 legacy 客户端与现有测试）。
 const RESERVED_SEGMENTS: ReadonlySet<string> = new Set(["v1", "api"]);
 
+import { formatForPrefix } from "./protocols/registry.ts";
+import { CANARY_MANAGED_ROUTES } from "./core.ts";
+
 export function parseRoute(urlPath: string): RouteInfo {
   const path = urlPath.split("?")[0] ?? "/";
   const segs = path.split("/").filter((s) => s.length > 0);
@@ -178,7 +181,10 @@ async function dispatch(
   // 判定一出即登记进每请求状态：兜底路径的 evidence 传输字段据此写，不再由交付计数反推
   // （PWR3-B-m1：`fwd.chunks > 0` 在 headers 已出而零帧转发时会把流式请求误记为非流式）。
   fwd.transport = transport;
-  const outcome = await handleChatCompletions(core, { body: bodyText, headers, upstreamUrl, ...id, endpointHost, transport });
+  // SL-05/SL-06（REQ-V2bA-04b/15）：路由前缀既是识别权威，也是 fail-closed 的作用域来源。
+  const routePrefix = route.client;
+  const managedRoute = isManagedRoute(route);
+  const outcome = await handleChatCompletions(core, { body: bodyText, headers, upstreamUrl, ...id, endpointHost, transport, routePrefix, managedRoute });
 
   await deliverOutcome(res, outcome, fwd);
   writeEvidence(cfg, { ...id, endpointHost, bodyText, respText: outcome.body, stream: transport === "stream", findings: outcome.findings,
@@ -186,6 +192,19 @@ async function dispatch(
     forwardedBody: outcome.forwardedBody, // D-04：链上 sha/bytes 记上游实收体
     ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}), // SL-07：顶层 reason 落链（key-absent）
     partial: outcome.actionTaken === "terminated_after_delivery", t0 });
+}
+
+/**
+ * SL-06（REQ-V2bA-15）：受管路由的判定域。
+ *
+ * 定义（设计 D-03，R2 评审要求写死）：受管路由 = 已知路由前缀集合 ∪ CANARY_MANAGED_ROUTES 的路由键。
+ * 二者并集即 fail-closed 的作用域；未命中并集的路径仍被扫描与记录，但不因形状/覆盖失败而阻断
+ * （"接得住但不打死"，写进 KNOWN-ISSUES）。
+ */
+function isManagedRoute(route: RouteInfo): boolean {
+  if (route.client !== null && formatForPrefix(route.client) !== undefined) return true;
+  const key = `${route.client ?? ""}/${route.providerId ?? ""}`;
+  return CANARY_MANAGED_ROUTES.has(key);
 }
 
 /** 读请求体全文（dispatch 与兜底路径的共享入口）。 */

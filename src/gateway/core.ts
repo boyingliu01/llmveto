@@ -16,6 +16,8 @@ import {
   declaredToolsMeta,
 } from "./scan-unit.ts";
 import { encodeVetoEvent, parseSseFrames, tryParseJson, type SseFrame } from "./sse-tee.ts";
+import type { WireFormat } from "./protocols/types.ts";
+import { shapeVerdict } from "./protocols/outcome.ts";
 import { decide, pickScenario, pickTopReasonFromErrorFindings, type BehaviorScenario } from "../policy/engine.ts";
 import type { PolicyInput } from "../policy/engine.ts";
 import { resolveActionTaken } from "../policy/mapping.ts";
@@ -156,12 +158,13 @@ export class GatewayCore {
     headers: Readonly<Record<string, string>>,
     transport: "stream" | "non-stream",
     cmdDedup: ReturnType<typeof createDangerousCommandDedup> = createDangerousCommandDedup(),
+    shape?: { readonly format: WireFormat } | undefined,
   ): {
     inputs: PolicyInput[];
     scanUnit: ScanUnit;
   } {
     const parsed = tryParseJson(bodyText);
-    const scanUnit = buildRequestScanUnit(bodyText, parsed, headers, transport);
+    const scanUnit = buildRequestScanUnit(bodyText, parsed, headers, transport, shape);
     // D-09 默认接线（AC-V2a-27①）：请求体路径按 body 字节数走 G3 分档。
     const defaultBudget = g3BudgetForBodyBytes(Buffer.byteLength(bodyText, "utf8"));
     const inputs: PolicyInput[] = [];
@@ -365,16 +368,23 @@ export interface ChatOutcome {
 }
 
 /** 请求侧 block 早退：canary 编排尚未执行 ⇒ 无 gateway reason 可携带（恒空）。 */
-function blockedBeforeForward(reqFindings: EvidenceFinding[], degraded: boolean, body: string): ChatOutcome {
+/** 阻断的 action 序列（block 恒胜；degraded 仅作附加事实）。 */
+function blockActions(degraded: boolean): readonly ("blocked_before_forward" | "degraded_observational")[] {
+  return degraded ? ["blocked_before_forward", "degraded_observational"] : ["blocked_before_forward"];
+}
+
+/**
+ * 请求侧阻断。
+ * @param overrideReason 覆盖顶层 reason（SL-05 的形状判定用：形状阻断没有 finding，
+ *   若沿用 `reasonOf(findings)` 就会写出空 reason——"阻断了但说不出为什么"正是本项目要避免的形态）
+ */
+function blockedBeforeForward(reqFindings: EvidenceFinding[], degraded: boolean, body: string, overrideReason?: string): ChatOutcome {
   return {
     status: 502,
     body: JSON.stringify({ error: { code: "llmveto:rejected" } }),
-    actionTaken: resolveActionTaken([
-      "blocked_before_forward",
-      ...(degraded ? (["degraded_observational"] as const) : []),
-    ]),
+    actionTaken: resolveActionTaken(blockActions(degraded)),
     findings: reqFindings,
-    reason: reasonOf(reqFindings),
+    reason: overrideReason ?? reasonOf(reqFindings),
     forwardedBody: body, canaryMeta: null, // block 前置：编排不进入，链上 sha = 客户端原体
     deliveredChunks: 0,
     scenario: "1",
@@ -522,13 +532,17 @@ async function postToUpstream(url: string, forwardedBody: string, authorization:
  */
 export async function handleChatCompletions(
   core: GatewayCore,
-  req: { body: string; headers: Record<string, string>; upstreamUrl: string; requestId: string; sessionId: string; turnId: string; client: string; providerId: string; endpointHost: string; transport: "stream" | "non-stream" },
+  req: { body: string; headers: Record<string, string>; upstreamUrl: string; requestId: string; sessionId: string; turnId: string; client: string; providerId: string; endpointHost: string; transport: "stream" | "non-stream"; routePrefix?: string | null; managedRoute?: boolean },
 ): Promise<ChatOutcome> {
   // transport 由 server 层判定后下传（单一真相源）：本层不再自行从 headers/body 重判。
   const { transport } = req;
   const stream = transport === "stream";
   const cmdDedup = createDangerousCommandDedup();
-  const reqScan = core.scanRequest(req.body, req.headers, transport, cmdDedup);
+  // SL-05（REQ-V2bA-14/15）：先判形状——认不出的形态在这里就阻断，
+  // 不让它走到"扫了但什么都没扫到、然后判 clean"那条路。
+  const shape = shapeVerdict("request", tryParseJson(req.body), req.routePrefix ?? null, req.managedRoute === true);
+  if (shape.reason !== null) return blockedBeforeForward([], false, req.body, shape.reason);
+  const reqScan = core.scanRequest(req.body, req.headers, transport, cmdDedup, shapeFormat(shape));
   // SL-01/D-12：请求体 tools 声明面（declared_tools/declared_required）提取自请求扫描
   // 单元 meta，下传给响应侧全部扫描单元（非流式 / 流式逐帧 / 归并单元）。
   const declaredMeta = declaredToolsMeta(reqScan.scanUnit.meta);
@@ -557,6 +571,11 @@ export async function handleChatCompletions(
     canaryMeta: canaryStep.meta,
     gwReasons: canaryStep.gatewayReason !== undefined ? [canaryStep.gatewayReason] : undefined,
   });
+}
+
+/** 形状判定给出的线格式 → scanRequest 的协议参数（未识别时 undefined，走既有 Chat 投影）。 */
+function shapeFormat(shape: { readonly format: WireFormat | null }): { readonly format: WireFormat } | undefined {
+  return shape.format === null ? undefined : { format: shape.format };
 }
 
 /** 请求扫描单元里声明的 response model（缺声明即 null）。 */

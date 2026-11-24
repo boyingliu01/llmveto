@@ -13,6 +13,18 @@ import type { CoverageVerdict } from "./types.ts";
  * 关键性质：结论与**文本量无关**。"凭据藏在未投影字段、其余为空"同样落 partial。
  */
 
+/**
+ * 只表示"消息容器"的路径：它们存在不等于载荷存在。
+ *
+ * - `input`：Responses 的输入容器。数组非空但元素里没有已知载荷字段（例如只有
+ *   `{type:"message"}`）时，容器"存在"而内容"不可见"——这必须落 vacuous 而不是 full，
+ *   否则"协议已知但什么都没扫到"会被判成已覆盖，正是本判据要消灭的假阴性。
+ *   （`input` 为字符串时它就是载荷，另行处理，见 `hasPath` 的标量分支。）
+ * - `messages` / `output` / `content` 是**载荷字段的父路径**（`messages[].content` 才承载文本），
+ *   同样不单独算载荷。
+ */
+const CONTAINER_PATHS: ReadonlySet<string> = new Set(["input", "messages", "output", "content"]);
+
 /** 路径段：`messages[].content[].text` → ["messages", "content", "text"] */
 function splitPath(path: string): string[] {
   return path
@@ -39,7 +51,22 @@ function hasPath(value: unknown, segs: readonly string[]): boolean {
  */
 export function presentPaths(specPaths: readonly string[], body: unknown): readonly string[] {
   if (!body || typeof body !== "object") return [];
-  return specPaths.filter((path) => hasPath(body, splitPath(path)));
+  return specPaths.filter((path) => isPayloadPresent(path, body));
+}
+
+/**
+ * 某条载荷路径是否真的承载了内容。
+ *
+ * 容器路径额外要求"数组里至少有一个元素"，且**不**因为数组非空就成立——
+ * 判定交给调用方通过 `input[].xxx` 这类子路径表达；单列 `input` 只在
+ * 它是字符串（Responses 允许 `input: "..."`）时算载荷。
+ */
+function isPayloadPresent(path: string, body: unknown): boolean {
+  if (!CONTAINER_PATHS.has(path)) return hasPath(body, splitPath(path));
+  const value = (body as Record<string, unknown>)[path];
+  if (value === undefined) return false;
+  // 字符串形态的 input 就是载荷本身
+  return typeof value === "string";
 }
 
 /**

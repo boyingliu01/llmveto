@@ -12,9 +12,19 @@
 // （不得静默丢弃），但排位低于一切词表内值。policy 层不得 import evidence 层，故本处
 // 常量独立声明，与 evidence/schema.ts 的 REASON_VOCAB 的同源一致性由测试钉死。
 
+/**
+ * 网关自身行为产生的 reason（不是 checker 的业务命中），按优先级排序。
+ *
+ * v2b-A 新增三个 `shape_*`：协议线格式的两轴判定结果（REQ-V2bA-14）。
+ * 它们排在 canary 两项之后——形状判定发生在 canary 编排之前，
+ * 若两者同时出现，说明请求在更早的阶段就已经不合规，形状原因更能解释"为什么没扫"。
+ */
 export const GATEWAY_REASON_PRIORITY: readonly string[] = Object.freeze([
   "registry_unavailable",
   "inject_skipped",
+  "shape_unrecognized",
+  "shape_known_empty",
+  "shape_partial_coverage",
 ]);
 
 export const CHECKER_ERROR_REASON_ORDER: readonly string[] = Object.freeze([

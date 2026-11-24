@@ -3,7 +3,7 @@
   "evidence_schema_version": 2,
   "id": "sprint-20261124-54",
   "task_description": "llmveto v2b slice A: multi-client onboarding (Claude Code / Codex / promptfoo) into MANAGED_CONFIG_IDS with doctor drift assertions and end-to-end vetting probes. Deferred: fingerprint patrol with trust score (v2b-C), billing reconciliation report CLI (v2b-B)",
-  "phase": 2,
+  "phase": 3,
   "status": "in_progress",
   "started_at": "2026-11-24T01:13:46.716Z",
   "phase_history": [
@@ -21,6 +21,14 @@
       "status": "completed",
       "started_at": "2026-11-24T03:47:45.941Z",
       "completed_at": "2026-11-24T03:47:45.941Z",
+      "duration_seconds": 0
+    },
+    {
+      "phase": 3,
+      "phase_name": "BUILD",
+      "status": "completed",
+      "started_at": "2026-11-24T11:54:45.118Z",
+      "completed_at": "2026-11-24T11:54:45.118Z",
       "duration_seconds": 0
     }
   ],
@@ -52,10 +60,14 @@
     ],
     "specification": "specification.yaml (SPEC-V2BA-001, 21 REQ / 49 AC)",
     "design": "docs/plans/2026-11-24-v2b-a-design.md",
-    "slices": "15 (topology verified, 21/21 REQ covered)",
+    "slices": "15/15",
     "review": "R1 two rounds (5 seats) + R2 one round (2 seats), all REQUEST_CHANGES, all Critical/Major absorbed",
     "delphi_gate": "NOT met (0% APPROVED); user approved via DR-031",
-    "new_dependency": "smol-toml@1.9.1 (BSD-3-Clause, zero deps)"
+    "new_dependency": "smol-toml@1.9.1 (BSD-3-Clause, zero deps)",
+    "tests": "808 passed / 52 skipped",
+    "coverage_gate": "release-gate 10/10 PASS",
+    "design_docs": "protocol-capability-matrix / protocol-coverage-audit / protocol-field-provenance",
+    "known_defects_fixed_during_build": "postinstall module-not-found on install; smoke adapter isolation; promptfoo installed detection; PathSegment array resolution"
   },
   "metrics": {}
 }

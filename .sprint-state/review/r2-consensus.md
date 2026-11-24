@@ -1,68 +1,68 @@
-# Round 2 共识报告（Delphi 复审）
+# R2 设计评审 — Round 1 共识
 
-> 输入：r2-questionnaire.md + R1 修订后的 6 份冻结件。
-> 三专家独立复审：A(g-deepseek-flash/架构) · B(g-glm-5.3-flash/技术) · C(g-qwen3.8-flash/可行性)。
+- 日期：2026-11-24
+- 评审对象：`docs/plans/2026-11-24-v2b-a-design.md`（用户已批准的初版）
+- 输入：设计 + `r1-requirements-r3draft.md` + `specification.yaml` + `slices-manifest.json` + DR-029/030/031
+- 方法改进：串行单跑 + 相对路径（R1 期间的并发/绝对路径导致多席产出 0 字节，见 `r1-consensus-r2.md`）
 
-## 1. 裁决与共识度
+## 席位
 
-| Expert | verdict | confidence | Critical | Major |
-|---|---|---|---|---|
-| A | REQUEST_CHANGES | 7 | C1, C2 | M1, M2, M3, probe, scenario3 |
-| B | REQUEST_CHANGES | 8 | NC-1, NC-2 | auth-head, fixture-field, probe, G2/G3 |
-| C | APPROVED_WITH_CONDITIONS | 8 | — | — |
+| 席位 | 模型 | 结果 |
+|---|---|---|
+| A | `hy4std` | ✅ 10858 B |
+| B | `hy4flash` | ✅ 7512 B |
+| C | `space-bunny` | ❌ 600s 超时，0 字节（本轮两次均失败；记录为缺位，不代答） |
 
-- **共识度 86.4% < 91% 阈值 → Round 2 未通过。**
-- 触发零容忍：A/B 各报 Critical（取证虚报为 A-C2 与 B-NC-1 同源，unicode FP 分类为 A-C1 独有但经核实成立）。
-- 结论：修复 Critical + Major 后进入 Round 3 聚焦复审。
+**共 2/2 有效席位，均 `REQUEST_CHANGES`（0% 共识）。**
 
-## 2. R1 遗留 22 条处置的三专家一致度
+## 两席独立命中同一 CRITICAL（必须先修）
 
-| 问题 | A | B | C | 一致度 |
-|---|---|---|---|---|
-| P-01 | partial | resolved | resolved | 2/3（场景3可达性需补语义）|
-| P-02 | resolved | resolved | resolved | 3/3 |
-| P-03 | partial | resolved | partial | 1/3（探测过闸无执行落点）|
-| P-05 | resolved | partial | resolved | 2/3（取证列虚报）|
-| P-11 | partial | resolved | resolved | 2/3（unicode FP 分类矛盾）|
-| P-17 | resolved | resolved | partial | 2/3（doctor CA 尾巴）|
-| P-18 | resolved | resolved | unresolved | 2/3（doctor 检查项互斥）|
-| P-20 | partial | resolved | resolved | 2/3（默认与取证声明冲突）|
-| 其余 14 条 | resolved | resolved | resolved | 3/3 |
+### C1 — 识别规则会把目标流量自己判成歧义并阻断
 
-## 3. Round 2 新引入问题（去重合并）
+设计 §2.4 用"特征键"让 `chat` 与 `anthropic-messages` 互相竞争，而两席都指出：
 
-### Critical（必修）
+- Chat 标准请求（`messages` + `max_tokens`）与 Claude 请求（`messages` + `system`/`max_tokens`）**同时命中两组特征键**；
+- 按"歧义即 unknown" + DR-031（直接 fail-closed）→ **阻断目标客户端自己的全部流量**。
 
-- **N2-C1｜unicode checker FP 分级矛盾**：TEST §3 把 `invisible-unicode-scan` 归"告警类 FP≤2%"，但 REQ §v1 策略映射其 action=`block`。阻断类 checker 容忍 2% 误报 = 破坏可用性主张。[A 独家，核实成立]
-  - 处置：TEST §3 将 `invisible-unicode-scan` 移入"阻断类 FP=0"；告警类仅留 `model-label-consistency`。
-- **N2-C2｜登记表取证虚报**：REQ §v1 残余风险登记表 T2a/T2b 取证列称 `response_body_ref 落盘可事后取证`，但默认 `body_capture=metadata_only` 仅存 SHA-256，无原文无法事后对账注入内容。[A/B 同源]
-  - 处置：取证列改写为"`response_body_sha256`（明文留存仅当 `body_capture≠metadata_only`，默认无明文）"。
+**本文实测确认（不可辩驳）**：
 
-### Major（零容忍，必修）
+```
+Chat 标准请求          chat=true anthropic=true → AMBIGUOUS → unknown → BLOCK
+Claude(带 system)     chat=true anthropic=true → AMBIGUOUS → unknown → BLOCK
+Claude(无 system)     chat=true anthropic=true → AMBIGUOUS → unknown → BLOCK
+```
 
-- **N2-M1｜字段名漂移 partial_response_delivered**：REQ §行为矩阵场景4 用 `partial_response_delivered=true`，契约#4 冻结字段为 `response_delivered:{partial,delivered_chunks}`。[B/C]
-  - 处置：REQ 场景4 改用 `response_delivered.partial=true`。
-- **N2-M2｜块级阻塞语义未定义**：零缓冲 tee（DESIGN 组件1）与同步 per-chunk checker（契约#2）的关系未写明"第 N chunk 是否先过 checker 再 tee"，导致场景3（首字节前命中）可达性不清、`delivered_chunks` 语义待定。[A]
-  - 处置：DESIGN 组件1/关键决策补定案："每 chunk 到达后先经同步窗口 checker，通过后再 tee 转发；G1 = 该 per-chunk 门延迟"，并说明场景3 可达、场景4 `delivered_chunks` 可为 0。
-- **N2-M3｜G2/G3 余量陷阱**：G2(512KB:40ms p95) 与 G3(50ms 硬超时) 仅 10ms 余量，慢机正常大请求即超时→block。[A/B/C]
-  - 处置：G3 改按 body 分档（8KB:20 / 64KB:50 / 512KB:120ms，随档递增给余量），DESIGN 登记"慢环境大请求可能被超时阻断"为已知运行时行为，G-BENCH 须报 G3 口径 p99。
-- **N2-M4｜扫描单元含认证头 → 阻断类 FP=0 不可达**：DESIGN `request_body` 含 `extra_headers`，未排除 `Authorization`/`x-api-key`；真实流量认证头值即高置信凭据模式，benign 必命中。[B]
-  - 处置：DESIGN 扫描单元定义补排除清单（认证类头不进扫描单元）+ TEST §3 加一条"含 auth 头 benign" fixture。
-- **N2-M5｜fixture 字段名未登记**：TEST 契约#3 示例用 `codepoint`/`terminated_stream`，契约#4 无此字段（P-06 术语二义回潮）。[B]
-  - 处置：契约#3 示例 evidence 键改用契约#4 已登记字段（`findings.offsets[]` + `action_taken`/`response_delivered`）；REQ 登记表 T2c/P1 取证措辞对齐字段表。
-- **N2-M6｜探测过闸无执行落点**：ROADMAP 验收1(b)"逐条路径回放探测请求"，但 DESIGN doctor 职责与 TEST §4 E2E 均无载体。[A/B/C]
-  - 处置：TEST §4 E2E 表补"受管枚举探测过闸"行（harness 逐路径回放 + 断言 evidence 命中 `client`+`provider_id`）。
-- **N2-M7｜p99 门槛权威清单缺失**：G1 p99<12ms 仅 DESIGN 有，ROADMAP 验收#6 未列 → 承诺强度不一致。[A]
-  - 处置：ROADMAP 验收#6 补 p99<12ms（或 DESIGN p99 标注为非验收门；采用前者）。
+根因：Claude 的"无 system、纯文本"请求与 Chat 请求**在结构上本来就相同**，任何纯内容识别都必然二选一或判歧义。
+这正是本项目 2026-11-24 事故（观测类 checker 误阻断正常流量）的翻版。
 
-### Minor（低成本一并修）
+**处置**：识别改为**路由权威 + 内容吻合**两层（设计 §2.4）——路由前缀直接决定线格式，
+内容识别只在无权威前缀时使用，且"其余 → chat"（倾向已支持格式而非判未知）。
 
-- **n1 doctor v1 检查项互斥**：README"CA 信任项输出 not-applicable@v1" vs DESIGN"不在 doctor 检查项内"。→ DESIGN 冻结 doctor v1 检查项封闭枚举，README 引用之，统一措辞。
-- **n2 `degraded_observational` v1 不可达**：契约#4 枚举值应标 `@v2起可达`。
-- **n3 `llmveto:veto-mid-stream` 未登记**：DESIGN §组件1 补一行 error 事件规格。
-- **n4 `pending_bytes`(DESIGN) vs `ScanWindow.pendingBytes`(TEST)**：统一 camelCase。
-- **n5 T1a"摘要哈希可对账发过什么"措辞夸大**：改为"摘要哈希（仅证明发过该字节序列，无原文不可读）"。
+### C2 — 覆盖判据没有独立 oracle，四态不可判定/不可达/有空洞
 
-## 4. 处置范围决议
+两席指出：`shape_partial_coverage` 只能由投影器自证（漏投影时仍判 `projected`）；
+`known_but_empty` 在识别规则下无法产生（不可达）；"零文本 + 部分未覆盖"落入四态之外。
 
-Critical 2 条 + Major 7 条全部修复，Minor n1~n5 一并修复。修复后提交，派 Round 3 聚焦复审（仅裁定本 14 项是否 resolved）。
+**处置**：把"已知载荷字段权威清单"变成协议声明的数据 `CoverageSpec`，判定改为**两轴**
+（轴1 识别 / 轴2 覆盖：`full` / `partial` / `vacuous`），`partial = present \ handled` 由两个独立来源求得，
+与文本量无关（设计 §2.3 / D-02）。
+
+## 其余 MAJOR（两席均有提及或单席提出，全部处置）
+
+| 问题 | 处置 |
+|---|---|
+| REQ-00/REQ-16 的"四段全链"无归属切片；SL-06 排在适配器之前拿不到真实 adapter 产物 | 新增 **SL-13 四段全链 E2E**，依赖 SL-08/SL-09；切片从 13 增至 15 |
+| SL-04/SL-05 依赖写错 | SL-04 依赖 SL-02+SL-03；SL-05 依赖 SL-01+SL-02+SL-03 |
+| `coverage_unknown` 退出码与 REQ-09/AC 冲突 | D-07 改为 exit 1 |
+| D-04 路径 `<gw>/anthropic/<provider>` 与 REQ-06 冲突；"受管路由"未定义 | 前缀改为 `claude/codex/promptfoo`，并在 D-03 写死"受管路由 = 路由前缀集合 ∪ CANARY_MANAGED_ROUTES" |
+| 每客户端线格式声明跨层无合法落点（adapters 不得 import gateway） | 新增 **SL-07 `src/shared/client-wire-format.ts`**；adapters/gateway 只依赖 shared，cli 做 join |
+| REQ-08a"三个 JSON 写路径复用"与实现形态不符 | D-04/D-05/D-06 逐条写明：Claude 复用 `applyManagedPatch`；Codex/promptfoo 走 tmp+rename+bak |
+| DR-031 后风险缓冲落空（BUILD 不接管流量只是推迟到 SHIP） | 风险 2 增加 **(d) SHIP 期缓冲**：`LLMVETO_PROTOCOL_STRICT=0` 观察一次真实客户端会话；§5.14 加强为必须含"跨格式相似性"三对样本 |
+| `shape_partial_coverage` 无长期守卫 | REQ-15a 改为"永久为 0 + doc-consistency 持续断言"；SL-14 承担 |
+| offsets 派生片段的落地规则未定义 | 设计改为 `Projection.derived` 布尔 + `handled`/`present` 上报；派生片段不参与原文 offsets 断言（REQ-05 已载） |
+
+## 少数意见（记录，不改）
+
+- C 席提出的"promptfoo YAML 行级编辑脆弱"：已采纳其**失败即拒绝写入**的要求（D-06），不因此引入 YAML 写库。
+- 两席均未反对 `src/gateway/protocols/` 的层次归属（A 席确认不违反 `architecture.yaml`，仅提醒在
+  `architecture-boundaries.test.ts` 中补 `protocols` 只 import `shared` 的断言 —— 采纳进 SL-01）。

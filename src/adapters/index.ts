@@ -19,7 +19,7 @@ export interface ConfigId {
 }
 
 export interface Adapter {
-  readonly name: "opencode" | "delphi";
+  readonly name: "opencode" | "delphi" | "claude-code" | "codex" | "promptfoo";
   readonly MANAGED_CONFIG_IDS: readonly ConfigId[];
   /** 生成注入 managed config 所需的字段补丁（doctor --write-managed-config 使用）。 */
   buildPatch(gatewayBaseUrl: string): Record<string, unknown>;

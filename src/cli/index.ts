@@ -9,6 +9,8 @@ import { verifyEvidenceFile } from "../evidence/verify.ts";
 import { aggregateEvidence } from "../evidence/aggregate.ts";
 import { delphiAdapter } from "../adapters/delphi.ts";
 import { opencodeAdapter } from "../adapters/opencode.ts";
+import { claudeCodeAdapter } from "../adapters/claude-code.ts";
+import { codexAdapter } from "../adapters/codex.ts";
 import type { Adapter, Env } from "../adapters/index.ts";
 import { EvidenceWriter } from "../evidence/writer.ts";
 import { startGateway } from "../gateway/server.ts";
@@ -298,7 +300,7 @@ function checkCanaryRegistry(ctx: CliCtx): DoctorCheck {
 async function cmdDoctor(ctx: CliCtx, writeManaged: boolean): Promise<CliResult> {
   // AC-VETO-008-02 检查项封闭枚举：① 受管配置漂移 ② 端口连通 ③（可选）写托管 ④ evidence 链
   const env = ctx.env ?? process.env;
-  const adapters: readonly Adapter[] = [opencodeAdapter, delphiAdapter];
+  const adapters: readonly Adapter[] = [opencodeAdapter, delphiAdapter, claudeCodeAdapter, codexAdapter];
   const checks: DoctorCheck[] = [];
   const baseUrl = env.LLMVETO_GATEWAY_URL ?? "http://127.0.0.1:8787";
   // ③ 写托管配置（--write-managed-config）：先写盘，后续漂移检测才能反映写入后真实状态。

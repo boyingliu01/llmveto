@@ -124,7 +124,7 @@
       "verify": [
         "npx vitest run tests/unit/shared/client-wire-format.test.ts"
       ],
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "SL-08",
@@ -140,7 +140,7 @@
       "verify": [
         "npx vitest run tests/unit/adapters/claude-code.test.ts"
       ],
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "SL-09",

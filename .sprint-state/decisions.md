@@ -249,3 +249,34 @@
 - 验证（同场景新旧对照）：客户端硬断——旧版把中断交换记为完整（truncated=false, 455B），新版正确记 `#1 … [TRUNCATED]`(48B) 且代理存活、后续请求照常；上游断链——旧版客户端挂住且 0 落盘，新版打 `上游响应流中断: aborted` + 落 `[TRUNCATED]` + 客户端正常收到流结束；切分端对"1 截断 + 1 完整 + 1 半行"的混合输入报 `坏行剔除: 1 行`、`丢弃: 1 条（客户端中断/截断，不计入判据）`、交换数只计完整那条。测试脚本与产物（`var/_*.cjs`、`var/canary-sessions/_*`、`Temp/old-cap.ts`）已全部删除，用户的 `raw-exchanges.jsonl` 未被改写（141482B / 9-30 mtime 原样）。
 - 登记（不在本 sprint 职责内，交用户处置）：宿主机侧风险面 —— Windows `Microsoft-Windows-Kernel-WHEA/Errors` 通道 14 天内无记录（错误目前只注入 guest，未升级成宿主 BSOD），但 5 次同签名 MCE 指向 CPU/供电/内存超频/散热层面的不稳定；页面文件被设为固定 2048MB（`AutomaticManagedPagefile=False`，commit 上限 25.7GB 而此刻仅剩 2.9GB）、`.wslconfig` 给 WSL 上限 12GB，且 `dsh-wsl-keeper.vbs` 对应的 `wsl --exec sleep infinity` 保活进程此刻未运行（仅剩 wslservice.exe）。这些都不解释本次 panic（panic 正文是 MCE），但会放大整机随机硬切的后果：**未提交的工作会随 panic 丢失**。
 - 义务：① #E 录制期间每录 2-3 个会话即跑 `node var/canary-split.ts --require 10 --dry-run` 早暴露，被 panic 打断的会话重录，采集文件不放 WSL 侧路径；② 鉴于本机 panic 频发，worktree 内的未完成产物应**频繁提交**、勿长驻工作区（本条落地时 `var/canary-split.ts`、`var/capture-proxy.ts`、`.sprint-state/*` 三处文档改动仍未提交，待用户拍板）；③ 硬件侧排查（BIOS 微码 / 关 XMP / memtest / 散热）属用户机器运维，不在 v2a 范围内，已作为事实登记供后续会话引用。
+
+## Decision DR-029: v2b 只做线 A（多客户端接入），B/C 另开 sprint
+
+- 日期：2026-11-24
+- 阶段：1/6 PREP / 范围切分（延续 DR-012 / DR-012a 的"砍范围不砍深度"纪律）
+- **Question**：v2b 三件互相独立的交付线（A 多客户端接入 / B 计费对账 `report` CLI / C 指纹巡检 + provider 信任分）如何拆
+- **Options**：(a) 只做 A；(b) A+B；(c) A+B+C 全量；(d) 只做 C
+- **Choice**：**(a) 只做 A**（用户 2026-11-24 拍板）。B、C 顺延为独立 sprint。
+- **Rationale（均实测，非主观）**：
+  - A 的验收面与其他两条不相交：`MANAGED_CONFIG_IDS` 扩枚举 + doctor 漂移断言 + 真实 adapter 产物驱动的过闸探测，全部可判定且不触碰 evidence schema。
+  - B 需实装 TEST 契约 #4 的 `usage` / `cache_reported` 两个可选位（v2a §5 第二处背离），且**官价基准数据源至今空白**——"官方价 × usage"没有可信输入，对账结果无判定基准；不先定数据源就开工必然中途漂移。
+  - C 有两个未关的前置门：① `llm-fingerprint-detector` 许可**至今未核实**（`docs/licenses.md` 第 2 行；G-LIC 规则"未核实 = 不引入运行时依赖"）；② 探针要向**上游主动发已知 prompt**，与 T1a 的"最小暴露"承诺正面冲突（DR-012a 已因此把 `fingerprint-probe` 移出 v2a）。这两条属需求级取舍，不是 BUILD 能补的细节。
+- **备选与否决**：把 A+B 并作一 sprint（会重演 v2a 的评审卷宗膨胀）；只做 C（在 G-LIC 未关的前提下开工 = 违反 G-LIC 门）。
+
+## Decision DR-030: delphi 评审走 external 通道，席位由"三厂家真实可调"决定
+
+- 日期：2026-11-24
+- 阶段：1/6 PREP（DESIGN 前置，用户要求"先修好面板再进 DESIGN"）
+- **Question**：R1/R2 的三专家评审用什么通道、什么模型
+- **Options**：(a) whalecloud（`opencode.json` 的 provider，3 个 g-* 模型）；(b) CodeBuddy CLI（`--model` 可选 16 个，含 DeepSeek/智谱/月之暗面/字节等多家厂商）；(c) Qoder CLI；(d) DSH native subagent 选模型
+- **Choice**：**(b) CodeBuddy 的 `hy4std` / `hy4flash` / `space-bunny` 三席**，写入项目根 `.delphi-config.json`（gitignore 已覆盖：本文件含内部端点与个人模型选择）。
+- **实测依据（逐条本机验证，非推断）**：
+  | 候选 | 实测结果 | 结论 |
+  |---|---|---|
+  | whalecloud | `OPENCODE_WHALECLOUD_API_KEY` 在本机**任何进程环境里都不存在**（`/proc/<dsh-pid>/environ` 为 0 个 `*_API_KEY`；`~/.config/llmveto/env` 只有 `LLMVETO_*`）；实测请求返回 `HTTP 401 未提供有效的API-KEY` | ❌ 缺凭据 |
+  | Qoder CLI | `--model` 只有 `auto` 可用；`lite`/`qwen3-coder-plus`/`glm-5.2` 全部回落 `auto`（CLI 原话：`Model "…" is not available right now; using "auto" instead`） | ❌ 三席会变成同一模型 |
+  | DSH native | `list_subagent_models` 只返回**唯一 1 条**（`ailb/s-deepseek-v4.1-flash`），且 `provider/ailb` 只列 1 个模型 | ❌ 不满足"三席互异" |
+  | CodeBuddy | `hy4std`/`hy4flash`/`hy4flash-free`/`space-bunny`/`deepseek-v4.1-flash`/`glm-5.3-flash` 全部实测返回预期文本 | ✅ 可用 |
+- **为何选这三个**：`hy4std` / `hy4flash` / `space-bunny` 是 CLI 自带的默认档位名，**不是**中转站模型别名；另外两个快速席位（`deepseek-v4.1-flash` / `glm-5.3-flash`）正是本项目反复实测过的**中转站模型**——让它同时当被审对象和评审员，会把"中转站有没有偷换"这个问题带进评审结论。**实测代价如实记录**：这三个档位背后的真实厂商无法从本机证明（`model.request` 日志只写模型 ID），与 v2a 时代 `example-provider/g-*` 的做法属于同一类"自报≠证据"风险，只能靠三席结论互异做间接检验（见 `.sprint-state/review/delphi-panel-v2b.md`）。
+- **通道判据**：delphi-review skill 的允许通道只有 native `subagent` 与 external 两种，其余扇出机制一律禁止；本机两者都不合规（native 见上表，external 因 key 缺失不可用）。因此评审执行层用 **`codebuddy -p --model <seat>`** 直跑三席（等价于 external provider、每席一个不同可执行模型 ID），并把每席**实际命令行**写进评审记录作为凭据。
+- **副作用**：本机 opencode 的 `delphi-reviewer-technical` 与 `delphi-reviewer-feasibility` 两席同指 `whalecloud/g-glm-5.3-flash`（用户级配置，不在本仓库）；本轮已用上游 CLI 回避，**但那是用户机器级配置缺陷，登记不改**。

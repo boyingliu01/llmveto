@@ -111,3 +111,43 @@ describe("SL-05 两轴处置（REQ-V2bA-14/15/15a）", () => {
     expect(g.records().at(-1)!.reason).toBeUndefined();
   });
 });
+
+// @test REQ-V2bA-15（code-walkthrough R2 CRITICAL 回归）
+// @intent `CoverageSpec` 列的是**载荷**清单；凭据放进同一协议里合法但**未登记**的字段时，
+//         present 非空且全部 handled → 曾判 full → 不写 reason、不阻断，凭据原样出境。
+//         评审给出的构造：Anthropic 的 `metadata.user_id`、Responses 的 `metadata.x`。
+describe("SL-05 未登记字段的兜底（R2 CRITICAL 回归）", () => {
+  it("凭据藏在 Anthropic 未登记的 metadata 字段 → 阻断（不再静默放行）", async () => {
+    const g = await boot();
+    const res = await post(`${g.url}/claude/anthropic/v1/messages`, {
+      model: "claude-3",
+      max_tokens: 16,
+      messages: [{ role: "user", content: "hi" }],
+      metadata: { user_id: "sk-ant-api03-REALKEYabcdefghijklmnop" },
+    });
+    expect(res.status).toBe(502);
+    expect(g.records().at(-1)!.reason).toBe("shape_partial_coverage");
+  });
+
+  it("凭据藏在 Responses 未登记的 metadata 字段 → 阻断", async () => {
+    const g = await boot();
+    const res = await post(`${g.url}/codex/openai/v1/responses`, {
+      model: "gpt-5",
+      instructions: "ok",
+      input: "hi",
+      metadata: { x: "sk-abcdefghijklmnopqrstuvwxyz1234" },
+    });
+    expect(res.status).toBe(502);
+  });
+
+  it("对照：正常请求（所有字符串值都被投影看过）仍然放行", async () => {
+    const g = await boot();
+    const res = await post(`${g.url}/claude/anthropic/v1/messages`, {
+      model: "claude-3",
+      max_tokens: 16,
+      messages: [{ role: "user", content: [{ type: "text", text: "hello there" }] }],
+    });
+    expect(res.status).toBe(200);
+    expect(g.records().at(-1)!.reason).toBeUndefined();
+  });
+});

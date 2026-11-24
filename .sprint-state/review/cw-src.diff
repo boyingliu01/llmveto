@@ -610,14 +610,407 @@ index 0000000..87b198d
 +    return path;
 +  },
 +};
+diff --git a/src/checkers/dangerous-command-scan.ts b/src/checkers/dangerous-command-scan.ts
+index d48a146..339c3b5 100644
+--- a/src/checkers/dangerous-command-scan.ts
++++ b/src/checkers/dangerous-command-scan.ts
+@@ -39,6 +39,13 @@ interface Rule {
+   readonly severity: "medium" | "high";
+   /** 命中串的宿主名需再过一道「非内网」判定（裸 IP 规则用）。 */
+   readonly publicHostOnly?: boolean;
++  /**
++   * 该规则命中允许升级为 block（0.6.0 按规则分级）。
++   * 只有「读凭据文件」这类**语义封闭**的规则可以标 true：命中即意味着凭据正要离开本机，
++   * 不存在「安装教程里也这么写」的正例面。其余规则保持观测类（warn）——
++   * 文本规则无法保证零误报，给它们阻断权会把正常开发会话整条 502 掉（2026-11-24 实测）。
++   */
++  readonly blocking?: boolean;
+ }
+ 
+ /**
+@@ -73,55 +80,156 @@ const RULES: readonly Rule[] = [
+   },
+   {
+     id: "raw-ip-download",
+-    re: /\bhttps?:\/\/(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\//g,
++    re: /\bhttps?:\/\/(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\/\S*/g,
+     severity: "medium",
+     publicHostOnly: true,
+   },
++  {
++    // 2026-11-24：`/dev/tcp` 与 `nc -e` 之外的另一半反弹 shell 形态——`nc -c` / `ncat -e`
++    // 及 `bash -i >& /dev/tcp/...` 早已由 `reverse-shell` 覆盖，此处补「本机管道到远端」：
++    // `cat x | nc host port`、（bash|sh|python…) 管道到远端。裸 `nc` 用法（端口探测、手工会话）
++    // 不含远端输入管道，不命中——这是把规则限定在「反向外带」语义上，而不是见到 nc 就报。
++    id: "reverse-shell-pipe",
++    re: /\b(?:cat|tar|base64)\b[^|\n]{0,200}\|\s*(?:nc|ncat|netcat)\s+\S+\s+\d{1,5}\b|\b(?:ba|z)?sh\b[^|\n]{0,80}\|\s*(?:nc|ncat|netcat)\s+\S+\s+\d{1,5}\b/g,
++    severity: "high",
++  },
++  {
++    // 上游对 agent 的工具调用里索要内容型凭据文件：`cat ~/.ssh/id_rsa`、`cat .env`、
++    // `cat ~/.aws/credentials`、`.npmrc` 等。「上游叫 agent 读出凭据 → agent 回传」
++    // 这条路不经过模型参数读取界面，是凭据出境的实际形态之一。
++    // 只认「文件读取工具/命令 + 凭据文件路径」，不认路径单独出现（文档、配置示例常见）。
++    id: "credential-file-read",
++    // 语义封闭 → 唯一允许阻断的规则（见 Rule.blocking）。
++    blocking: true,
++    // 命中集合全部以字面 "." 起头：前缀字符类展开后必然以非空白收尾，不存在空匹配。
++    // （2026-11-24 实测：前缀若可匹配空串，`\s*` 会在**每次**匹配失败时枚举每个起点上的
++    //  全部空白长度 = O(n²) 分配，一个普通句子就 OOM。）
++    re: /(?:\bcat\b|\bhead\b|\btail\b|\bless\b|\bmore\b|\btype\b|["']path["']\s*:|["']file_path["']\s*:)\s*["']?(?:[^\s"'.]{1,40}\/)?(?:\.ssh\/id_[a-z0-9]+|\.aws\/credentials|\.npmrc|\.pypirc|\.netrc|\.git-credentials|\.gnupg\/|\.env(?:\.[a-z0-9]+)?(?![\w.-])|secrets?\.(?:json|ya?ml|toml)(?![\w]))/gi,
++    severity: "high",
++  },
+ ];
+ 
+-/** 内网/回环/链路本地地址不算可疑下载源（本地开发与内网示例是常态）。 */
++/**
++ * 投毒底座的「拉取并落盘 + 随后执行」：单条正则同时匹配「下载到的本地文件名」与
++ * 「之后对同一路径执行」必然要反向引用 + 长距离回溯，实测会灾难性回溯（OOM），
++ * 故拆成两段有界扫描：先定位落盘（`curl -o x` / `wget -O x` / `-OutFile x`），
++ * 再在命中位置之后的定长窗口里找执行原语（chmod 后执行 / ./x / sh x / source x）。
++ * 只认「下载到本地文件名再执行」——`curl -o out.html <URL>` 这类正常下载不命中。
++ */
++const DOWNLOAD_RULE: Rule = {
++  id: "download-then-execute",
++  re: /\b(?:curl|wget|Invoke-WebRequest|iwr)\b[^|\n]{0,200}?(?:-O\w*|-o\s+|--output\s+|-OutFile\s+)\s*["']?([^\s"';&|]{1,64})/g,
++  severity: "high",
++};
++const EXEC_AFTER_DOWNLOAD_WINDOW = 400;
++const EXEC_AFTER_DOWNLOAD = /chmod\b[^\n]{0,40}|\bsource\b|\.\/|\b(?:ba|z)?sh\s+\S+/;
++
++/** 落盘目标是否可判定（排除空串、stdout `-` 与 URL）。 */
++function isLocalDownloadTarget(local: string): boolean {
++  return local !== "" && local !== "-" && !/^[a-z][a-z0-9+.-]*:\/\//i.test(local);
++}
++
++/** 落盘后是否在同一窗口里出现执行原语。 */
++function executesAfter(text: string, endOfMatch: number): boolean {
++  const tail = text.slice(endOfMatch, endOfMatch + EXEC_AFTER_DOWNLOAD_WINDOW);
++  return EXEC_AFTER_DOWNLOAD.test(tail);
++}
++
++function scanDownloadThenExecute(text: string): readonly { readonly offset: number; readonly text: string }[] {
++  const out: { offset: number; text: string }[] = [];
++  for (const m of text.matchAll(DOWNLOAD_RULE.re)) {
++    // 落盘目标可以是绝对路径（/tmp/p.sh）：只要不是 URL、也不是 `-`（stdout）。
++    if (!isLocalDownloadTarget(m[1] ?? "")) continue;
++    if (!executesAfter(text, m.index + m[0].length)) continue;
++    out.push({ offset: m.index, text: m[0] });
++  }
++  return out;
++}
++
++/**
++ * 可阻断规则白名单（0.6.0）：由 Rule.blocking 派生，是 policy 层判定 finding 能否升级为
++ * block 的**唯一来源**。新增阻断规则必须在此登记，且必须有「命中即危险」的语义论证。
++ */
++export const BLOCKING_RULE_IDS: ReadonlySet<string> = Object.freeze(
++  new Set(RULES.filter((r) => r.blocking === true).map((r) => r.id)),
++);
++
++/**
++ * 内网/回环/链路本地地址不算可疑下载源（本地开发与内网示例是常态）。
++ *
++ * 写成「网段表 + 一次区间查找」而不是条件链：条件链每个 `||` / `.some()` 短路都计一个
++ * 分支（CCN 一路涨到 11），而这里要表达的只是"该 /16 落在哪几个枚举区间里"。
++ * 表本身就是这份豁免的完整清单，新增网段只需加一行。
++ */
++interface PrivateRange {
++  /** 第一段（闭区间）。 */
++  readonly first: number;
++  /** 第二段区间（闭区间）；`lo === hi` 即 /16 固定段。 */
++  readonly lo: number;
++  readonly hi: number;
++}
++
++const PRIVATE_IPV4_RANGES: readonly PrivateRange[] = Object.freeze([
++  { first: 0, lo: 0, hi: 255 }, // 0.0.0.0/8 本网络
++  { first: 10, lo: 0, hi: 255 }, // 10.0.0.0/8
++  { first: 127, lo: 0, hi: 255 }, // 127.0.0.0/8 回环
++  { first: 169, lo: 254, hi: 254 }, // 169.254.0.0/16 链路本地
++  { first: 172, lo: 16, hi: 31 }, // 172.16.0.0/12
++  { first: 192, lo: 168, hi: 168 }, // 192.168.0.0/16
++]);
++
+ function isPrivateIpv4(hostPort: string): boolean {
+-  const host = hostPort.replace(/^https?:\/\//, "").split(":")[0]!;
+-  const [a, b] = host.split(".").map(Number) as [number, number, number, number];
+-  if (a === 0 || a === 10 || a === 127) return true;
+-  if (a === 169 && b === 254) return true;
+-  if (a === 172 && b >= 16 && b <= 31) return true;
+-  if (a === 192 && b === 168) return true;
+-  return false;
++  const host = hostPort.replace(/^https?:\/\//, "").split(":")[0] ?? "";
++  const [a, b] = host.split(".").map(Number);
++  // 非点分十进制（缺第二段）不属本函数判定域：它不是 IPv4 字面量，交给调用方。
++  if (a === undefined || b === undefined) return false;
++  return PRIVATE_IPV4_RANGES.some((r) => r.first === a && b >= r.lo && b <= r.hi);
+ }
+ 
+ interface RuleHit {
+   readonly rule: Rule;
+   readonly offsets: readonly number[];
++  /** 命中原文（去重键的一半）；双投影命中时取还原后文本的那一份。 */
++  readonly text: string;
+ }
+ 
+-/** 扫一份投影文本；返回每个规则的首批命中偏移（同一规则只报一条 finding）。 */
+-function scanOne(text: string, rule: Rule): readonly number[] {
+-  const re = new RegExp(rule.re.source, rule.re.flags);
+-  const offsets: number[] = [];
+-  for (let m = re.exec(text); m !== null; m = re.exec(text)) {
+-    if (m.index === re.lastIndex) re.lastIndex++;
++/** 扫一份投影文本；返回每个规则的全部命中偏移与命中原文（finding 由调用方按规则聚合）。 */
++function scanOne(text: string, rule: Rule): readonly { readonly offset: number; readonly text: string }[] {
++  // 用 matchAll 而非 `while (re.exec(text))`：`matchAll` 内部管理副本的 lastIndex，
++  // 不受调用方状态影响，也没有「零宽命中 → 原地重来」这一档（实测：一个 22 字符的
++  // 命中就能让 exec 循环永远停在同一位、把 2 GB 堆吃光，见 docs/KNOWN-ISSUES.md）。
++  const out: { offset: number; readonly text: string }[] = [];
++  for (const m of text.matchAll(rule.re)) {
+     if (rule.publicHostOnly === true && isPrivateIpv4(m[0])) continue;
+-    offsets.push(m.index);
++    out.push({ offset: m.index ?? 0, text: m[0] });
+   }
+-  return offsets;
++  return out;
+ }
+ 
+ /**
+  * 双投影扫描：去掉 offsets 只在「首个投影（原文）」命中时保留——
+  * 转义还原后的文本长度口径不同，偏移不可回指原文（与 egress-secret-scan 同纪律）。
++ * 每个规则对每份投影的所有命中都返回（同一规则的不同命令各算一条），
++ * 再由 applyDedup 按「规则 + 命中原文」去掉同一请求内的重复。
+  */
+-function scanTextsForRules(texts: readonly string[], withOffsets: boolean): readonly RuleHit[] {
+-  const hits: RuleHit[] = [];
+-  for (const rule of RULES) {
+-    for (let i = 0; i < texts.length; i++) {
+-      const offsets = scanOne(texts[i]!, rule);
+-      if (offsets.length === 0) continue;
+-      hits.push({ rule, offsets: withOffsets && i === 0 ? offsets : [] });
+-      break;
+-    }
+-  }
+-  return hits;
++/** 一份投影的偏移仅在原文投影（index 0）可回指原文，其余投影不报 offsets。 */
++function offsetsFor(projectionIndex: number, withOffsets: boolean, offset: number): readonly number[] {
++  return withOffsets && projectionIndex === 0 ? [offset] : [];
++}
++
++/** 单条规则跨全部投影的命中。 */
++function hitsForRule(texts: readonly string[], rule: Rule, withOffsets: boolean): readonly RuleHit[] {
++  return texts.flatMap((text, i) =>
++    scanOne(text, rule).map((m) => ({ rule, offsets: offsetsFor(i, withOffsets, m.offset), text: m.text })),
++  );
++}
++
++function scanTextsWithText(texts: readonly string[], withOffsets: boolean): readonly RuleHit[] {
++  const ruleHits = RULES.flatMap((rule) => hitsForRule(texts, rule, withOffsets));
++  const downloadHits = texts.flatMap((text, i) =>
++    scanDownloadThenExecute(text).map((m) => ({ rule: DOWNLOAD_RULE, offsets: offsetsFor(i, withOffsets, m.offset), text: m.text })),
++  );
++  return [...ruleHits, ...downloadHits];
+ }
+ 
+ function toFindings(hits: readonly RuleHit[]): readonly Finding[] {
+@@ -135,9 +243,47 @@ function toFindings(hits: readonly RuleHit[]): readonly Finding[] {
+   }));
+ }
+ 
++/**
++ * 同一请求内跨扫描单元的命中抑制（2026-11-24）：请求体里 `roles[*].content` 这类整组消息
++ * （本机 DSH 会话实测：一次请求带全部历史 tool-result，同一条命令可重复出现数十次）会让
++ * 每条命中都各自产出一条 finding，同一条交互的 tips（真危险命令）被噪声淹没。
++ * 不变量：仍是纯函数——状态只活在一次判定内（调用方构造），不进模块级全局；
++ * 去重键取规则 + 命中文本（同一规则同一文本只报一次，设计上不丢规则维度）。
++ */
++export interface DangerousCommandDedup {
++  readonly seen: Set<string>;
++  /**
++   * 单个规则一次判定最多保留几条命中（0.6.0）。长 DSL 会话会把全部历史 tool-result 一起
++   * 发上来，同一条规则可能命中几十处互不相同的文本；evidence 里堆 40 条同规则 finding
++   * 会把真有价值的那条淹没。上限只截断**条数**，不改变判定（有命中仍是有命中）。
++   */
++  readonly perRuleCount: Map<string, number>;
++}
++
++/** 单规则 findings 上限（观测类噪声控制，非检测阈值）。 */
++export const MAX_FINDINGS_PER_RULE = 5 as const;
++
++export function createDangerousCommandDedup(): DangerousCommandDedup {
++  return { seen: new Set<string>(), perRuleCount: new Map<string, number>() };
++}
++
++function applyDedup(hits: readonly (RuleHit & { readonly text: string })[], dedup?: DangerousCommandDedup): readonly RuleHit[] {
++  if (dedup === undefined) return hits;
++  // 既有命中（另一次调用产生）在新调用里仍作为既有事实出现一次：不清空、只记新键。
++  const fresh = hits.filter((hit) => {
++    const key = `${hit.rule.id}\u0000${hit.text}`;
++    if (dedup.seen.has(key)) return false;
++    dedup.seen.add(key);
++    const n = (dedup.perRuleCount.get(hit.rule.id) ?? 0) + 1;
++    dedup.perRuleCount.set(hit.rule.id, n);
++    return n <= MAX_FINDINGS_PER_RULE;
++  });
++  return fresh;
++}
++
+ /** 流式/非流式共用的纯文本判定（无 offsets 语义时传 false）。 */
+-function checkTexts(texts: readonly string[], withOffsets: boolean): CheckerResult {
+-  const findings = toFindings(scanTextsForRules(texts, withOffsets));
++function checkTexts(texts: readonly string[], withOffsets: boolean, dedup?: DangerousCommandDedup): CheckerResult {
++  const findings = toFindings(applyDedup(scanTextsWithText(texts, withOffsets), dedup));
+   return findings.length === 0
+     ? { verdict: "clean", evidence: [] }
+     : { verdict: "finding", evidence: findings };
+@@ -152,6 +298,14 @@ function primaryProjection(unit: ScanUnit): string {
+ export const checkDangerousCommandNonStream: NonStreamChecker = (unit) =>
+   checkTexts(scanTexts(unit), true);
+ 
++/**
++ * 修复卡（0.6.0）：同一请求的请求侧与响应侧共用一份去重状态时，响应里复述请求中的同一命令
++ * 不再二次告警。可选参数——不传时行为与 0.5.2 完全相同（纯函数契约不变）。
++ */
++export function checkDangerousCommandWithDedup(unit: ScanUnit, dedup: DangerousCommandDedup): CheckerResult {
++  return checkTexts(scanTexts(unit), true, dedup);
++}
++
+ export const checkDangerousCommandStream: StreamChecker = (window, chunk) => {
+   const prev = typeof window.extra?.[ACC_KEY] === "string" ? (window.extra[ACC_KEY] as string) : "";
+   const fresh = primaryProjection(chunk);
+@@ -169,6 +323,9 @@ export const checkDangerousCommandStream: StreamChecker = (window, chunk) => {
+ export const DANGEROUS_COMMAND_SCAN_SPEC = {
+   id: CHECKER_ID,
+   side: "response",
++  // 0.6.0：请求侧也要扫——凭据出境与投毒口令都从「请求里的 file_path / command」落地，
++  // 只挂响应侧时这些内容从不进入判定面（见 docs/KNOWN-ISSUES.md 的 2026-11-24 条目）。
++  sides: ["request", "response"],
+   synchronous: true,
+   safetyClass: false, // 文本规则有正例教程误报面 → finding=warn（policy mapBySpec 兜底）
+   threat: THREAT,
+diff --git a/src/checkers/egress-secret-scan.ts b/src/checkers/egress-secret-scan.ts
+index af605bb..73d1c41 100644
+--- a/src/checkers/egress-secret-scan.ts
++++ b/src/checkers/egress-secret-scan.ts
+@@ -33,6 +33,8 @@ const RULES: readonly Rule[] = [
+   { id: "anthropic-sk-ant",    re: /sk-ant-[A-Za-z0-9_-]{20,}/g },
+   { id: "github-ghp",          re: /ghp_[A-Za-z0-9]{36}/g },
+   { id: "aws-akia",            re: /AKIA[0-9A-Z]{16}/g },
++  // PEM 私钥：头部 + **主体** 双条件（见 hasPemBody 的立节理由）。
++  // 只认头部会把「讨论 PEM 格式的任何文本」判成凭据出境——本仓库自己的夹具就是反例。
+   { id: "pem-private-key",     re: /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/g },
+ ];
+ 
+@@ -66,6 +68,60 @@ function isDocumentedExample(matchedText: string): boolean {
+   return DOCUMENTED_EXAMPLE_VALUES.has(matchedText);
+ }
+ 
++/**
++ * PEM 命中必须带**主体**才判为凭据（2026-11-24）。
++ *
++ * 立节理由：`pem-private-key` 原本只匹配头部 `-----BEGIN … PRIVATE KEY-----`。
++ * 于是任何**讨论** PEM 格式的文本都被判成凭据出境并阻断整条请求——包括本仓库
++ * `tests/fixtures/threats/T1b/secrets.yaml` 里的夹具行
++ * `-----BEGIN RSA PRIVATE KEY----- payload -----END RSA PRIVATE KEY-----`
++ * （2026-09-15 起就在仓库里）。实测：该夹具与「只输入这一行」都能让请求 502，
++ * 也就是**开发本项目的会话会被自己的网关拦下**，与 0.5.2 修掉的那类误报同源，
++ * 但当时只覆盖了 AKIA/ghp 两条规则。
++ *
++ * 判据取「头部之后是否有 base64 主体」：真实私钥的头部后面必跟成块 base64，
++ * 而文档、夹具、对话里引用格式时不会。门槛取 20（`PEM_BODY_MIN_CHARS`）——真实私钥主体
++ * 是数百到数千字符，20 只是"确实有内容"的下限；取更大值会让**测试样例**形态
++ * （`MIIEow...` 这类截断示例）漏检，而这不是我们想排除的形态。
++ * 为什么不是"有 END 就算"：夹具里恰恰有 END，只有主体能区分二者。
++ *
++ * 残余：讲「真实但截断的私钥」时仍会命中（截断的密钥仍然是泄露风险，这是有意的）；
++ * 只写头部而不带任何 base64 文本的引用不会命中。
++ */
++/**
++ * PEM 真块判据（2026-11-24）：**头与尾是否分处不同的行**。
++ *
++ * 立节理由：`pem-private-key` 原本只匹配头部 `-----BEGIN … PRIVATE KEY-----`，
++ * 于是任何**讨论** PEM 格式的文本都被判成凭据出境并阻断整条请求——包括本仓库
++ * `tests/fixtures/threats/T1b/secrets.yaml` 里从 2026-09-15 起就存在的夹具行
++ * `-----BEGIN RSA PRIVATE KEY----- payload -----END RSA PRIVATE KEY-----`。
++ * 实测：只输入这一行就能让请求 502，即**开发本项目的会话会被自己的网关拦下**。
++ *
++ * 判据的选择过程（四条候选，最终只用第四条）：
++ *   ① 主体长度 ≥ N：测试样例 `MIIEow...` 只有 6 个合法字符，与夹具无法用长度分开；
++ *   ② 有主体内容：夹具里的 `payload` 占位词也算内容，分不开；
++ *   ③ 多行块：与真实私钥一致，但把**截断示例**（测试与文档常用的三行形态）也归入"真块"，
++ *      而这类示例正是要保留检出能力的——判据不能与已冻结的测试契约冲突；
++ *   ④ **头尾同行**：夹具与格式讨论把 BEGIN 与 END 写在同一行，真实 PEM 块按规范
++ *      逐行排布，头与尾必然分处不同行。实测这一条精确分开了两类输入。
++ *
++ * 取舍：只写 `BEGIN` 头、不写成块的格式引用放行；成块形态（含截断块）照常阻断。
++ */
++const PEM_END = /-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----/;
++const PEM_HEADER = /^-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/;
++
++function hasPemBody(text: string, headStart: number): boolean {
++  const tail = text.slice(headStart);
++  const endMatch = PEM_END.exec(tail);
++  // 无 END：要么是"只引用头部"的格式讨论，要么是被截断的真块。
++  // 分界取头部之后是否**另起一行有内容**：真实 PEM 块头部后必换行接主体；
++  // 对话里引用格式时头与后续文字同行（`PEM 文件以 -----BEGIN … PRIVATE KEY----- 开头`）。
++  if (endMatch === null) return /^\r?\n\s*\S/.test(tail.slice(PEM_HEADER.exec(tail)?.[0].length ?? 0));
++  // 头与尾之间出现了换行 ⇒ 成块形态；同行收尾 ⇒ 夹具/格式讨论。
++  return tail.slice(0, endMatch.index).includes("\n");
++}
++
++
+ interface RuleScan {
+   readonly matched: boolean;
+   readonly offsets: number[];
+@@ -76,20 +132,29 @@ interface RuleScan {
+ const OFFSET_NOT_APPLICABLE = "\u0000offsets-not-applicable";
+ 
+ /**
+- * 单份文本内的全部命中偏移。跳过官方文档示例值；`keepOffsets=false` 时只判存在性
++ * 该命中是否应判为凭据。两个排除项各有立节理由：
++ *   - 官方文档示例值（DOCUMENTED_EXAMPLE_VALUES）：逐字相等的示例串不是密钥；
++ *   - PEM 空壳（hasPemBody）：只有头部的引用是文档/夹具形态，不是私钥块。
++ */
++function isReportableHit(rule: Rule, text: string, matchedText: string, matchIndex: number): boolean {
++  if (isDocumentedExample(matchedText)) return false;
++  if (rule.id === "pem-private-key") return hasPemBody(text, matchIndex);
++  return true;
++}
++
++/**
++ * 单份文本内的全部命中偏移。`keepOffsets=false` 时只判存在性
+  * （转义投影的偏移与原文长度口径不同，不可回指）。
++ *
++ * 用 `matchAll` 而非 `while (re.exec(...))`：后者需要调用方手工维护 `rule.re.lastIndex`，
++ * 任何 `continue` 分支都可能留下错位的游标（同类缺陷已在 dangerous-command-scan 上
++ * 实测导致无限循环）。`matchAll` 自持游标，也没有零宽命中这一档。
+  */
+ function scanOneProjection(rule: Rule, text: string, keepOffsets: boolean): string[] {
+-  rule.re.lastIndex = 0;
+-  const hits: string[] = [];
+-  for (let m = rule.re.exec(text); m !== null; m = rule.re.exec(text)) {
+-    // 防御 zero-length 死循环（当前 pattern 不会 zero-length，仍显式保护）
+-    if (m.index === rule.re.lastIndex) rule.re.lastIndex++;
+-    // 官方文档示例值不算凭据（见 DOCUMENTED_EXAMPLE_VALUES 的立节理由）
+-    if (isDocumentedExample(m[0])) continue;
+-    hits.push(keepOffsets ? String(m.index) : OFFSET_NOT_APPLICABLE);
+-  }
+-  return hits;
++  const offsetOf = (index: number): string => (keepOffsets ? String(index) : OFFSET_NOT_APPLICABLE);
++  return [...text.matchAll(rule.re)]
++    .filter((m) => isReportableHit(rule, text, m[0], m.index ?? 0))
++    .map((m) => offsetOf(m.index ?? 0));
+ }
+ 
+ /** 逐个投影扫一条规则，首个命中的投影即停（同一 rule 只报一条）。 */
 diff --git a/src/cli/client-coverage.ts b/src/cli/client-coverage.ts
 new file mode 100644
-index 0000000..19b4091
+index 0000000..5a099f2
 --- /dev/null
 +++ b/src/cli/client-coverage.ts
-@@ -0,0 +1,156 @@
+@@ -0,0 +1,166 @@
 +// @no-test-required: 测试在 tests/unit/cli/doctor-v2b.test.ts（本项目测试布局为 tests/ 目录；Gate 5a 仅识别同目录/根 tests/ 六种路径）
-+import { existsSync } from "node:fs";
++import { existsSync, readFileSync } from "node:fs";
 +import { dirname } from "node:path";
 +import type { Adapter, Env } from "../adapters/index.ts";
 +import { delphiAdapter } from "../adapters/delphi.ts";
@@ -706,6 +1099,11 @@ index 0000000..19b4091
 +    return { client, state: "not_installed", failsDoctor: false, message: `未安装（${path} 不存在）` };
 +  }
 +  const current = adapter.readCurrentConfig(env);
++  // 配置存在却读不出任何内容 = 损坏，不是"没配"。把损坏报成 not_configured 会让 doctor 绿灯，
++  // 而这恰恰是最该被发现的状态（适配器自己的注释写着"绝不把读不到当成配好了"）。
++  if (isUnreadableConfig(path, current)) {
++    return { client, state: "drift", failsDoctor: true, message: `配置不可解析：${path}（修复或删除后重试）` };
++  }
 +  const drift = adapter.detectDrift(current, gatewayBaseUrl);
 +  if (drift.length === 0) return coverageState(adapter, current);
 +  // 文件在、但一个受管键都没有 = 没配；有键但不符 = 漂移。
@@ -730,6 +1128,11 @@ index 0000000..19b4091
 +    const leaf = c.id.split(".").pop() ?? "";
 +    return leaf.length > 0 && text.includes(leaf);
 +  });
++}
++
++/** 配置文件存在、但读回来的对象是空的（解析失败）→ 视为损坏。 */
++function isUnreadableConfig(path: string, current: Record<string, unknown>): boolean {
++  return existsSync(path) && Object.keys(current).length === 0 && readFileSync(path, "utf8").trim().length > 0;
 +}
 +
 +/**
@@ -835,10 +1238,10 @@ index 82289a2..1711fe8 100644
  
  export interface EvidenceFinding {
 diff --git a/src/gateway/core.ts b/src/gateway/core.ts
-index f75c17b..7075bbf 100644
+index d9444d3..51f78e5 100644
 --- a/src/gateway/core.ts
 +++ b/src/gateway/core.ts
-@@ -16,6 +16,9 @@ import {
+@@ -16,9 +16,13 @@ import {
    declaredToolsMeta,
  } from "./scan-unit.ts";
  import { encodeVetoEvent, parseSseFrames, tryParseJson, type SseFrame } from "./sse-tee.ts";
@@ -848,7 +1251,19 @@ index f75c17b..7075bbf 100644
  import { decide, pickScenario, pickTopReasonFromErrorFindings, type BehaviorScenario } from "../policy/engine.ts";
  import type { PolicyInput } from "../policy/engine.ts";
  import { resolveActionTaken } from "../policy/mapping.ts";
-@@ -98,7 +101,12 @@ export const REPROJECTION_META_KEY = "llmveto_reprojected" as const;
++import { directionsOf } from "../shared/types.ts";
+ import type {
+   CheckerResult,
+   CheckerSpec,
+@@ -36,6 +40,7 @@ import type { ActionTaken } from "../shared/types.ts";
+ import { CanaryStore } from "../canary/store.ts";
+ import { deriveSessionKey } from "../canary/session-key.ts";
+ import { inject } from "../canary/inject.ts";
++import { checkDangerousCommandWithDedup, createDangerousCommandDedup } from "../checkers/dangerous-command-scan.ts";
+ 
+ /**
+  * @test REQ-VETO-002
+@@ -96,7 +101,12 @@ export const REPROJECTION_META_KEY = "llmveto_reprojected" as const;
   * `dsh/cliproxy` 条目），故注入/串流检出按该单一路由键生效。集成测试断言
   * CANARY_MANAGED_ROUTES = adapter 推导集合 ∪ 本集合，adapter 侧漂移仍会被抓到。
   */
@@ -862,12 +1277,37 @@ index f75c17b..7075bbf 100644
  
  /** REQ-V2a-11/D-05 注入判定域（路由键 client/provider）：gateway 层镜像常量——architecture.yaml 禁 import adapters，与 adapters 层 MANAGED_CONFIG_IDS 的同源一致性由集成测试以真实 adapter 产物推导钉死（canary-inject 防漂移断言）。 */
  export const CANARY_MANAGED_ROUTES: ReadonlySet<string> = Object.freeze(new Set([
-@@ -156,12 +164,13 @@ export class GatewayCore {
-     headers: Readonly<Record<string, string>>,
-     transport: "stream" | "non-stream",
-     cmdDedup: ReturnType<typeof createDangerousCommandDedup> = createDangerousCommandDedup(),
+@@ -120,6 +130,9 @@ function createCanaryStore(cfg: GatewayConfig): CanaryStore | null {
+   return cfg.canaryRegistryPath !== undefined ? new CanaryStore(cfg.canaryRegistryPath) : null;
+ }
+ 
++/** 0.6.0：需要在一次请求内跨单元去重的 checker（同一命令被 DSH 全历史重放 20 次是常态）。 */
++const DEDUP_CHECKER_IDS: ReadonlySet<string> = Object.freeze(new Set(["dangerous-command-scan"]));
++
+ export class GatewayCore {
+   /** canary：D-02 单写者 store（null = 未配置，判定域外）；计数面恒在（进程内，durable 聚合属 SL-12），未配置全零。 */
+   readonly canary: CanaryStore | null;
+@@ -133,7 +146,7 @@ export class GatewayCore {
+   private checkersIncludingInjected(side: Direction): readonly CheckerSpec[] {
+     const extra = this.cfg.extraCheckers;
+     if (extra === undefined || extra.length === 0) return checkersFor(side);
+-    return [...checkersFor(side), ...extra.filter((c) => c.side === side)];
++    return [...checkersFor(side), ...extra.filter((c) => directionsOf(c).includes(side))];
+   }
+ 
+   /**
+@@ -146,24 +159,40 @@ export class GatewayCore {
+   }
+ 
+   /** 请求侧扫描 + policy → action；返回 action 与 evidence findings。 */
+-  scanRequest(bodyText: string, headers: Readonly<Record<string, string>>, transport: "stream" | "non-stream"): {
++  scanRequest(
++    bodyText: string,
++    headers: Readonly<Record<string, string>>,
++    transport: "stream" | "non-stream",
++    cmdDedup: ReturnType<typeof createDangerousCommandDedup> = createDangerousCommandDedup(),
 +    shape?: { readonly format: WireFormat } | undefined,
-   ): {
++  ): {
      inputs: PolicyInput[];
      scanUnit: ScanUnit;
    } {
@@ -877,7 +1317,30 @@ index f75c17b..7075bbf 100644
      // D-09 默认接线（AC-V2a-27①）：请求体路径按 body 字节数走 G3 分档。
      const defaultBudget = g3BudgetForBodyBytes(Buffer.byteLength(bodyText, "utf8"));
      const inputs: PolicyInput[] = [];
-@@ -322,11 +331,20 @@ function reasonOf(findings: readonly EvidenceFinding[], gatewayReasons?: readonl
+     for (const spec of this.checkersIncludingInjected("request")) {
+       const fn = spec.runNonStream as NonStreamChecker | undefined;
+       if (!fn) continue;
+-      const r = safeRun(fn, scanUnit, this.budgetFor(spec.id, defaultBudget));
++      const r = DEDUP_CHECKER_IDS.has(spec.id)
++        ? safeRun((u: ScanUnit) => checkDangerousCommandWithDedup(u, cmdDedup), scanUnit, this.budgetFor(spec.id, defaultBudget))
++        : safeRun(fn, scanUnit, this.budgetFor(spec.id, defaultBudget));
+       inputs.push({ checkerId: spec.id, safetyClass: spec.safetyClass, threat: spec.threat, result: r });
+     }
+     return { inputs, scanUnit };
+   }
+ 
++  /** 危险命令去重入口（0.6.0）：请求侧与响应侧共用一份状态；其它 checker 不受影响。 */
++  scanWithDangerousCommandDedup(unit: ScanUnit, dedup: ReturnType<typeof createDangerousCommandDedup>): PolicyInput[] {
++    const spec = this.checkersIncludingInjected(unit.direction).find((c) => c.id === "dangerous-command-scan");
++    if (spec === undefined) return [];
++    const result = safeRun((u: ScanUnit) => checkDangerousCommandWithDedup(u, dedup), unit, this.budgetFor(spec.id, G1_PER_CHUNK));
++    return [{ checkerId: spec.id, safetyClass: spec.safetyClass, threat: spec.threat, result }];
++  }
++
+   /** 响应侧非流式扫描 + policy。 */
+   scanResponseNonStream(bodyText: string, requestedModel: string | null, declaredMeta?: Readonly<Record<string, unknown>>): PolicyInput[] {
+     const parsed = tryParseJson(bodyText);
+@@ -302,11 +331,20 @@ function reasonOf(findings: readonly EvidenceFinding[], gatewayReasons?: readonl
  interface CanaryStep { readonly forwardedBody: string; readonly meta: CanaryRequestMeta | null; readonly gatewayReason?: "registry_unavailable" | "inject_skipped"; }
  
  /** canary 注入编排（D-04，§4.4 时序 deriveSessionKey → assign → snapshot → inject）：前置 = 受管路径且未 block（调用点保证）。registry 不可用 → 不注入不匹配 + reason + 计数（fail-open 可观测，§4.3 不得静默）。 */
@@ -899,11 +1362,22 @@ index f75c17b..7075bbf 100644
    if (store.loadStatus.status !== "ok") {
      core.canaryMetrics.registry_unavailable += 1;
      return { forwardedBody: req.body, meta: { canary_injected: false }, gatewayReason: "registry_unavailable" };
-@@ -365,16 +383,23 @@ export interface ChatOutcome {
+@@ -345,16 +383,34 @@ export interface ChatOutcome {
  }
  
  /** 请求侧 block 早退：canary 编排尚未执行 ⇒ 无 gateway reason 可携带（恒空）。 */
 -function blockedBeforeForward(reqFindings: EvidenceFinding[], degraded: boolean, body: string): ChatOutcome {
++/**
++ * 网关侧 reason 清单。
++ *
++ * 形状降级（受管路由上已阻断，走到这说明是非受管路径）与 canary 原因可能同时存在；
++ * 两者都是"网关没能覆盖这段流量"的事实，都要可查。
++ */
++function gatewayReasonsOf(canaryReason: string | undefined, shapeReason: string | undefined): readonly string[] | undefined {
++  const out = [shapeReason, canaryReason].filter((r): r is string => r !== undefined);
++  return out.length === 0 ? undefined : out;
++}
++
 +/** 阻断的 action 序列（block 恒胜；degraded 仅作附加事实）。 */
 +function blockActions(degraded: boolean): readonly ("blocked_before_forward" | "degraded_observational")[] {
 +  return degraded ? ["blocked_before_forward", "degraded_observational"] : ["blocked_before_forward"];
@@ -929,7 +1403,51 @@ index f75c17b..7075bbf 100644
      forwardedBody: body, canaryMeta: null, // block 前置：编排不进入，链上 sha = 客户端原体
      deliveredChunks: 0,
      scenario: "1",
-@@ -522,13 +547,17 @@ async function postToUpstream(url: string, forwardedBody: string, authorization:
+@@ -402,6 +458,21 @@ function responseMetaFor(canaryMeta: CanaryRequestMeta | null, declaredMeta: Rec
+   };
+ }
+ 
++/**
++ * 0.6.0：把「共享去重」的第二遍扫描结果与常规响应侧结果合并——只替换
++ * dangerous-command-scan 这一项（其它 checker 结果原样）。若注入的 checker 集合里
++ * 没有该 checker（登记域外），则保留常规结果不动。
++ */
++function withDedupScan(
++  _meta: Record<string, unknown>,
++  regular: readonly PolicyInput[],
++  dedup: readonly PolicyInput[],
++): readonly PolicyInput[] {
++  if (dedup.length === 0) return regular;
++  const id = dedup[0]!.checkerId;
++  return [...regular.filter((i) => i.checkerId !== id), ...dedup];
++}
++
+ /**
+  * 流式扫描的上下文解析（D-09）：advance 缺省为 true；只有 advance 且 windows 本身是
+  * WindowStore 时才启用窗口账本；归并重投影（advance=false）给单元打 reprojected 标记，
+@@ -428,12 +499,19 @@ interface NonStreamResponseParams {
+   readonly forwardedBody: string;
+   readonly canaryMeta: CanaryRequestMeta | null;
+   readonly gwReasons: readonly string[] | undefined;
++  readonly cmdDedup: ReturnType<typeof createDangerousCommandDedup>;
+ }
+ 
+ function handleNonStreamResponse(p: NonStreamResponseParams): ChatOutcome {
+   const respInputs = p.core.scanResponseNonStream(p.text, p.requestedModel, p.responseMeta);
+-  const respDecision = decide([...p.requestInputs, ...respInputs]);
+-  const allFindings = [...p.reqFindings, ...flattenFindings(respInputs)];
++  // 0.6.0：与请求侧共享去重的第二遍（响应复述请求里的同一命令不再二次告警）。
++  const dedupInputs = p.core.scanWithDangerousCommandDedup(
++    buildResponseScanUnit(p.text, tryParseJson(p.text), p.requestedModel, "non-stream", p.responseMeta),
++    p.cmdDedup,
++  );
++  const combinedResp = withDedupScan(p.responseMeta, respInputs, dedupInputs);
++  const respDecision = decide([...p.requestInputs, ...combinedResp]);
++  const allFindings = [...p.reqFindings, ...flattenFindings(combinedResp)];
+   if (respDecision.action === "block") {
+     return {
+       status: 502,
+@@ -480,12 +558,23 @@ async function postToUpstream(url: string, forwardedBody: string, authorization:
   */
  export async function handleChatCompletions(
    core: GatewayCore,
@@ -939,17 +1457,23 @@ index f75c17b..7075bbf 100644
    // transport 由 server 层判定后下传（单一真相源）：本层不再自行从 headers/body 重判。
    const { transport } = req;
    const stream = transport === "stream";
-   const cmdDedup = createDangerousCommandDedup();
--  const reqScan = core.scanRequest(req.body, req.headers, transport, cmdDedup);
+-  const reqScan = core.scanRequest(req.body, req.headers, transport);
++  const cmdDedup = createDangerousCommandDedup();
 +  // SL-05（REQ-V2bA-14/15）：先判形状——认不出的形态在这里就阻断，
 +  // 不让它走到"扫了但什么都没扫到、然后判 clean"那条路。
 +  const shape = shapeVerdict("request", tryParseJson(req.body), req.routePrefix ?? null, req.managedRoute === true);
-+  if (shape.reason !== null) return blockedBeforeForward([], false, req.body, shape.reason);
++  let degradedReason: string | undefined;
++  // 受管路由上覆盖降级 = 阻断；非受管路由上只记录（REQ-15 的分权），由 shape.block 表达。
++  if (shape.block && shape.reason !== null) return blockedBeforeForward([], false, req.body, shape.reason);
++  if (shape.reason !== null) {
++    // 非受管路径的覆盖降级：不阻断，但必须可查——把它挂到 outcome.reason 上落链。
++    degradedReason = shape.reason;
++  }
 +  const reqScan = core.scanRequest(req.body, req.headers, transport, cmdDedup, shapeFormat(shape));
    // SL-01/D-12：请求体 tools 声明面（declared_tools/declared_required）提取自请求扫描
    // 单元 meta，下传给响应侧全部扫描单元（非流式 / 流式逐帧 / 归并单元）。
    const declaredMeta = declaredToolsMeta(reqScan.scanUnit.meta);
-@@ -539,7 +568,7 @@ export async function handleChatCompletions(
+@@ -496,7 +585,7 @@ export async function handleChatCompletions(
      return blockedBeforeForward(reqFindings, reqDecision.degraded, req.body);
    }
    // canary 注入编排（D-04）：先于 fetch，注入后体作为转发体；请求侧扫描仍以客户端原体为准。
@@ -958,7 +1482,17 @@ index f75c17b..7075bbf 100644
    // 转发到 upstream（体 = 注入编排产出：受管路径为注入后体，其余为原体）
    const upstream = await postToUpstream(req.upstreamUrl, canaryStep.forwardedBody, req.headers.authorization);
    return deliverUpstream({
-@@ -559,6 +588,16 @@ export async function handleChatCompletions(
+@@ -507,14 +596,25 @@ export async function handleChatCompletions(
+     // canary meta 随声明面并入全部响应侧扫描单元（SL-08 return-scan 判定面）；判定域外保持 declaredMeta 原样。
+     responseMeta: responseMetaFor(canaryStep.meta, declaredMeta),
+     requestInputs: reqScan.inputs,
++    cmdDedup,
+     degraded: reqDecision.degraded,
+     reqFindings,
+     forwardedBody: canaryStep.forwardedBody,
+     canaryMeta: canaryStep.meta,
+-    gwReasons: canaryStep.gatewayReason !== undefined ? [canaryStep.gatewayReason] : undefined,
++    gwReasons: gatewayReasonsOf(canaryStep.gatewayReason, degradedReason),
    });
  }
  
@@ -975,6 +1509,86 @@ index f75c17b..7075bbf 100644
  /** 请求扫描单元里声明的 response model（缺声明即 null）。 */
  function requestedModelOf(unit: ScanUnit): string | null {
    return (unit.meta.model_requested as string | undefined) ?? null;
+@@ -533,6 +633,8 @@ interface UpstreamDelivery {
+   readonly forwardedBody: string;
+   readonly canaryMeta: CanaryRequestMeta | null;
+   readonly gwReasons: readonly string[] | undefined;
++  /** 危险命令去重状态（请求侧已消费），透传给响应侧各路径。 */
++  readonly cmdDedup: ReturnType<typeof createDangerousCommandDedup>;
+ }
+ 
+ async function deliverUpstream(d: UpstreamDelivery): Promise<ChatOutcome> {
+@@ -558,6 +660,7 @@ async function deliverUpstream(d: UpstreamDelivery): Promise<ChatOutcome> {
+       forwardedBody: d.forwardedBody,
+       canaryMeta: d.canaryMeta,
+       gwReasons: d.gwReasons,
++      cmdDedup: d.cmdDedup,
+     });
+   }
+   // 流式：tee（逐帧交付逻辑独立成 handleStreaming，主 handler 只保留分支骨架）
+@@ -572,6 +675,7 @@ async function deliverUpstream(d: UpstreamDelivery): Promise<ChatOutcome> {
+     forwardedBody: d.forwardedBody,
+     canaryMeta: d.canaryMeta,
+     gwReasons: d.gwReasons,
++    cmdDedup: d.cmdDedup,
+   });
+ }
+ 
+@@ -587,6 +691,7 @@ interface StreamParams {
+   readonly forwardedBody: string;
+   readonly canaryMeta: CanaryRequestMeta | null;
+   readonly gwReasons: readonly string[] | undefined;
++  readonly cmdDedup: ReturnType<typeof createDangerousCommandDedup>;
+ }
+ 
+ /** 流式交付的跨帧可变状态：扫描窗口、归并桶与交付计数同住一处，收束时由 getter 读真值。 */
+@@ -597,6 +702,8 @@ interface StreamState {
+   readonly responseMeta: Record<string, unknown>;
+   readonly requestInputs: readonly PolicyInput[];
+   readonly argsMerger: ReturnType<typeof createToolCallArgsMerger>;
++  /** 危险命令去重（0.6.0）：与请求侧共持一份，响应里复述请求中的同一命令不再二次告警。 */
++  readonly cmdDedup: ReturnType<typeof createDangerousCommandDedup>;
+   readonly allFindings: EvidenceFinding[];
+   pending: string;
+   deliveredChunks: number;
+@@ -609,8 +716,11 @@ interface StreamState {
+ function scanDelivered(st: StreamState, text: string): boolean {
+   const scan = st.core.scanResponseStreamChunk(st.windows, text, st.requested, st.responseMeta);
+   st.argsMerger.feed(scan.parsed); // 帧内 delta 片段进归并桶（归并后统一扫描，不逐 chunk 扫碎片）
+-  st.allFindings.push(...flattenFindings(scan.inputs));
+-  const d = decide([...st.requestInputs, ...scan.inputs]);
++  // 0.6.0 去重只覆盖非流式与归并单元：逐帧窗口才承载跨帧命令拼接（dangerous-command-scan 的
++  // 流式语义），用逐帧原文另做一遍去重扫描会丢跨帧命中（2026-11-24 实测回归）。
++  const inputs = scan.inputs;
++  st.allFindings.push(...flattenFindings(inputs));
++  const d = decide([...st.requestInputs, ...inputs]);
+   if (d.degraded) st.degradedSeen = true;
+   return d.action === "block";
+ }
+@@ -647,9 +757,12 @@ function scanMergedArgs(st: StreamState): boolean {
+   }
+   const merged = st.argsMerger.mergedText();
+   if (merged === "") return false;
+-  const scan = st.core.scanResponseStreamUnit(st.windows, buildMergedToolCallScanUnit(merged, st.responseMeta), { advance: false });
+-  st.allFindings.push(...flattenFindings(scan.inputs));
+-  const d = decide([...st.requestInputs, ...scan.inputs]);
++  const mergedUnit = buildMergedToolCallScanUnit(merged, st.responseMeta);
++  const scan = st.core.scanResponseStreamUnit(st.windows, mergedUnit, { advance: false });
++  const dedupInputs = st.core.scanWithDangerousCommandDedup(mergedUnit, st.cmdDedup);
++  const inputs = withDedupScan(st.responseMeta, scan.inputs, dedupInputs);
++  st.allFindings.push(...flattenFindings(inputs));
++  const d = decide([...st.requestInputs, ...inputs]);
+   if (d.degraded) st.degradedSeen = true;
+   return d.action === "block";
+ }
+@@ -771,6 +884,7 @@ function handleStreaming(p: StreamParams): ChatOutcome {
+   const st: StreamState = {
+     core, windows: createWindowStore(), requested, responseMeta, requestInputs,
+     argsMerger: createToolCallArgsMerger(),
++    cmdDedup: p.cmdDedup,
+     allFindings: [...reqFindings],
+     pending: "",
+     deliveredChunks: 0,
 diff --git a/src/gateway/protocols/anthropic.ts b/src/gateway/protocols/anthropic.ts
 new file mode 100644
 index 0000000..bb4a580
@@ -1540,10 +2154,10 @@ index 0000000..c1a03b8
 +}
 diff --git a/src/gateway/protocols/outcome.ts b/src/gateway/protocols/outcome.ts
 new file mode 100644
-index 0000000..5216964
+index 0000000..cace3e0
 --- /dev/null
 +++ b/src/gateway/protocols/outcome.ts
-@@ -0,0 +1,165 @@
+@@ -0,0 +1,174 @@
 +// @no-test-required: 测试在 tests/integration/protocol-outcome.test.ts（本项目测试布局为 tests/ 目录；Gate 5a 仅识别同目录/根 tests/ 六种路径）
 +import { coverageReason, coverageVerdict, presentPaths } from "./coverage.ts";
 +import { protocolFor, recognize } from "./registry.ts";
@@ -1567,10 +2181,13 @@ index 0000000..5216964
 +/** 一次判定的结果：需要阻断时给出 reason，否则 reason 为 null。 */
 +export interface ShapeVerdict {
 +  readonly format: WireFormat | null;
++  /** 覆盖降级的原因（**无论受管与否都要写**）：不写就等于把降级藏起来。 */
 +  readonly reason: CoverageReason | null;
++  /** 是否因此阻断。受管路由恒等于 `reason !== null`；非受管路由恒为 false。 */
++  readonly block: boolean;
 +}
 +
-+const NOTHING: ShapeVerdict = Object.freeze({ format: null, reason: null });
++const NOTHING: ShapeVerdict = Object.freeze({ format: null, reason: null, block: false });
 +
 +/**
 + * 判定一个已解析 body 的形状。
@@ -1593,10 +2210,16 @@ index 0000000..5216964
 +  return recognized.kind === "known" ? judged(recognized.format, direction, body, consoleManaged) : NOTHING;
 +}
 +
-+/** "认不出"的结论：保留已识别到的格式（若有），reason 仅在受管路由上给出。 */
++/**
++ * "认不出"的结论。
++ *
++ * reason **总是**给出（受管与否都一样）：REQ-15 要求"非受管路由同样写 reason，但不阻断"。
++ * 只把阻断与记录分开，不把两者绑在一起——否则非受管路径上的覆盖降级在 evidence 里完全不可见，
++ * 那正是本项目要消灭的形态。
++ */
 +function unrecognized(recognized: RecognizedFormat, consoleManaged: boolean): ShapeVerdict {
 +  const format = recognized.kind === "known" ? recognized.format : null;
-+  return { format, reason: consoleManaged ? "shape_unrecognized" : null };
++  return { format, reason: "shape_unrecognized", block: consoleManaged };
 +}
 +
 +/** 已解析 body 的对象视图；不是对象（null / 数组 / 标量）返回 null。 */
@@ -1607,10 +2230,10 @@ index 0000000..5216964
 +
 +/** 识别成功后的处置：有投影器 → 覆盖轴；无投影器 → 覆盖缺失。 */
 +function judged(format: WireFormat, direction: Direction, body: Record<string, unknown>, consoleManaged: boolean): ShapeVerdict {
-+  if (!consoleManaged) return { format, reason: null };
 +  const proto = protocolFor(format);
 +  // 已识别但本网关没有该格式的投影器：与"认不出来"同属覆盖缺失（原因不同，处置相同）。
-+  return { format, reason: proto === undefined ? "shape_unrecognized" : coverageShape(direction, body, proto) };
++  const reason = proto === undefined ? "shape_unrecognized" : coverageShape(direction, body, proto);
++  return { format, reason, block: consoleManaged && reason !== null };
 +}
 +
 +/** 是否需要判为"认不出"：识别失败，或请求体是个认不出的壳。 */
@@ -2204,8 +2827,27 @@ index 0000000..210ad1c
 +export function projection(parts: readonly string[], handled: readonly string[], derived = false): Projection {
 +  return { parts, handled, present: [], derived };
 +}
+diff --git a/src/gateway/registry.ts b/src/gateway/registry.ts
+index abd5038..a241f94 100644
+--- a/src/gateway/registry.ts
++++ b/src/gateway/registry.ts
+@@ -1,4 +1,4 @@
+-import type { CheckerSpec } from "../shared/types.ts";
++import { directionsOf, type CheckerSpec } from "../shared/types.ts";
+ import { CANARY_RETURN_SCAN_SPEC } from "../checkers/canary-return-scan.ts";
+ import { DANGEROUS_COMMAND_SCAN_SPEC } from "../checkers/dangerous-command-scan.ts";
+ import { EGRESS_SECRET_SCAN_SPEC } from "../checkers/egress-secret-scan.ts";
+@@ -26,7 +26,7 @@ export const REGISTRY: readonly CheckerSpec[] = Object.freeze([
+ ]);
+ 
+ export function checkersFor(side: "request" | "response"): readonly CheckerSpec[] {
+-  return REGISTRY.filter((c) => c.side === side);
++  return REGISTRY.filter((c) => directionsOf(c).includes(side));
+ }
+ 
+ /** §4.5 威胁表：单一来源 = 各 CheckerSpec.threat（不得在 policy/evidence 侧另设字面表）。 */
 diff --git a/src/gateway/scan-unit.ts b/src/gateway/scan-unit.ts
-index d5103ef..829b5fc 100644
+index d5103ef..49f8628 100644
 --- a/src/gateway/scan-unit.ts
 +++ b/src/gateway/scan-unit.ts
 @@ -1,4 +1,6 @@
@@ -2287,19 +2929,44 @@ index d5103ef..829b5fc 100644
  }
  
  interface DeclaredTool {
-@@ -269,6 +313,7 @@ export function buildResponseScanUnit(
+@@ -259,9 +303,20 @@ export function declaredToolsMeta(meta: Readonly<Record<string, unknown>>): Reco
+   const out: Record<string, unknown> = {};
+   if (meta.declared_tools !== undefined) out.declared_tools = meta.declared_tools;
+   if (meta.declared_required !== undefined) out.declared_required = meta.declared_required;
++  // v2b-A：线格式必须随声明面一路下传到响应侧。
++  // 这是第三个"逐键构造导致静默丢弃"的点（前两个见 P1-2）：请求侧识别出了格式，
++  // 若不带上这一键，响应侧就永远走既有 Chat 投影，Anthropic 的 content[] 与
++  // Responses 的 output[] 依然不可见——那正是本 sprint 要消灭的那一半缺口。
++  if (meta.wire_format !== undefined) out.wire_format = meta.wire_format;
+   return out;
+ }
+ 
++/** 从响应侧 meta 里取线格式（缺席 = 走既有 Chat 投影）。 */
++function wireFormatOfMeta(meta: Readonly<Record<string, unknown>> | undefined): { readonly format: WireFormat } | undefined {
++  const f = meta?.wire_format;
++  return typeof f === "string" ? { format: f as WireFormat } : undefined;
++}
++
+ /** 响应侧：SSE data 或 body 文本 → 扫描单元；已解析 JSON 时提取 model / usage / finish_reason。 */
+ export function buildResponseScanUnit(
+   text: string,
+@@ -269,7 +324,11 @@ export function buildResponseScanUnit(
    requestedModel: string | null,
    transport: Transport,
    declaredMeta?: Readonly<Record<string, unknown>>,
 +  proto?: { readonly format: WireFormat },
  ): ScanUnit {
++  // v2b-A：调用方未显式给协议时，按声明面里的 wire_format 走（这是响应侧的唯一接线点，
++  // 三个调用点都只需经过 declaredToolsMeta 就会自动带上）。
++  const effectiveProto = proto ?? wireFormatOfMeta(declaredMeta);
    // SL-01/D-12：声明面（declared_tools/declared_required）随单元下传；先展开，
    // 让下方解析出的结构性字段（model/usage/finish_reason）保持优先。
-@@ -279,11 +324,28 @@ export function buildResponseScanUnit(
+   const meta: Record<string, unknown> = { ...declaredMeta };
+@@ -279,11 +338,28 @@ export function buildResponseScanUnit(
    }
    if (typeof parsed.model === "string") meta.model_responded = parsed.model;
    if (parsed.usage && typeof parsed.usage === "object") meta.usage = parsed.usage;
-+  return withDecoded({ direction: "response", transport, text: responseTextFor(parsed, meta, proto, transport, requestedModel), meta });
++  return withDecoded({ direction: "response", transport, text: responseTextFor(parsed, meta, effectiveProto, transport, requestedModel), meta });
 +}
 +
 +/** 响应侧文本：协议投影优先；否则沿用既有 Chat 展平（choices 逐段空串拼接）。 */
@@ -2326,7 +2993,7 @@ index d5103ef..829b5fc 100644
  
  // ── SL-01（AC-V2a-01）：流式 tool-call arguments 跨 chunk 归并 ─────────────────
 diff --git a/src/gateway/server.ts b/src/gateway/server.ts
-index 479af32..7ce9e95 100644
+index 479af32..ebe0721 100644
 --- a/src/gateway/server.ts
 +++ b/src/gateway/server.ts
 @@ -84,6 +84,9 @@ export interface RouteInfo {
@@ -2351,26 +3018,128 @@ index 479af32..7ce9e95 100644
  
    await deliverOutcome(res, outcome, fwd);
    writeEvidence(cfg, { ...id, endpointHost, bodyText, respText: outcome.body, stream: transport === "stream", findings: outcome.findings,
-@@ -188,6 +194,19 @@ async function dispatch(
+@@ -188,6 +194,40 @@ async function dispatch(
      partial: outcome.actionTaken === "terminated_after_delivery", t0 });
  }
  
 +/**
 + * SL-06（REQ-V2bA-15）：受管路由的判定域。
 + *
-+ * 定义（设计 D-03，R2 评审要求写死）：受管路由 = 已知路由前缀集合 ∪ CANARY_MANAGED_ROUTES 的路由键。
-+ * 二者并集即 fail-closed 的作用域；未命中并集的路径仍被扫描与记录，但不因形状/覆盖失败而阻断
-+ * （"接得住但不打死"，写进 KNOWN-ISSUES）。
++ * 定义（设计 D-03，R2 评审要求写死）：
++ *   受管路由 = **适配器实际配置的** `<client>/<provider>` 路由键 ∪ `CANARY_MANAGED_ROUTES`。
++ *
++ * 为什么不是"前缀在表里就算受管"（code-walkthrough MAJOR-4）：那样 `opencode/<任意 provider>`
++ * 都会被纳入，等于把 fail-closed 无声扩大到 v1 从未承诺的路径上——而 v1 的承诺域是
++ * `MANAGED_CONFIG_IDS` 的封闭枚举。判定域必须与"适配器写了哪条 baseURL"同源，否则
++ * "受管"这个词就不再指向任何一个可枚举的集合。
 + */
 +function isManagedRoute(route: RouteInfo): boolean {
-+  if (route.client !== null && formatForPrefix(route.client) !== undefined) return true;
 +  const key = `${route.client ?? ""}/${route.providerId ?? ""}`;
-+  return CANARY_MANAGED_ROUTES.has(key);
++  return MANAGED_ROUTE_KEYS.has(key) || CANARY_MANAGED_ROUTES.has(key);
 +}
++
++/**
++ * 适配器写入的 `<client>/<provider>` 路由键（与 src/adapters/* 的 buildPatch 同源）。
++ *
++ * 与 adapters 层的同源一致性由 `tests/unit/route-keys.test.ts` 以真实 adapter 产物推导钉死——
++ * gateway 层不 import adapters（architecture.yaml 禁），所以这里镜像一份并让测试看守。
++ */
++export const MANAGED_ROUTE_KEYS: ReadonlySet<string> = Object.freeze(
++  new Set([
++    "opencode/openai",
++    "opencode/anthropic",
++    "opencode/mock",
++    "delphi/default",
++    "claude/anthropic",
++    "codex/openai",
++    "promptfoo/openai",
++  ]),
++);
 +
  /** 读请求体全文（dispatch 与兜底路径的共享入口）。 */
  async function readBodyText(req: IncomingMessage): Promise<string> {
    const chunks: Buffer[] = [];
+diff --git a/src/policy/engine.ts b/src/policy/engine.ts
+index a8cc929..e218eba 100644
+--- a/src/policy/engine.ts
++++ b/src/policy/engine.ts
+@@ -1,5 +1,6 @@
+ import type { Action, CheckerResult } from "../shared/types.ts";
+-import { mapBySpec } from "./mapping.ts";
++import { mapBySpec, mapBySpecWithRules } from "./mapping.ts";
++import { BLOCKING_RULE_IDS } from "../checkers/dangerous-command-scan.ts";
+ 
+ /**
+  * @test REQ-VETO-006
+@@ -32,15 +33,33 @@ export interface PolicyInput {
+ 
+ const SEVERITY: Record<Action, number> = { allow: 0, warn: 1, redact: 1, block: 2 };
+ 
++/** 需要按规则分级（而非 checker 粒度）判定的 checker（0.6.0）。 */
++const RULE_GRADED_CHECKERS: ReadonlySet<string> = Object.freeze(new Set(["dangerous-command-scan"]));
++
++/**
++ * 单个 checker 结果 → action。规则级分级只对声明该能力的 checker 生效（当前唯一：
++ * dangerous-command-scan 的 credential-file-read）；其余 checker 的 evidence 不参与判定，
++ * 映射逐字不变。
++ */
++function actionFor({ checkerId, safetyClass, result }: PolicyInput): Action {
++  if (!RULE_GRADED_CHECKERS.has(checkerId)) return mapBySpec({ id: checkerId, safetyClass }, result.verdict);
++  return mapBySpecWithRules({ id: checkerId, safetyClass }, result.verdict, result.evidence, BLOCKING_RULE_IDS);
++}
++
++/** D-11：观测类 checker 的 scanner_error 等于本交互观测面降级（safetyClass 走 fail-closed block，不在此列）。 */
++function isObservationalError({ safetyClass, result }: PolicyInput): boolean {
++  return !safetyClass && result.verdict === "error";
++}
++
+ export function decide(inputs: readonly PolicyInput[]): PolicyDecision {
+   let worst: Action = "allow";
+   let degraded = false;
+   const reasons: { checker: string; verdict: CheckerResult["verdict"]; action: Action }[] = [];
+-  for (const { checkerId, safetyClass, result } of inputs) {
+-    const action = mapBySpec({ id: checkerId, safetyClass }, result.verdict);
+-    reasons.push({ checker: checkerId, verdict: result.verdict, action });
++  for (const input of inputs) {
++    const action = actionFor(input);
++    reasons.push({ checker: input.checkerId, verdict: input.result.verdict, action });
+     if (SEVERITY[action] > SEVERITY[worst]) worst = action;
+-    if (!safetyClass && result.verdict === "error") degraded = true;
++    degraded = degraded || isObservationalError(input);
+   }
+   return { action: worst, degraded, reasons };
+ }
+diff --git a/src/policy/mapping.ts b/src/policy/mapping.ts
+index 394cd71..f7ff714 100644
+--- a/src/policy/mapping.ts
++++ b/src/policy/mapping.ts
+@@ -42,6 +42,26 @@ export function mapVerdictToAction(checkerId: string, verdict: Verdict): Action
+   return m[verdict];
+ }
+ 
++/**
++ * 按规则分级的判定（0.6.0）：对声明了 `blockingRules` 的 checker，finding 里**只要有一条**
++ * 命中属于可阻断规则即 block，否则退回该 checker 的常规映射（warn）。
++ *
++ * 为什么需要：同一条 checker 里既有「命中即危险」的规则（读 `~/.ssh/id_rsa`），
++ * 也有「教程里合法出现」的规则（`curl … | bash`）。前者不阻断等于放走凭据出境，
++ * 后者阻断等于把正常开发会话整条 502 掉——两者的正确策略相反，不能由 checker 粒度决定。
++ */
++export function mapBySpecWithRules(
++  spec: Pick<CheckerSpec, "id" | "safetyClass">,
++  verdict: Verdict,
++  evidence: readonly { readonly rule_id?: string }[],
++  blockingRuleIds: ReadonlySet<string>,
++): Action {
++  const base = mapBySpec(spec, verdict);
++  if (verdict !== "finding" || base === "block") return base;
++  const hasBlockingHit = evidence.some((e) => e.rule_id !== undefined && blockingRuleIds.has(e.rule_id));
++  return hasBlockingHit ? "block" : base;
++}
++
+ /**
+  * 由 CheckerSpec 提供 safetyClass 兜底：v1 内置表已含三个 checker，
+  * 若未登记但 spec 声明 safetyClass=true 者 → finding=block, error=block。
 diff --git a/src/policy/reason.ts b/src/policy/reason.ts
 index ca79aeb..5025dbf 100644
 --- a/src/policy/reason.ts
@@ -2466,3 +3235,32 @@ index 0000000..1ab60f3
 +export function wireFormatOf(client: string): ClientWireFormatSpec | undefined {
 +  return CLIENT_WIRE_FORMATS.find((c) => c.client === client);
 +}
+diff --git a/src/shared/types.ts b/src/shared/types.ts
+index d5227c3..270c9a5 100644
+--- a/src/shared/types.ts
++++ b/src/shared/types.ts
+@@ -91,9 +91,24 @@ export type StreamChecker = (
+ /** §4.2/ADR-0003：单次 tool-call arguments 累积硬顶 = 256 KiB（UTF-8 字节，严格大于语义）。 */
+ export const STREAM_WINDOW_OVERFLOW_LIMIT = 262144 as const;
+ 
++/** checker 的实际作用侧集合（缺省 = {side}；见 CheckerSpec.sides）。 */
++export function directionsOf(spec: { readonly side: Direction; readonly sides?: readonly Direction[] }): readonly Direction[] {
++  return spec.sides ?? [spec.side];
++}
++
+ export interface CheckerSpec {
+   readonly id: string;
++  /** 主作用侧（单一来源：策略映射、文档与 evidence 归属都以它为准）。 */
+   readonly side: Direction;
++  /**
++   * 额外作用侧（0.6.0）。缺省时作用域就是 `{side}`；声明后 checker 在两侧都参与分派。
++   * 为什么需要：凭据出境的真实形态是「上游要求 agent 用 read 工具读 `~/.ssh/id_rsa`」——
++   * 这条指令从**响应**下发、被读文件路径出现在**请求**里，只挂单侧的 checker 只能看见一半
++   * （2026-11-24 本机实测：本会话 32 个读工具调用无一进入判定面）。
++   * 不变量：分派集合仍是枚举（registry ∩ 请求/响应），不是"所有 checker 到处跑"；
++   * 每个 checker 用 `directionsOf(spec)` 自行确认本条侧是否适用。
++   */
++  readonly sides?: readonly Direction[];
+   readonly synchronous: true;
+   readonly safetyClass: boolean;
+   /** §4.5 威胁表归属：error 条目落链时的 threat 唯一来源（禁止在 policy 侧另设表）。 */

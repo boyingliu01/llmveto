@@ -51,6 +51,23 @@ function tableRange(lines: readonly string[], table: string): { header: number; 
   return { header, end };
 }
 
+/**
+ * 该表是否以内联表写法存在（父表里一行 `leaf = { ... }`）。
+ * 例：`[model_providers]` 段内出现 `llmveto = { name = "x" }`。
+ */
+function hasInlineTable(lines: readonly string[], table: string): boolean {
+  const dot = table.lastIndexOf(".");
+  if (dot === -1) return false;
+  const parent = table.slice(0, dot);
+  const leaf = table.slice(dot + 1);
+  const parentRange = tableRange(lines, parent);
+  if (parentRange === null) return false;
+  for (let i = parentRange.header + 1; i < parentRange.end; i += 1) {
+    if (new RegExp(`^\\s*${leaf}\\s*=\\s*\\{`).test(lines[i]!)) return true;
+  }
+  return false;
+}
+
 /** 在给定区间里找某个键的所有行号（用于检出重复）。 */
 function keyLines(lines: readonly string[], from: number, to: number, key: string): number[] {
   const out: number[] = [];
@@ -121,6 +138,11 @@ export function writeCodexToml(path: string, edit: ManagedTableEdit): boolean {
   const range = tableRange(lines, edit.table);
   const headers = lines.filter((l) => tableHeaderOf(l) === edit.table).length;
   if (headers > 1) throw new Error(`多处同形目标表：${edit.table} 出现 ${headers} 次，拒绝写入`);
+  // 内联表写法（`[model_providers]` + `llmveto = { ... }`）无法用行级编辑安全改写：
+  // 追加同名表会生成非法 TOML。定位不确定就拒绝写入——这是本模块自己的原则。
+  if (range === null && hasInlineTable(lines, edit.table)) {
+    throw new Error(`目标表 ${edit.table} 以内联表写法出现，无法安全定点编辑；请改成 [${edit.table}] 表头后重试`);
+  }
   const next = range === null ? appendTable(lines, edit) : applyKeys(lines, range, edit.keys);
   const text = joinLikeOriginal(next, raw, eol);
   if (text === raw) return false;

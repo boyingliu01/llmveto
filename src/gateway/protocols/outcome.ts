@@ -85,8 +85,80 @@ function isUnrecognizable(direction: Direction, body: Record<string, unknown>, r
 /** 覆盖轴：由 present 与投影器上报的 handled 求差集。 */
 function coverageShape(direction: Direction, body: Record<string, unknown>, proto: WireProtocol): ShapeReason | null {
   const present = presentFor(direction, body, proto);
-  return reasonFor(direction, body, present, coverageReason(present, projectionFor(direction, body, proto).handled));
+  const projection = projectionFor(direction, body, proto);
+  const coverage = coverageReason(present, projection.handled);
+  // 兜底：协议已知、载荷都覆盖了，但还有字符串内容没被任何投影器看过 → 覆盖不足。
+  // 这一条独立于 CoverageSpec，因为它要覆盖的恰恰是清单之外的字段。
+  if (coverage === null && unseenContent(direction, body, projection.parts.join("\n"))) {
+    return "shape_partial_coverage";
+  }
+  return reasonFor(direction, body, present, coverage);
 }
+
+/**
+ * 协议已知、载荷字段都覆盖了，但 body 里还有**没有被任何投影器看过**的内容。
+ *
+ * 这是 code-walkthrough R2 的 CRITICAL：`CoverageSpec` 列的是**载荷**清单，
+ * 凭据放进同一协议里合法但未登记的字段（如 Anthropic 的 `metadata.user_id`）时，
+ * `present` 非空且全部 handled → 判 `full` → 不写 reason、不阻断，凭据原样出境。
+ * 那正是本 sprint 要消灭的失效形态，只是换了字段名。
+ *
+ * 判据：把 body 里所有**字符串值**取出来，逐个比对扫描单元实际看过的文本。
+ * 有任何一个字符串值没出现在扫描文本里，就说明它没被任何人看过。
+ * 这不是"更聪明的识别"，恰恰相反——它假设"没看过的内容都可能是载荷"。
+ */
+function unseenContent(direction: Direction, body: Record<string, unknown>, scannedText: string): boolean {
+  for (const value of collectStrings(body)) {
+    if (value.trim().length === 0) continue;
+    // 结构化字段（model / usage 计数等）本来就只进 meta，不要求逐字出现；
+    // 但只要它有实质长度且不在扫描文本里，就算"没被看过"。
+    if (!scannedText.includes(value)) return true;
+  }
+  return false;
+}
+
+/** 递归收集 JSON 里的全部字符串值（跳过结构字段与非文本载体）。 */
+function collectStrings(value: unknown, key?: string): string[] {
+  if (STRUCTURAL_KEYS.has(key ?? "")) return [];
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap((v) => collectStrings(v));
+  if (value && typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>).flatMap(([k, v]) => collectStrings(v, k));
+  }
+  return [];
+}
+
+/**
+ * 只进 meta、不进文本投影的结构性字段（与 scan-unit 的 meta 口径一致）。
+ * 这些字段的值不要求出现在扫描文本里，否则每条正常请求都会被判"未看过"。
+ */
+const STRUCTURAL_KEYS: ReadonlySet<string> = new Set([
+  "model",
+  "usage",
+  "finish_reason",
+  "stop_reason",
+  "id",
+  "object",
+  "type",
+  "role",
+  "call_id",
+  "tool_use_id",
+  "cache_control",
+  "created",
+  "created_at",
+  "system_fingerprint",
+  // 非文本载体：图片/文件 URL、base64 数据、MIME 类型。它们从设计上就不进文本投影
+  // （scan-unit 只取 `seg.text`），把它们算作"没看过"会让每条带图请求都被误阻断。
+  "url",
+  "data",
+  "media_type",
+  "mimeType",
+  "b64_json",
+  "image_url",
+  "source",
+  "file_id",
+  "filename",
+]);
 
 /**
  * 把"覆盖结论"落到四种情形上（顺序即优先级）：

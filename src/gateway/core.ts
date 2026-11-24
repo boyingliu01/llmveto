@@ -502,6 +502,21 @@ interface NonStreamResponseParams {
   readonly cmdDedup: ReturnType<typeof createDangerousCommandDedup>;
 }
 
+/**
+ * 响应侧的两轴判定（REQ-V2bA-14「响应侧同样跑两轴」，code-walkthrough R2 MAJOR-1）。
+ *
+ * 响应侧此前只接了投影、没有覆盖闸门：受管路由上若投影片段为空、或内容落在未投影字段，
+ * 既无 `shape_*` reason 也不 fail-closed。响应同样是"上游写给 agent 的东西"，
+ * 它没有理由比请求侧更宽。非受管路由按既有分权只记录不阻断。
+ */
+function responseShapeReason(p: NonStreamResponseParams): string | undefined {
+  const fmt = p.responseMeta.wire_format;
+  // 只对**新协议**启用响应侧闸门：Chat 响应的既有语义（上游可能带各种字段）
+  // 不在本 sprint 的改动面内，贸然收紧会误伤存量流量。两种新协议没有这样的历史包袱。
+  if (fmt !== "anthropic-messages" && fmt !== "openai-responses") return undefined;
+  return shapeVerdict("response", tryParseJson(p.text), null, true).reason ?? undefined;
+}
+
 function handleNonStreamResponse(p: NonStreamResponseParams): ChatOutcome {
   const respInputs = p.core.scanResponseNonStream(p.text, p.requestedModel, p.responseMeta);
   // 0.6.0：与请求侧共享去重的第二遍（响应复述请求里的同一命令不再二次告警）。
@@ -510,9 +525,10 @@ function handleNonStreamResponse(p: NonStreamResponseParams): ChatOutcome {
     p.cmdDedup,
   );
   const combinedResp = withDedupScan(p.responseMeta, respInputs, dedupInputs);
+  const shapeReason = responseShapeReason(p);
   const respDecision = decide([...p.requestInputs, ...combinedResp]);
   const allFindings = [...p.reqFindings, ...flattenFindings(combinedResp)];
-  if (respDecision.action === "block") {
+  if (respDecision.action === "block" || shapeReason !== undefined) {
     return {
       status: 502,
       body: "",
@@ -521,7 +537,7 @@ function handleNonStreamResponse(p: NonStreamResponseParams): ChatOutcome {
         ...(respDecision.degraded ? (["degraded_observational"] as const) : []),
       ]),
       findings: allFindings,
-      reason: reasonOf(allFindings, p.gwReasons),
+      reason: reasonOf(allFindings, gatewayReasonsOf(shapeReason, p.gwReasons?.[0])),
       forwardedBody: p.forwardedBody, canaryMeta: p.canaryMeta,
       deliveredChunks: 0,
       scenario: "2",

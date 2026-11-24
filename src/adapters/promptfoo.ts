@@ -135,11 +135,19 @@ export const promptfooAdapter: PromptfooAdapter = {
   readCurrentConfig(env: Env): Record<string, unknown> {
     const path = this.defaultConfigPath(env);
     if (!existsSync(path)) return { providers: [] };
+    let text = "";
     try {
-      return { providers: scanProviders(readFileSync(path, "utf8")) };
+      text = readFileSync(path, "utf8");
     } catch {
-      return { providers: [] };
+      return { providers: [], __unreadable: true };
     }
+    // 有内容却扫不出一条 provider：可能是"空项目"，也可能是"格式不认识"。
+    // 把"一个 provider 都没有但文件非空"标出来，由 doctor 报 drift 而不是绿灯
+    // （code-walkthrough R2：坏配置此前落 coverage_unknown，状态不对）。
+    const providers = scanProviders(text);
+    const hasProviderKey = /^providers:\s*$/m.test(text);
+    if (providers.length === 0 && hasProviderKey) return { providers: [], __unreadable: true };
+    return { providers };
   },
   detectDrift(current: Record<string, unknown>, gatewayBaseUrl: string): readonly ConfigId[] {
     // 没有任何 provider = 这个项目还没用 promptfoo（或没配 provider），属"未配置"而不是"漂移"。

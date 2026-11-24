@@ -121,7 +121,10 @@ function hasManagedKeys(adapter: Adapter, current: Record<string, unknown>, _gat
 
 /** 配置文件存在、但读回来的对象是空的（解析失败）→ 视为损坏。 */
 function isUnreadableConfig(path: string, current: Record<string, unknown>): boolean {
-  return existsSync(path) && Object.keys(current).length === 0 && readFileSync(path, "utf8").trim().length > 0;
+  if (!existsSync(path)) return false;
+  // 适配器可以自己申报"读到了但解析不出来"（如 promptfoo 的 providers 为空块）
+  if (current.__unreadable === true) return true;
+  return Object.keys(current).length === 0 && readFileSync(path, "utf8").trim().length > 0;
 }
 
 /**

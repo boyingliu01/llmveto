@@ -677,7 +677,7 @@
     "src/gateway/server.ts::respondNoUpstreamRoute": 1,
     "src/gateway/server.ts::safeHost": 2,
     "src/gateway/server.ts::safeParse": 4,
-    "src/gateway/server.ts::secretInUrl": 3,
+    "src/gateway/server.ts::secretInUrl": 4,
     "src/gateway/server.ts::startGateway": 7,
     "src/gateway/server.ts::writeDispatchFailureEvidence": 11,
     "src/gateway/server.ts::writeEvidence": 10,

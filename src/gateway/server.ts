@@ -274,11 +274,20 @@ function managedRouteSecretGuard(route: RouteInfo, contentEncoding: string | und
 function secretInUrl(url: URL): string | null {
   const candidates = [url.pathname, url.search, `${url.username}:${url.password}`].filter((s) => s.length > 0);
   for (const part of candidates) {
+    // 常数级预判：URL 里没有任何凭据前缀或 percent 转义时，解码后也不可能有。
+    // 这是逐请求路径（每个受管请求都会走），所以先做这一层再谈解码与正则。
+    if (!URL_SECRET_HINT.test(part)) continue;
     const scan = egressSecretScan({ direction: "request", transport: "non-stream", text: decodeSafe(part), meta: {} });
     if (scan.verdict === "finding") return "url_secret";
   }
   return null;
 }
+
+/**
+ * URL 里出现凭据的**必要条件**：要么含凭据前缀，要么含 percent 转义（`%73k-` 解码后才是 `sk-`）。
+ * 两者都没有的 URL 不可能藏凭据——这是短路，不是判据；漏判只会回落到全量扫描。
+ */
+const URL_SECRET_HINT = /sk[-_]|ghp_|gho_|ghs_|ghu_|AKIA|ASIA|xox[abps]-|-----BEGIN|AIza|glpat-|npm_|pypi-|%/;
 
 /** percent-decode；非法编码按原文返回（不因解析失败而放行）。 */
 function decodeSafe(text: string): string {

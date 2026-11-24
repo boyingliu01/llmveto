@@ -32,6 +32,12 @@ const SMOKE_ROWS = [
       LLMVETO_GATEWAY_URL: c.gatewayUrl,
       LLMVETO_OPENCODE_CONFIG: join(c.ws, "opencode.smoke.json"),
       LLMVETO_DELPHI_CONFIG: join(c.ws, "delphi.smoke.json"),
+      // v2b-A 新增三个适配器：同样钉到工作区，绝不读使用者真实家目录。
+      // 漏掉任何一个，doctor 都会在**发布机上**报出该机器自身的配置漂移——
+      // 那不是发布门该管的事，却会让门红。
+      LLMVETO_CLAUDE_SETTINGS: join(c.ws, "claude.smoke.json"),
+      LLMVETO_CODEX_CONFIG: join(c.ws, "codex.smoke.toml"),
+      LLMVETO_PROMPTFOO_CONFIG: join(c.ws, "promptfoo.smoke.yaml"),
     }),
     expect: { exit: 0, stdout: ["[PASS] doctor.evidence-chain: chain ok (", "[PASS] doctor.port-reachable"] },
   },
@@ -157,6 +163,11 @@ function managedConfigCopies(gatewayUrl) {
         stream: `${base}/delphi/default/v1/chat/completions?stream=1`,
       },
     },
+    // v2b-A 新增三个适配器：doctor 的受管配置枚举已含它们，副本必须同步，
+    // 否则 doctor.config-drift 会把这些"没预置"的条目当作漂移，冒烟行红。
+    claudeCode: { env: { ANTHROPIC_BASE_URL: `${base}/claude/anthropic` } },
+    codex: `[model_providers.llmveto]\nname = "llmveto"\nbase_url = "${base}/codex/openai/v1"\nwire_api = "responses"\n`,
+    promptfoo: `providers:\n  - id: openai:chat:gpt-5\n    config:\n      apiBaseUrl: ${base}/promptfoo/openai/v1\n`,
   };
 }
 
@@ -164,6 +175,9 @@ function writeManagedCopies(ctx) {
   const copies = managedConfigCopies(ctx.gatewayUrl);
   writeFileSync(join(ctx.ws, "opencode.smoke.json"), JSON.stringify(copies.opencode, null, 2), "utf8");
   writeFileSync(join(ctx.ws, "delphi.smoke.json"), JSON.stringify(copies.delphi, null, 2), "utf8");
+  writeFileSync(join(ctx.ws, "claude.smoke.json"), JSON.stringify(copies.claudeCode, null, 2), "utf8");
+  writeFileSync(join(ctx.ws, "codex.smoke.toml"), copies.codex, "utf8");
+  writeFileSync(join(ctx.ws, "promptfoo.smoke.yaml"), copies.promptfoo, "utf8");
 }
 
 async function seedEvidenceRecord(gatewayUrl) {

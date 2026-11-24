@@ -64,8 +64,19 @@ const ADAPTERS: readonly Adapter[] = Object.freeze([
   promptfooAdapter as unknown as Adapter,
 ]);
 
-/** 配置文件是否"存在"（含父目录缺失 = 没装）。 */
-function installed(path: string): boolean {
+/**
+ * 客户端是否"已安装"。
+ *
+ * 判据因适配器而异，这不是不一致而是事实不同：
+ *   - 用户级适配器（opencode/delphi/claude-code/codex）：配置在固定路径，
+ *     **目录存在即已安装**（装了客户端就有目录，只是还没配）；
+ *   - promptfoo 是**项目级**：配置文件在当前项目里，目录（项目根）永远存在，
+ *     所以只有**文件本身存在**才算这个项目在用 promptfoo。
+ * 把两者混为一谈会在发布机上把"空工作区"读成"装了但没配"，进而把
+ * "线格式无法确定"报成 coverage_unknown，发布门因此变红。
+ */
+function installed(adapter: Adapter, path: string): boolean {
+  if (adapter.name === "promptfoo") return existsSync(path);
   return existsSync(path) || existsSync(dirname(path));
 }
 
@@ -73,7 +84,7 @@ function installed(path: string): boolean {
 function judge(adapter: Adapter, env: Env, gatewayBaseUrl: string): ClientCoverageCheck {
   const client = adapter.name;
   const path = adapter.defaultConfigPath(env);
-  if (!installed(path)) {
+  if (!installed(adapter, path)) {
     return { client, state: "not_installed", failsDoctor: false, message: `未安装（${path} 不存在）` };
   }
   const current = adapter.readCurrentConfig(env);
@@ -103,6 +114,20 @@ function hasManagedKeys(adapter: Adapter, current: Record<string, unknown>, _gat
   });
 }
 
+/**
+ * 从配置本身推导线格式（promptfoo 的 provider id 前缀就是线格式）。
+ *
+ * `openai:chat:*` → chat；`openai:responses:*` → openai-responses。
+ * 这是**读出来的事实**，不是猜的；只有读不出来时才算"无法确定"。
+ */
+function derivedFormat(adapter: Adapter, current: Record<string, unknown>): string | null {
+  if (adapter.name !== "promptfoo") return null;
+  const text = JSON.stringify(current);
+  if (text.includes("openai:responses:")) return "openai-responses";
+  if (text.includes("openai:chat:")) return "chat";
+  return null;
+}
+
 /** 线格式覆盖判定（REQ-V2bA-10）：无法确定必须是独立出口。 */
 function coverageState(adapter: Adapter, current: Record<string, unknown>): ClientCoverageCheck {
   const client = adapter.name;
@@ -110,7 +135,8 @@ function coverageState(adapter: Adapter, current: Record<string, unknown>): Clie
   if (spec === undefined) {
     return { client, state: "coverage_unknown", failsDoctor: true, message: "unmanaged: 未登记线格式" };
   }
-  if (spec.format === null) {
+  const fromConfig = derivedFormat(adapter, current);
+  if (spec.format === null && fromConfig === null) {
     return {
       client,
       state: "coverage_unknown",
@@ -118,9 +144,10 @@ function coverageState(adapter: Adapter, current: Record<string, unknown>): Clie
       message: `线格式无法确定（${spec.basis}）；doctor 不会据此报"已覆盖"`,
     };
   }
+  const effective = spec.format ?? fromConfig;
   // 线格式有声明即视为本网关有对应投影器（协议表在 gateway 层，cli 不 import，用值域判断）。
   // 已配置且覆盖存在 = 健康；它不是"未配置"，所以单独给一个成功态。
-  return { client, state: "coverage_ok", failsDoctor: false, message: `线格式 ${spec.format} 有投影覆盖` };
+  return { client, state: "coverage_ok", failsDoctor: false, message: `线格式 ${effective} 有投影覆盖` };
 }
 
 /** 为全部受管客户端产出检查项。 */

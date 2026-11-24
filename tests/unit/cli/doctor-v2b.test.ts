@@ -56,11 +56,18 @@ describe("SL-11 doctor 六态（REQ-V2bA-09）", () => {
   });
 
   it("coverage_unknown：线格式无法确定 → 失败但不折算成 missing/ok（AC-V2bA-10a）", () => {
-    // 造一个"已配置且无漂移"的 promptfoo 项目配置，让判定走到覆盖这一步
+    // 造一个"已配置且无漂移、但 provider id 读不出线格式"的配置。
+    // 有 `openai:chat:` 前缀就能从配置**读出**格式（那时应当 coverage_ok）；
+    // 这里刻意用一个读不出的 id，模拟"真无法确定"。
     const pfDir = join(dir, "pf");
     mkdirSync(pfDir, { recursive: true });
     const pfPath = join(pfDir, "promptfooconfig.yaml");
-    writeFileSync(pfPath, "providers:\n  - id: openai:chat:gpt-5\n    config:\n      apiHost: gw.example.com\n", "utf8");
+    // 受管键（apiBaseUrl）在场以通过"未配置"判定，但 id 读不出线格式 → 走到覆盖判定
+    writeFileSync(
+      pfPath,
+      "providers:\n  - id: openai:custom:gpt-5\n    config:\n      apiBaseUrl: http://127.0.0.1:8787/promptfoo/openai/v1\n",
+      "utf8",
+    );
     const checks = clientCoverageChecks({ LLMVETO_PROMPTFOO_CONFIG: pfPath }, "http://127.0.0.1:8787");
     const pf = checks.find((c) => c.client === "promptfoo")!;
     expect(pf.state).toBe("coverage_unknown");

@@ -268,7 +268,7 @@
       "verify": [
         "npx vitest run tests/unit/doc-consistency.test.ts && node scripts/check-readme-parity.mjs"
       ],
-      "status": "pending"
+      "status": "completed"
     }
   ]
 }

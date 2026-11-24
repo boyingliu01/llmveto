@@ -55,7 +55,7 @@ If auto-fix fails, manually configure:
 
 ### Q: Can I use llmveto with Claude Code / Codex / promptfoo?
 
-**A**: In v1, only OpenCode and Delphi are supported via automatic config injection. Claude Code, Codex, and promptfoo onboarding is planned for v2b. If you need these clients now, you can manually point their baseURL to the gateway, but they won't be tracked in `MANAGED_CONFIG_IDS` and won't appear in evidence logs with proper client identification.
+**A**: Since v2b-A, Claude Code, Codex and promptfoo are onboarded through the same managed-config enumeration as OpenCode and Delphi, so `doctor` writes and drift-checks their endpoint and evidence records carry a proper `client`. Each speaks a different wire format (Anthropic Messages, OpenAI Responses, chat) and the gateway now projects all three; before v2b-A the two non-chat formats were effectively unscanned. Canary injection stays chat-only — see `docs/protocol-capability-matrix.md` for exactly what that costs.
 
 ---
 
@@ -231,9 +231,9 @@ For major changes, open an issue first to discuss design.
 | Usage reconciliation | ❌ | ✅ observational |
 | Canary injection & return scan | ❌ | ✅ block |
 | Evil-relay simulator | ❌ | ✅ CI integration |
-| Fingerprint patrol | ❌ | Planned v2b |
-| Multi-client onboarding (Claude/Codex) | ❌ | Planned v2b |
-| Billing reconciliation CLI | ❌ | Planned v2b |
+| Fingerprint patrol | ❌ | Planned v2b-C |
+| Multi-client onboarding (Claude/Codex) | ❌ | ✅ v2b-A |
+| Billing reconciliation CLI | ❌ | Planned v2b-B |
 
 See [ROADMAP](issues/5-roadmap.md) for full timeline.
 

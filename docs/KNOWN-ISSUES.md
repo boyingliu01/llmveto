@@ -34,6 +34,27 @@
   unknown does not raise a distinct code. The `shape_partial_coverage` guard covers the other half —
   known fields that were not projected — and must stay at zero.
 
+### Real HTTP headers are outside the scan surface (v1 boundary, not new)
+
+- **What the design says**: the scan unit is the *body* projection — `messages`, `tools`, `system`,
+  and a body-carried `extra_headers` field. Transport-level request headers are not scanned.
+- **Measured**: a credential in a custom header (`X-Trace-Note: sk-...`) is forwarded to the upstream
+  and the request returns 200. This behaviour predates v2b-A; it is the v1 boundary, not a regression.
+- **Why it was not changed in v2b-A**: scanning every header would fire on ordinary clients that send
+  trace ids and session tokens in headers, and the blocking class requires FP=0. The head of the
+  trade-off is that a credential placed only in a header leaves the machine unvetoed.
+- **Closing it properly**: a per-header scan with an explicit allow-list, or a header allow-list
+  enforced fail-closed on managed routes. Registered here so it is not mistaken for coverage.
+
+### Transport-compressed bodies are rejected, not decompressed
+
+- **What changed in v2b-A**: on managed routes a `Content-Encoding` other than `identity` (or absent)
+  is refused with `unsupported_content_encoding`. Measured before the guard, a gzipped body carrying a
+  credential returned 200 and reached the upstream.
+- **Consequence**: a client that compresses requests will be refused on managed routes until a
+  decompression path exists. Decompressing needs four decoders plus a zip-bomb budget, which is its
+  own piece of work; refusing unreadable bytes beats claiming to have scanned them.
+
 ### Clients are onboarded from documentation, not from a live install
 
 - **Measured precondition**: none of Claude Code, Codex or promptfoo is installed on the development

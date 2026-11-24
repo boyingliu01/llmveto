@@ -263,6 +263,12 @@ describe("v2b-A 文档守卫（REQ-V2bA-13b / REQ-V2bA-12）", () => {
     expect(issues).toContain("protocol-capability-matrix.md");
   });
 
+  it("KNOWN-ISSUES 登记了三条出境通道的边界（body / URL / 头 / 压缩）", () => {
+    const issues = read("docs/KNOWN-ISSUES.md");
+    expect(issues).toContain("Real HTTP headers are outside the scan surface");
+    expect(issues).toContain("Transport-compressed bodies are rejected");
+  });
+
   it("KNOWN-ISSUES 登记了未知形态 fail-closed 的作用域边界", () => {
     const issues = read("docs/KNOWN-ISSUES.md");
     expect(issues).toContain("shape_unrecognized");

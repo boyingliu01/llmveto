@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -10,7 +10,13 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 //         （detect-secrets 缺 baseline、gitleaks 自定义配置），故此处同时钉住两个方向。
 //
 // 工具用纯 JS 写并 import dist/（见 ADR-0001：`.ts` 源码含 Node strip-only 不支持的语法），
-// 因此本测试同样经由 dist 运行；CI 的 `npm run build` 在生产链上已有保障。
+// 因此本测试同样经由 dist 运行。
+//
+// **dist 必须在本测试之前存在**：CI 的 `Full suite` 步骤只跑 vitest、不先 build
+// （PR 上实测红过：`ERR_MODULE_NOT_FOUND ... dist/canary/store.js`）。
+// 本地因为手动 build 过而看不出来——这是典型的"本地绿、CI 红"。
+// 这里显式在 beforeAll 里保证产物存在：缺了就构建一次，让这条断言在任何环境下都能立住，
+// 而不是依赖运行顺序。
 
 const ROOT = join(import.meta.dirname, "..", "..");
 const SCRIPT = join(ROOT, "scripts", "canary-replay.mjs");
@@ -43,7 +49,19 @@ function runReplay(script: string, dir: string): { verdict: string; out: string 
   return { verdict: report.verdict, out: stdout };
 }
 
+/** 确保 dist/ 存在（CI 的测试步骤不先 build）。缺了就构建一次。 */
+function ensureDist(): void {
+  const marker = join(ROOT, "dist", "canary", "store.js");
+  if (existsSync(marker)) return;
+  execFileSync(process.execPath, [join(ROOT, "node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.build.json"], {
+    encoding: "utf8",
+    cwd: ROOT,
+    stdio: "pipe",
+  });
+}
+
 beforeAll(() => {
+  ensureDist();
   corpusDir = mkdtempSync(join(tmpdir(), "llmveto-replay-"));
 });
 afterAll(() => {

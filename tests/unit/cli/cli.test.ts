@@ -288,11 +288,15 @@ describe("SL-11 CLI (REQ-VETO-008)", () => {
         // 计数分母随之从 2 变 4——断言写"分母随枚举走"，不写死数字。
         LLMVETO_CLAUDE_SETTINGS: join(blocker, "nested", "settings.json"),
         LLMVETO_CODEX_CONFIG: join(blocker, "nested", "config.toml"),
+        // promptfoo 是项目级文件：默认不写，必须显式 opt-in 才会走到写盘
+        LLMVETO_PROMPTFOO_CONFIG: join(blocker, "nested", "promptfooconfig.yaml"),
+        LLMVETO_INCLUDE_PROJECT_CONFIG: "1",
       },
     });
     const line = r.stdout.split("\n").find((l) => l.includes("doctor.write-managed-config"))!;
     expect(line).toContain("[PASS]");
-    expect(line).toContain("[WARN: 4/4 write failed");
+    // 五个适配器全部尝试写入、全部失败，分母随枚举走（断言不写死具体数字）
+    expect(line).toContain("[WARN: 5/5 write failed");
     rmSync(d, { recursive: true, force: true });
   });
 

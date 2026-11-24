@@ -157,7 +157,7 @@
       "verify": [
         "npx vitest run tests/unit/adapters/codex.test.ts"
       ],
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "SL-10",
@@ -173,7 +173,7 @@
       "verify": [
         "npx vitest run tests/unit/adapters/promptfoo.test.ts"
       ],
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "SL-11",

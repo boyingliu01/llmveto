@@ -20,6 +20,10 @@ describe("SL-14 e2e: doctor drift detection (REQ-VETO-014)", () => {
     const env = {
       LLMVETO_OPENCODE_CONFIG: join(dir, "missing-opencode.json"),
       LLMVETO_DELPHI_CONFIG: join(dir, "missing-delphi.json"),
+      // v2b-A 新增三个适配器：同样钉到临时目录，绝不读写用户家目录
+      LLMVETO_CLAUDE_SETTINGS: join(dir, "missing-claude", "settings.json"),
+      LLMVETO_CODEX_CONFIG: join(dir, "missing-codex", "config.toml"),
+      LLMVETO_PROMPTFOO_CONFIG: join(dir, "missing-promptfoo.yaml"),
       LLMVETO_GATEWAY_URL: "http://127.0.0.1:1", // 端口不可达不影响本用例断言的 drift 行
     };
     const res = await runCli("doctor", { stateDir: dir, args: [], env });
@@ -39,6 +43,11 @@ describe("SL-14 e2e: doctor drift detection (REQ-VETO-014)", () => {
     const env = {
       LLMVETO_OPENCODE_CONFIG: ocPath,
       LLMVETO_DELPHI_CONFIG: dpPath,
+      LLMVETO_CLAUDE_SETTINGS: join(dir, "managed", "claude-settings.json"),
+      LLMVETO_CODEX_CONFIG: join(dir, "managed", "codex-config.toml"),
+      // promptfoo 是项目级、默认不写：显式 opt-in 后才应落盘
+      LLMVETO_PROMPTFOO_CONFIG: join(dir, "managed", "promptfooconfig.yaml"),
+      LLMVETO_INCLUDE_PROJECT_CONFIG: "1",
       LLMVETO_GATEWAY_URL: "http://127.0.0.1:8787",
     };
     const w = await runCli("doctor", { stateDir: dir, args: ["--write-managed-config"], env });
@@ -69,6 +78,11 @@ describe("SL-14 e2e: doctor drift detection (REQ-VETO-014)", () => {
     const env = {
       LLMVETO_OPENCODE_CONFIG: ocPath,
       LLMVETO_DELPHI_CONFIG: dpPath,
+      LLMVETO_CLAUDE_SETTINGS: join(dir, "managed", "claude-settings.json"),
+      LLMVETO_CODEX_CONFIG: join(dir, "managed", "codex-config.toml"),
+      // promptfoo 是项目级、默认不写：显式 opt-in 后才应落盘
+      LLMVETO_PROMPTFOO_CONFIG: join(dir, "managed", "promptfooconfig.yaml"),
+      LLMVETO_INCLUDE_PROJECT_CONFIG: "1",
       LLMVETO_GATEWAY_URL: "http://127.0.0.1:8787",
     };
     // 先写一次干净配置

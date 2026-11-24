@@ -573,7 +573,7 @@
     "src/gateway/protocols/outcome.ts::shapeVerdict": 5,
     "src/gateway/protocols/outcome.ts::tokenedAt": 6,
     "src/gateway/protocols/outcome.ts::unrecognized": 2,
-    "src/gateway/protocols/outcome.ts::unseenSecret": 1,
+    "src/gateway/protocols/outcome.ts::unseenSecret": 7,
     "src/gateway/protocols/outcome.ts::visibleInProjection": 2,
     "src/gateway/protocols/outcome.ts::walk": 10,
     "src/gateway/protocols/registry.ts::(anonymous)": 3,

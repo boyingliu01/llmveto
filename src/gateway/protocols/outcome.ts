@@ -112,18 +112,38 @@ function coverageShape(direction: Direction, body: Record<string, unknown>, prot
  * 扫到的每一处都必须能在投影文本里找到。找不到 = 这个凭据没有人看过 = 覆盖不足。
  * 判据就是扫描器自己的规则集，与真正拦截时用的是同一套，不需要猜"哪些字符串像载荷"。
  */
+/**
+ * 快速前置：文本里**没有任何**凭据形状的前缀时，三趟正则扫描必然全部为空。
+ *
+ * 这不是判据，是判据之前的短路——第 6 轮实测：三趟全量扫描让 G2 512KB 档的
+ * p50 从 1.8ms 涨到 4.1ms（超出门的 1.2× 与 2ms 双重阈值）。正则首字符扫描是
+ * 常数级的，能挡掉绝大多数正常流量。
+ *
+ * 前缀集合与扫描器的规则集同源；漏掉一种的后果只是回落到全量扫描（慢但不漏）。
+ */
+const CREDENTIAL_PREFIX = /sk-|sk_|ghp_|gho_|ghs_|ghu_|github_pat_|AKIA|ASIA|xox[abps]-|sk-ant-|-----BEGIN|AIza|glpat-|npm_|pypi-|SG\./;
+
 function unseenSecret(body: Record<string, unknown>, rawText: string, scannedText: string): boolean {
+  // 前缀检查用**原文 + 解码串**（`\u0073k-ant-…` 原文没有 `sk-`，解码后才有）。
+  // 但 `decodeVariants` 要遍历整棵树并拼接大字符串——512KB 体上实测 1.5ms，
+  // 足以让 G2 门从 1.8ms 涨到 4.1ms。所以先用原文做常数级预判：
+  // 原文不含前缀 **且** 不含任何 `\u00` 转义时，解码形态必然也不含前缀，直接返回。
+  const mayHideInEscapes = rawText.includes("\\u") || rawText.includes("%");
+  const rawHasPrefix = CREDENTIAL_PREFIX.test(rawText);
+  // 原文既无前缀、也无转义：三种形态都不可能含前缀 → 立刻返回，连 decodeVariants 都不做。
+  if (!rawHasPrefix && !mayHideInEscapes) return false;
+  // 需要解码形态时才构造它（遍历整棵树 + 拼接大字符串，512KB 上是毫秒级开销）。
+  const decoded = mayHideInEscapes ? decodeVariants(body) : rawText;
+  if (!rawHasPrefix && !CREDENTIAL_PREFIX.test(decoded)) return false;
   // 三种形态都要扫（GLM 席第 6 轮指出转义盲区，实测成立）：
   //   ① 原始文本：字面凭据
   //   ② 换行还原：PEM 块在 JSON 里是 `\n` 两字符，扫描器的 PEM 规则要真实换行
   //   ③ **JSON 解码后的文本**：`\u0073k-ant-…` 这种全转义写法，字面上没有任何凭据字符，
   //      扫描器对①和②都是全盲。解码后才是上游真正拿到的东西。
   // 坐标系各自独立：每趟的 offsets 只在它自己那趟的文本里切片。
-  const variants = [
-    rawText,
-    rawText.replace(/\\n/g, "\n").replace(/\\r/g, "\r"),
-    decodeVariants(body),
-  ].filter((v, i, arr) => v.length > 0 && arr.indexOf(v) === i);
+  const variants = [rawText, rawText.replace(/\\n/g, "\n").replace(/\\r/g, "\r"), decoded].filter(
+    (v, i, arr) => v.length > 0 && arr.indexOf(v) === i,
+  );
 
   return variants.some((text) => {
     const scan = egressSecretScan({ direction: "request", transport: "non-stream", text, meta: {} });

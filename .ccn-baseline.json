@@ -498,7 +498,7 @@
     "src/gateway/core.ts::scanDelivered": 2,
     "src/gateway/core.ts::scanMergedArgs": 4,
     "src/gateway/core.ts::scanPendingTail": 3,
-    "src/gateway/core.ts::scanRequest": 5,
+    "src/gateway/core.ts::scanRequest": 6,
     "src/gateway/core.ts::scanResponseNonStream": 3,
     "src/gateway/core.ts::scanResponseStreamChunk": 1,
     "src/gateway/core.ts::scanResponseStreamUnit": 5,

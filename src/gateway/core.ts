@@ -165,11 +165,13 @@ export class GatewayCore {
     transport: "stream" | "non-stream",
     cmdDedup: ReturnType<typeof createDangerousCommandDedup> = createDangerousCommandDedup(),
     shape?: { readonly format: WireFormat } | undefined,
+    preParsed?: Record<string, unknown> | null,
   ): {
     inputs: PolicyInput[];
     scanUnit: ScanUnit;
   } {
-    const parsed = tryParseJson(bodyText);
+    // 调用方已解析过就复用——同一份 body 不解析两遍（G2 512KB 档的实测教训）。
+    const parsed = preParsed === undefined ? tryParseJson(bodyText) : preParsed;
     const scanUnit = buildRequestScanUnit(bodyText, parsed, headers, transport, shape);
     // D-09 默认接线（AC-V2a-27①）：请求体路径按 body 字节数走 G3 分档。
     const defaultBudget = g3BudgetForBodyBytes(Buffer.byteLength(bodyText, "utf8"));
@@ -586,7 +588,11 @@ export async function handleChatCompletions(
   const cmdDedup = createDangerousCommandDedup();
   // SL-05（REQ-V2bA-14/15）：先判形状——认不出的形态在这里就阻断，
   // 不让它走到"扫了但什么都没扫到、然后判 clean"那条路。
-  const shape = shapeVerdict("request", tryParseJson(req.body), req.routePrefix ?? null, req.managedRoute === true, req.body);
+  // 形状判定两条路都必须做（非受管也要记 reason，REQ-15），但**解析只做一次**：
+  // 解析结果直接交给 scanRequest 复用，避免同一份 body 被 JSON.parse 两遍。
+  // CI 的 G2 512KB 档实测：多解析一次就是 0.44ms，足以把这一档推过门槛。
+  const reqParsed = tryParseJson(req.body);
+  const shape = shapeVerdict("request", reqParsed, req.routePrefix ?? null, req.managedRoute === true, req.body);
   let degradedReason: string | undefined;
   // 受管路由上覆盖降级 = 阻断；非受管路由上只记录（REQ-15 的分权），由 shape.block 表达。
   if (shape.block && shape.reason !== null) return blockedBeforeForward([], false, req.body, shape.reason);
@@ -594,7 +600,7 @@ export async function handleChatCompletions(
     // 非受管路径的覆盖降级：不阻断，但必须可查——把它挂到 outcome.reason 上落链。
     degradedReason = shape.reason;
   }
-  const reqScan = core.scanRequest(req.body, req.headers, transport, cmdDedup, shapeFormat(shape));
+  const reqScan = core.scanRequest(req.body, req.headers, transport, cmdDedup, shapeFormat(shape), reqParsed);
   // SL-01/D-12：请求体 tools 声明面（declared_tools/declared_required）提取自请求扫描
   // 单元 meta，下传给响应侧全部扫描单元（非流式 / 流式逐帧 / 归并单元）。
   const declaredMeta = declaredToolsMeta(reqScan.scanUnit.meta);

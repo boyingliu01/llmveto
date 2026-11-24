@@ -229,7 +229,7 @@
       "verify": [
         "npx vitest run tests/integration/protocol-fullchain.test.ts"
       ],
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "SL-14",

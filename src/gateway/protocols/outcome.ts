@@ -21,10 +21,13 @@ type ShapeReason = CoverageReason;
 /** 一次判定的结果：需要阻断时给出 reason，否则 reason 为 null。 */
 export interface ShapeVerdict {
   readonly format: WireFormat | null;
+  /** 覆盖降级的原因（**无论受管与否都要写**）：不写就等于把降级藏起来。 */
   readonly reason: CoverageReason | null;
+  /** 是否因此阻断。受管路由恒等于 `reason !== null`；非受管路由恒为 false。 */
+  readonly block: boolean;
 }
 
-const NOTHING: ShapeVerdict = Object.freeze({ format: null, reason: null });
+const NOTHING: ShapeVerdict = Object.freeze({ format: null, reason: null, block: false });
 
 /**
  * 判定一个已解析 body 的形状。
@@ -47,10 +50,16 @@ export function shapeVerdict(
   return recognized.kind === "known" ? judged(recognized.format, direction, body, consoleManaged) : NOTHING;
 }
 
-/** "认不出"的结论：保留已识别到的格式（若有），reason 仅在受管路由上给出。 */
+/**
+ * "认不出"的结论。
+ *
+ * reason **总是**给出（受管与否都一样）：REQ-15 要求"非受管路由同样写 reason，但不阻断"。
+ * 只把阻断与记录分开，不把两者绑在一起——否则非受管路径上的覆盖降级在 evidence 里完全不可见，
+ * 那正是本项目要消灭的形态。
+ */
 function unrecognized(recognized: RecognizedFormat, consoleManaged: boolean): ShapeVerdict {
   const format = recognized.kind === "known" ? recognized.format : null;
-  return { format, reason: consoleManaged ? "shape_unrecognized" : null };
+  return { format, reason: "shape_unrecognized", block: consoleManaged };
 }
 
 /** 已解析 body 的对象视图；不是对象（null / 数组 / 标量）返回 null。 */
@@ -61,10 +70,10 @@ function asBody(parsed: unknown): Record<string, unknown> | null {
 
 /** 识别成功后的处置：有投影器 → 覆盖轴；无投影器 → 覆盖缺失。 */
 function judged(format: WireFormat, direction: Direction, body: Record<string, unknown>, consoleManaged: boolean): ShapeVerdict {
-  if (!consoleManaged) return { format, reason: null };
   const proto = protocolFor(format);
   // 已识别但本网关没有该格式的投影器：与"认不出来"同属覆盖缺失（原因不同，处置相同）。
-  return { format, reason: proto === undefined ? "shape_unrecognized" : coverageShape(direction, body, proto) };
+  const reason = proto === undefined ? "shape_unrecognized" : coverageShape(direction, body, proto);
+  return { format, reason, block: consoleManaged && reason !== null };
 }
 
 /** 是否需要判为"认不出"：识别失败，或请求体是个认不出的壳。 */

@@ -197,15 +197,36 @@ async function dispatch(
 /**
  * SL-06（REQ-V2bA-15）：受管路由的判定域。
  *
- * 定义（设计 D-03，R2 评审要求写死）：受管路由 = 已知路由前缀集合 ∪ CANARY_MANAGED_ROUTES 的路由键。
- * 二者并集即 fail-closed 的作用域；未命中并集的路径仍被扫描与记录，但不因形状/覆盖失败而阻断
- * （"接得住但不打死"，写进 KNOWN-ISSUES）。
+ * 定义（设计 D-03，R2 评审要求写死）：
+ *   受管路由 = **适配器实际配置的** `<client>/<provider>` 路由键 ∪ `CANARY_MANAGED_ROUTES`。
+ *
+ * 为什么不是"前缀在表里就算受管"（code-walkthrough MAJOR-4）：那样 `opencode/<任意 provider>`
+ * 都会被纳入，等于把 fail-closed 无声扩大到 v1 从未承诺的路径上——而 v1 的承诺域是
+ * `MANAGED_CONFIG_IDS` 的封闭枚举。判定域必须与"适配器写了哪条 baseURL"同源，否则
+ * "受管"这个词就不再指向任何一个可枚举的集合。
  */
 function isManagedRoute(route: RouteInfo): boolean {
-  if (route.client !== null && formatForPrefix(route.client) !== undefined) return true;
   const key = `${route.client ?? ""}/${route.providerId ?? ""}`;
-  return CANARY_MANAGED_ROUTES.has(key);
+  return MANAGED_ROUTE_KEYS.has(key) || CANARY_MANAGED_ROUTES.has(key);
 }
+
+/**
+ * 适配器写入的 `<client>/<provider>` 路由键（与 src/adapters/* 的 buildPatch 同源）。
+ *
+ * 与 adapters 层的同源一致性由 `tests/unit/route-keys.test.ts` 以真实 adapter 产物推导钉死——
+ * gateway 层不 import adapters（architecture.yaml 禁），所以这里镜像一份并让测试看守。
+ */
+export const MANAGED_ROUTE_KEYS: ReadonlySet<string> = Object.freeze(
+  new Set([
+    "opencode/openai",
+    "opencode/anthropic",
+    "opencode/mock",
+    "delphi/default",
+    "claude/anthropic",
+    "codex/openai",
+    "promptfoo/openai",
+  ]),
+);
 
 /** 读请求体全文（dispatch 与兜底路径的共享入口）。 */
 async function readBodyText(req: IncomingMessage): Promise<string> {

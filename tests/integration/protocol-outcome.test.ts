@@ -77,6 +77,15 @@ describe("SL-05 两轴处置（REQ-V2bA-14/15/15a）", () => {
     expect(g.records().at(-1)!.reason).toBeUndefined();
   });
 
+  it("非受管路由：同样写 reason，但不阻断（REQ-15 的分权，CRITICAL-3 回归）", async () => {
+    const g = await boot();
+    // 自建前缀（不在受管判定域里）：
+    const res = await post(`${g.url}/my-own-gateway/x/v1/messages`, { content: "unknown-shape", model: "m" });
+    expect(res.status).toBe(200); // 不阻断
+    const rec = g.records().at(-1)!;
+    expect(rec.reason).toBe("shape_unrecognized"); // 但必须可查
+  });
+
   it("受管路由 + 正常 anthropic 请求 → 放行（不写 reason）", async () => {
     const g = await boot();
     const res = await post(`${g.url}/claude/anthropic/v1/messages`, {

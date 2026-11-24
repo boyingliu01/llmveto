@@ -1,0 +1,2468 @@
+diff --git a/src/adapters/claude-code.ts b/src/adapters/claude-code.ts
+new file mode 100644
+index 0000000..4d81395
+--- /dev/null
++++ b/src/adapters/claude-code.ts
+@@ -0,0 +1,67 @@
++// @no-test-required: 测试在 tests/unit/adapters/claude-code.test.ts（本项目测试布局为 tests/ 目录；Gate 5a 仅识别同目录/根 tests/ 六种路径）
++import { homedir } from "node:os";
++import { join } from "node:path";
++import type { Adapter, ConfigId, Env } from "./index.ts";
++import { applyManagedPatch, readManagedConfig } from "./config-io.ts";
++
++/**
++ * @test REQ-V2bA-06 / AC-V2bA-06a~c
++ * @intent Claude Code 适配器：`~/.claude/settings.json` 的 `env.ANTHROPIC_BASE_URL`。
++ *
++ * 依据（官方 settings 参考原文示例）：
++ *   { "env": { "ANTHROPIC_BASE_URL": "https://proxy.example.com" } }
++ * settings 里的 `env` 会覆盖 shell 里的同名变量，因此这是"只改一个文件就生效"的形态。
++ *
++ * **凭据变量刻意不纳管**：`ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY` 由用户自己配。
++ * 本项目的定位是通道安全网关，不是凭据托管——代填会把密钥搬进第二个地方（对 T1b 是扩大暴露面）。
++ * 代价：用户未自备凭据时 Claude Code 会报 401 或沿用 claude.ai 登录态；doctor 会提示这一点，
++ * 但适配器**不会**臆造凭据。
++ *
++ * 路径约定：`<gw>/claude/anthropic`。前缀 `claude` 既是识别权威（设计 §2.4），
++ * 也是 fail-closed 的作用域来源；provider 段取 `anthropic` 与既有 `<client>/<provider>` 结构一致。
++ */
++
++export const MANAGED_CONFIG_IDS: readonly ConfigId[] = Object.freeze([
++  {
++    id: "claude.settings.env.ANTHROPIC_BASE_URL",
++    description: "Claude Code settings.json 的 env.ANTHROPIC_BASE_URL（网关 base URL）",
++  },
++]);
++
++/** 期望的 base URL：`<gw>/claude/anthropic`。 */
++function expectedBaseUrl(gatewayBaseUrl: string): string {
++  return joinBase(joinBase(gatewayBaseUrl, "claude"), "anthropic");
++}
++
++function joinBase(base: string, segment: string): string {
++  return base.replace(/\/+$/, "") + "/" + segment;
++}
++
++/** 取 settings.env.ANTHROPIC_BASE_URL（缺失/非字符串 → undefined）。 */
++function readBaseUrl(current: Record<string, unknown>): string | undefined {
++  const env = current.env;
++  if (!env || typeof env !== "object") return undefined;
++  const value = (env as Record<string, unknown>).ANTHROPIC_BASE_URL;
++  return typeof value === "string" ? value : undefined;
++}
++
++export const claudeCodeAdapter: Adapter = {
++  name: "claude-code",
++  MANAGED_CONFIG_IDS,
++  buildPatch(gatewayBaseUrl: string): Record<string, unknown> {
++    return { env: { ANTHROPIC_BASE_URL: expectedBaseUrl(gatewayBaseUrl) } };
++  },
++  detectDrift(current: Record<string, unknown>, gatewayBaseUrl: string): readonly ConfigId[] {
++    return readBaseUrl(current) === expectedBaseUrl(gatewayBaseUrl) ? [] : MANAGED_CONFIG_IDS;
++  },
++  defaultConfigPath(env: Env): string {
++    return env.LLMVETO_CLAUDE_SETTINGS ?? join(homedir(), ".claude", "settings.json");
++  },
++  readCurrentConfig(env: Env): Record<string, unknown> {
++    return readManagedConfig(this, env);
++  },
++  applyManagedConfig(env: Env, gatewayBaseUrl: string): string {
++    // 复用既有 JSON 写盘原语（REQ-V2bA-08a）：与 OpenCode/Delphi 同一条路径，不复制第二份实现。
++    return applyManagedPatch(this, env, gatewayBaseUrl);
++  },
++};
+diff --git a/src/adapters/codex-io.ts b/src/adapters/codex-io.ts
+new file mode 100644
+index 0000000..50217e7
+--- /dev/null
++++ b/src/adapters/codex-io.ts
+@@ -0,0 +1,150 @@
++// @no-test-required: 测试在 tests/unit/adapters/codex.test.ts（定点编辑原语由适配器用例覆盖）（本项目测试布局为 tests/ 目录；Gate 5a 仅识别同目录/根 tests/ 六种路径）
++import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
++import { dirname } from "node:path";
++
++/**
++ * @test REQ-V2bA-07 / AC-V2bA-07a~c / REQ-V2bA-08a2
++ * @intent TOML 受管配置的**定点编辑**原语。
++ *
++ * 与 `config-io.ts` 的 JSON 原语刻意分开：TOML 有表头、内联表、多行数组等形态，
++ * 用解析-重写会把注释与排版全部丢掉。这里只做三件事：
++ *   1. 解析原文找到目标表与目标键的**行号**；
++ *   2. 修改/插入那几行；
++ *   3. 其余字节原样不动（行尾风格按原文决定，不做归一化）。
++ *
++ * 失败语义：任何"定位不确定"的情况（目标键重复、目标表重复）都**拒绝写入**并报错，
++ * 绝不猜一个位置去改——改错一个用户的配置文件比报错危险得多。
++ */
++
++/** 写盘前的备份后缀（覆盖已有文件时保留一份）。 */
++const BACKUP_SUFFIX = ".bak";
++
++/** 读原文；文件不存在返回空串（= 全新安装）。 */
++export function readCodexToml(path: string): string {
++  if (!existsSync(path)) return "";
++  return readFileSync(path, "utf8");
++}
++
++/** 一行是否是某个 `[table]` 表头；是则返回表名。 */
++function tableHeaderOf(line: string): string | null {
++  const m = /^\s*\[([^[\]]+)\]\s*(?:#.*)?$/.exec(line);
++  return m === null ? null : (m[1] ?? "").trim();
++}
++
++/** 一行是否是 `key = value`；是则返回键名。 */
++function keyOf(line: string): string | null {
++  const m = /^\s*([A-Za-z0-9_-]+)\s*=/.exec(line);
++  return m === null ? null : (m[1] ?? null);
++}
++
++/** 目标表区间：从表头行到下一个表头之前（表头不存在时为 null）。 */
++function tableRange(lines: readonly string[], table: string): { header: number; end: number } | null {
++  const header = lines.findIndex((l) => tableHeaderOf(l) === table);
++  if (header === -1) return null;
++  let end = lines.length;
++  for (let i = header + 1; i < lines.length; i += 1) {
++    if (tableHeaderOf(lines[i]!) !== null) {
++      end = i;
++      break;
++    }
++  }
++  return { header, end };
++}
++
++/** 在给定区间里找某个键的所有行号（用于检出重复）。 */
++function keyLines(lines: readonly string[], from: number, to: number, key: string): number[] {
++  const out: number[] = [];
++  for (let i = from; i < to; i += 1) if (keyOf(lines[i]!) === key) out.push(i);
++  return out;
++}
++
++/** 检测原文的行尾风格（CRLF 或 LF），写回时沿用。 */
++function eolOf(raw: string): string {
++  return raw.includes("\r\n") ? "\r\n" : "\n";
++}
++
++/** 把原文切成不含行尾的行数组（保留原始行尾风格供 join 时恢复）。 */
++function splitLines(raw: string): string[] {
++  return raw.length === 0 ? [] : raw.split(/\r?\n/);
++}
++
++/** TOML 字符串值的安全引号化（受管值都是可打印 ASCII，仍做转义以防配置异常）。 */
++function quote(value: string): string {
++  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
++}
++
++/** 受管写入的请求：目标表 + 目标键值。 */
++export interface ManagedTableEdit {
++  readonly table: string;
++  readonly keys: Readonly<Record<string, string>>;
++}
++
++/** 把 keys 写进目标表区间；返回新的行数组。 */
++function applyKeys(lines: string[], range: { header: number; end: number }, keys: Readonly<Record<string, string>>): string[] {
++  const out = [...lines];
++  for (const [key, value] of Object.entries(keys)) {
++    const hits = keyLines(out, range.header + 1, range.end, key);
++    if (hits.length > 1) {
++      throw new Error(`多处同形目标键：${range.header} 行起的表里出现 ${hits.length} 个 ${key}，拒绝写入`);
++    }
++    const line = `${key} = ${quote(value)}`;
++    if (hits.length === 1) {
++      const indent = /^\s*/.exec(out[hits[0]!]!)?.[0] ?? "";
++      out[hits[0]!] = indent + line;
++    } else {
++      out.splice(range.end, 0, line);
++      range = { ...range, end: range.end + 1 };
++    }
++  }
++  return out;
++}
++
++/** 创建一个新的目标表块（追加在文件末尾）。 */
++function appendTable(lines: string[], edit: ManagedTableEdit): string[] {
++  const out = [...lines];
++  while (out.length > 0 && out[out.length - 1]!.trim() === "") out.pop();
++  if (out.length > 0) out.push("");
++  out.push(`[${edit.table}]`);
++  for (const [key, value] of Object.entries(edit.keys)) out.push(`${key} = ${quote(value)}`);
++  return out;
++}
++
++/**
++ * 定点写入：目标表存在则改/插目标键，不存在则追加新表。
++ *
++ * @returns 是否真的写了盘（值本来就对时返回 false，一个字节都不动）
++ */
++export function writeCodexToml(path: string, edit: ManagedTableEdit): boolean {
++  const raw = readCodexToml(path);
++  const eol = eolOf(raw);
++  const lines = splitLines(raw);
++  const range = tableRange(lines, edit.table);
++  const headers = lines.filter((l) => tableHeaderOf(l) === edit.table).length;
++  if (headers > 1) throw new Error(`多处同形目标表：${edit.table} 出现 ${headers} 次，拒绝写入`);
++  const next = range === null ? appendTable(lines, edit) : applyKeys(lines, range, edit.keys);
++  const text = joinLikeOriginal(next, raw, eol);
++  if (text === raw) return false;
++  persist(path, text);
++  return true;
++}
++
++/**
++ * 用与原文一致的方式拼回去。
++ *
++ * 行尾是**唯一**要小心的地方：原文以换行结尾时，`split` 会多出一个空元素，
++ * 直接 `join` 正好还原；原文不以换行结尾时则不能凭空补一个（那会让"逐字节相同"失效）。
++ */
++function joinLikeOriginal(lines: readonly string[], raw: string, eol: string): string {
++  const joined = lines.join(eol);
++  if (raw.length === 0) return joined + eol;
++  return raw.endsWith(eol) || raw.endsWith("\n") || raw.endsWith("\r\n") ? joined : joined.replace(new RegExp(`${eol}$`), "");
++}
++
++/** 原子落盘：先写临时文件再 rename；覆盖已有文件前留一份 .bak。 */
++function persist(path: string, text: string): void {
++  mkdirSync(dirname(path), { recursive: true });
++  if (existsSync(path)) copyFileSync(path, path + BACKUP_SUFFIX);
++  const tmp = `${path}.tmp-${process.pid}`;
++  writeFileSync(tmp, text, "utf8");
++  renameSync(tmp, path);
++}
+diff --git a/src/adapters/codex.ts b/src/adapters/codex.ts
+new file mode 100644
+index 0000000..9b1cdea
+--- /dev/null
++++ b/src/adapters/codex.ts
+@@ -0,0 +1,82 @@
++// @no-test-required: 测试在 tests/unit/adapters/codex.test.ts（本项目测试布局为 tests/ 目录；Gate 5a 仅识别同目录/根 tests/ 六种路径）
++import { homedir } from "node:os";
++import { join } from "node:path";
++import { parse as parseToml } from "smol-toml";
++import type { Adapter, ConfigId, Env } from "./index.ts";
++import { readCodexToml, writeCodexToml } from "./codex-io.ts";
++
++/**
++ * @test REQ-V2bA-07 / AC-V2bA-07a~c / REQ-V2bA-08a
++ * @intent Codex 适配器：`~/.codex/config.toml` 的 `model_providers.llmveto.{base_url,wire_api}`。
++ *
++ * 依据（官方 config-reference 原文）：`model_providers.<id>.wire_api` 的取值
++ * "`responses` is the only supported value"，即 Codex 只说 Responses 协议。
++ * 因为这是唯一支持值，把 `wire_api` 一并钉成受管项是为了**发现用户把它改成别的**
++ * （改了那台 Codex 就不在网关能理解的线格式上了）。
++ *
++ * 写回策略（DR-031 / 设计 D-05）：**定点编辑**。
++ * 解析只用于定位与校验，替换按行精确匹配；除目标键外逐字节相同（含注释、键序、CRLF）。
++ * 全量 parse→stringify 会丢掉用户所有注释——可测但不可接受。
++ */
++
++/** Codex 侧的 provider id：固定保留值，不与用户的其它 provider 混。 */
++const PROVIDER_ID = "llmveto";
++
++export const MANAGED_CONFIG_IDS: readonly ConfigId[] = Object.freeze([
++  { id: `codex.model_providers.${PROVIDER_ID}.base_url`, description: "Codex model_providers.llmveto.base_url（网关地址）" },
++  { id: `codex.model_providers.${PROVIDER_ID}.wire_api`, description: "Codex model_providers.llmveto.wire_api（必须为 responses）" },
++]);
++
++/** 期望的 base URL：`<gw>/codex/openai/v1`（Codex 的 base_url 按 Responses 语义已含 /v1）。 */
++function expectedBaseUrl(gatewayBaseUrl: string): string {
++  return `${gatewayBaseUrl.replace(/\/+$/, "")}/codex/openai/v1`;
++}
++
++/** 从已解析 TOML 中取 `model_providers.llmveto` 表（缺失/非对象 → undefined）。 */
++function providerTable(current: Record<string, unknown>): Record<string, unknown> | undefined {
++  const providers = current.model_providers;
++  if (!providers || typeof providers !== "object") return undefined;
++  const table = (providers as Record<string, unknown>)[PROVIDER_ID];
++  return table && typeof table === "object" ? (table as Record<string, unknown>) : undefined;
++}
++
++/** 检测单条受管键的漂移。 */
++function isDrifted(id: ConfigId, table: Record<string, unknown> | undefined, gatewayBaseUrl: string): boolean {
++  if (table === undefined) return true;
++  if (id.id.endsWith(".base_url")) return table.base_url !== expectedBaseUrl(gatewayBaseUrl);
++  return table.wire_api !== "responses";
++}
++
++export const codexAdapter: Adapter = {
++  name: "codex",
++  MANAGED_CONFIG_IDS,
++  buildPatch(gatewayBaseUrl: string): Record<string, unknown> {
++    return { model_providers: { [PROVIDER_ID]: { base_url: expectedBaseUrl(gatewayBaseUrl), wire_api: "responses" } } };
++  },
++  detectDrift(current: Record<string, unknown>, gatewayBaseUrl: string): readonly ConfigId[] {
++    const table = providerTable(current);
++    return MANAGED_CONFIG_IDS.filter((id) => isDrifted(id, table, gatewayBaseUrl));
++  },
++  defaultConfigPath(env: Env): string {
++    return env.LLMVETO_CODEX_CONFIG ?? join(homedir(), ".codex", "config.toml");
++  },
++  readCurrentConfig(env: Env): Record<string, unknown> {
++    // 读失败/不可解析 → {}（全漂移），与 JSON 适配器同语义：绝不把"读不到"当成"配好了"
++    try {
++      return parseToml(readCodexToml(this.defaultConfigPath(env))) as Record<string, unknown>;
++    } catch {
++      return {};
++    }
++  },
++  applyManagedConfig(env: Env, gatewayBaseUrl: string): string {
++    const path = this.defaultConfigPath(env);
++    writeCodexToml(path, {
++      table: `model_providers.${PROVIDER_ID}`,
++      keys: {
++        base_url: expectedBaseUrl(gatewayBaseUrl),
++        wire_api: "responses",
++      },
++    });
++    return path;
++  },
++};
+diff --git a/src/adapters/index.ts b/src/adapters/index.ts
+index 175f4ab..12018c8 100644
+--- a/src/adapters/index.ts
++++ b/src/adapters/index.ts
+@@ -19,7 +19,7 @@ export interface ConfigId {
+ }
+ 
+ export interface Adapter {
+-  readonly name: "opencode" | "delphi";
++  readonly name: "opencode" | "delphi" | "claude-code" | "codex" | "promptfoo";
+   readonly MANAGED_CONFIG_IDS: readonly ConfigId[];
+   /** 生成注入 managed config 所需的字段补丁（doctor --write-managed-config 使用）。 */
+   buildPatch(gatewayBaseUrl: string): Record<string, unknown>;
+diff --git a/src/adapters/promptfoo-io.ts b/src/adapters/promptfoo-io.ts
+new file mode 100644
+index 0000000..795cfba
+--- /dev/null
++++ b/src/adapters/promptfoo-io.ts
+@@ -0,0 +1,93 @@
++// @no-test-required: 测试在 tests/unit/adapters/promptfoo.test.ts（本项目测试布局为 tests/ 目录；Gate 5a 仅识别同目录/根 tests/ 六种路径）
++import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
++import { dirname } from "node:path";
++
++/**
++ * @test REQ-V2bA-08 / AC-V2bA-08a
++ * @intent promptfoo 配置的**行级定点编辑**原语。
++ *
++ * 与 Codex 的 TOML 原语同因由：项目级 YAML 里通常有用户自己的注释与排版，
++ * 用 YAML 库读→改→写会把它们全部重排。这里只改目标 provider 的 `apiBaseUrl` 那一行标量。
++ *
++ * 失败语义：定位不确定就**拒绝写入**并报错（目标 provider 不存在 / 目标键重复 /
++ * 写法超出可安全定位的范围），绝不猜位置。
++ */
++
++/** 写盘前的备份后缀。 */
++const BACKUP_SUFFIX = ".bak";
++
++/** 目标 provider 的行区间（从 `- id:` 到下一个 `- ` 或下一个顶层键）。 */
++function providerRange(lines: readonly string[], providerId: string): { from: number; to: number } | null {
++  const start = lines.findIndex((l) => new RegExp(`^\\s*-\\s+(?:id:\\s*)?["']?${escapeRe(providerId)}["']?\\s*$`).test(l));
++  if (start === -1) return null;
++  let to = lines.length;
++  for (let i = start + 1; i < lines.length; i += 1) {
++    if (/^\s*-\s+/.test(lines[i]!) || /^[A-Za-z_]+\s*:/.test(lines[i]!)) {
++      to = i;
++      break;
++    }
++  }
++  return { from: start, to };
++}
++
++function escapeRe(s: string): string {
++  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
++}
++
++/** 区间内某标量键的行号（多个 → 抛错，因为无法确定改哪个）。 */
++function scalarLine(lines: readonly string[], range: { from: number; to: number }, key: string): number | null {
++  const hits: number[] = [];
++  for (let i = range.from; i < range.to; i += 1) {
++    if (new RegExp(`^\\s+${escapeRe(key)}\\s*:`).test(lines[i]!)) hits.push(i);
++  }
++  if (hits.length > 1) throw new Error(`多处同形目标键：provider 内出现 ${hits.length} 个 ${key}，拒绝写入`);
++  return hits[0] ?? null;
++}
++
++/** 保留原缩进的替换行。 */
++function replaceValue(line: string, key: string, value: string): string {
++  const indent = /^\s*/.exec(line)?.[0] ?? "";
++  return `${indent}${key}: ${value}`;
++}
++
++/** 目标 provider 内没有该键时，插到区间末尾（保持缩进与列表结构）。 */
++function insertScalar(lines: string[], range: { from: number; to: number }, key: string, value: string): string[] {
++  const out = [...lines];
++  const indent = /^\s*/.exec(out[range.from + 1] ?? "")?.[0] || "    ";
++  out.splice(range.to, 0, `${indent}${key}: ${value}`);
++  return out;
++}
++
++/**
++ * 改（或插入）某 provider 的某个标量键。
++ * @returns 是否真的写了盘（值本来就对时返回 false）
++ */
++export function writePromptfooScalar(path: string, providerId: string, key: string, value: string): boolean {
++  if (!existsSync(path)) throw new Error(`promptfoo 配置不存在：${path}（本适配器不创建项目文件）`);
++  const raw = readFileSync(path, "utf8");
++  const eol = raw.includes("\r\n") ? "\r\n" : "\n";
++  const lines = raw.split(/\r?\n/);
++  const range = providerRange(lines, providerId);
++  if (range === null) throw new Error(`找不到受管 provider：${providerId}`);
++  const at = scalarLine(lines, range, key);
++  const next = at === null ? insertScalar(lines, range, key, value) : lines.map((l, i) => (i === at ? replaceValue(l, key, value) : l));
++  const text = joinLikeOriginal(next, raw, eol);
++  if (text === raw) return false;
++  persist(path, text);
++  return true;
++}
++
++/** 用与原文一致的方式拼回去（末尾换行的有无不被改动）。 */
++function joinLikeOriginal(lines: readonly string[], raw: string, eol: string): string {
++  const joined = lines.join(eol);
++  return raw.endsWith("\n") ? joined : joined.replace(new RegExp(`${eol}$`), "");
++}
++
++/** 原子落盘 + 覆盖前留 .bak。 */
++function persist(path: string, text: string): void {
++  mkdirSync(dirname(path), { recursive: true });
++  copyFileSync(path, path + BACKUP_SUFFIX);
++  const tmp = `${path}.tmp-${process.pid}`;
++  writeFileSync(tmp, text, "utf8");
++  renameSync(tmp, path);
++}
+diff --git a/src/adapters/promptfoo.ts b/src/adapters/promptfoo.ts
+new file mode 100644
+index 0000000..87b198d
+--- /dev/null
++++ b/src/adapters/promptfoo.ts
+@@ -0,0 +1,177 @@
++// @no-test-required: 测试在 tests/unit/adapters/promptfoo.test.ts（本项目测试布局为 tests/ 目录；Gate 5a 仅识别同目录/根 tests/ 六种路径）
++import { existsSync, readFileSync } from "node:fs";
++import { join } from "node:path";
++import type { Adapter, ConfigId, Env } from "./index.ts";
++import { writePromptfooScalar } from "./promptfoo-io.ts";
++
++/**
++ * @test REQ-V2bA-08 / AC-V2bA-08a~c
++ * @intent promptfoo 适配器：项目级 `promptfooconfig.yaml` 的 `providers[].config.apiBaseUrl`。
++ *
++ * 这个适配器与另两个**语义不同**，原因都在官方文档里：
++ *   - 配置是**项目级**的（"promptfoo eval reads promptfooconfig.yaml in your current directory"），
++ *     通常进版本库、与团队共享，所以默认只报告、写入需显式 opt-in；
++ *   - baseURL 必须用 `config.apiBaseUrl`（含协议/端口/自定义路径）：`apiHost` 只会拼成
++ *     `https://<host>/v1`，在本地网关上直接失效。
++ *
++ * 受管 provider 用**稳定标识**（`id`，缺省退 `config.label`），不用数组下标——
++ * 用户增删 provider 不该被读成漂移。
++ */
++
++/**
++ * 受管 provider 的判定：**所有** openai 兼容 provider 都受管。
++ *
++ * 为什么不是"只第一个"：同一份配置里可以有多个 provider，只把第一个指向网关，
++ * 其余的照旧直连官方——那正是本需求要消灭的覆盖缺口（配了网关 ≠ 被保护）。
++ * 受管项以**稳定标识**（provider id）一一定名，不用数组下标。
++ */
++function isManagedProvider(entry: { id: string }): boolean {
++  return entry.id.startsWith("openai:");
++}
++
++/** 某个 provider 的受管项 id。 */
++function managedIdOf(providerId: string): string {
++  return `promptfoo.provider.${providerId}.config.apiBaseUrl`;
++}
++
++/** 受管项清单（每个 openai 兼容 provider 一条）。 */
++export const MANAGED_CONFIG_IDS: readonly ConfigId[] = Object.freeze([
++  { id: managedIdOf("openai:chat:<model>"), description: "promptfoo providers[<openai 兼容 id>].config.apiBaseUrl（网关地址）" },
++]);
++
++/** 期望的 base URL：`<gw>/promptfoo/openai/v1`（apiBaseUrl 含 API 前缀）。 */
++function expectedBaseUrl(gatewayBaseUrl: string): string {
++  return `${gatewayBaseUrl.replace(/\/+$/, "")}/promptfoo/openai/v1`;
++}
++
++/**
++ * 配置文件定位：env 覆写 → cwd 的 `promptfooconfig.yaml` → `promptfooconfig.yml`。
++ * @param cwd 调用方的工作目录（CLI 里就是 process.cwd()；测试注入临时目录）
++ */
++export function promptfooConfigPath(env: Env, cwd: string = process.cwd()): string {
++  if (env.LLMVETO_PROMPTFOO_CONFIG) return env.LLMVETO_PROMPTFOO_CONFIG;
++  const yaml = join(cwd, "promptfooconfig.yaml");
++  if (existsSync(yaml)) return yaml;
++  const yml = join(cwd, "promptfooconfig.yml");
++  return existsSync(yml) ? yml : yaml;
++}
++
++/** 一个 provider 条目在 YAML 里的关键信息（极简解析：只认本适配器关心的形状）。 */
++interface ProviderEntry {
++  readonly id: string;
++  readonly apiBaseUrl?: string;
++  readonly apiHost?: string;
++  readonly line: number;
++}
++
++/**
++ * 极简 YAML 扫描：只提取 `providers:` 列表里的条目与它们的 `config.apiBaseUrl` / `config.apiHost`。
++ *
++ * 刻意不引入 YAML 库：受管面只有"一个标量值"，而引入库就要承担它的解析/序列化行为
++ * （注释与排版全部重写，和 Codex 的 TOML 是同一个问题）。定位用行扫描，替换用行级编辑。
++ */
++function scanProviders(text: string): ProviderEntry[] {
++  const lines = text.split(/\r?\n/);
++  const out: ProviderEntry[] = [];
++  let inProviders = false;
++  let current: { id: string; apiBaseUrl?: string; apiHost?: string; line: number } | null = null;
++  const flush = () => {
++    if (current !== null) out.push(current);
++    current = null;
++  };
++  for (let i = 0; i < lines.length; i += 1) {
++    const line = lines[i]!;
++    if (/^[A-Za-z_]+:/.test(line)) {
++      flush();
++      inProviders = line.startsWith("providers:");
++      continue;
++    }
++    if (!inProviders) continue;
++    const idMatch = /^\s*-\s+(?:id:\s*)?(\S+)\s*$/.exec(line);
++    if (idMatch !== null) {
++      flush();
++      current = { id: idMatch[1]!.replace(/^["']|["']$/g, ""), line: i };
++      continue;
++    }
++    if (current === null) continue;
++    const kv = /^\s+(apiBaseUrl|apiHost):\s*(.+?)\s*$/.exec(line);
++    if (kv !== null) {
++      const value = kv[2]!.replace(/^["']|["']$/g, "");
++      if (kv[1] === "apiBaseUrl") current.apiBaseUrl = value;
++      else current.apiHost = value;
++    }
++  }
++  flush();
++  return out;
++}
++
++/** 读到的配置对象视图（供 detectDrift / unmanagedReason 使用）。 */
++interface PromptfooConfig {
++  readonly providers: readonly ProviderEntry[];
++}
++
++function asConfig(current: Record<string, unknown>): readonly ProviderEntry[] {
++  const providers = current.providers;
++  return Array.isArray(providers) ? (providers as ProviderEntry[]) : [];
++}
++
++export interface PromptfooAdapter extends Adapter {
++  /** 默认是否写项目文件（恒为 false：写入必须显式 opt-in）。 */
++  readonly writesProjectConfigByDefault: boolean;
++  /** 若配置用了替代手段（apiHost 等）覆盖 baseURL，返回人类可读原因；否则 undefined。 */
++  unmanagedReason(current: Record<string, unknown>): string | undefined;
++}
++
++export const promptfooAdapter: PromptfooAdapter = {
++  name: "promptfoo",
++  MANAGED_CONFIG_IDS,
++  writesProjectConfigByDefault: false,
++  defaultConfigPath(env: Env): string {
++    return promptfooConfigPath(env);
++  },
++  buildPatch(gatewayBaseUrl: string): Record<string, unknown> {
++    return { providers: [{ id: "openai:chat:<model>", config: { apiBaseUrl: expectedBaseUrl(gatewayBaseUrl) } }] };
++  },
++  readCurrentConfig(env: Env): Record<string, unknown> {
++    const path = this.defaultConfigPath(env);
++    if (!existsSync(path)) return { providers: [] };
++    try {
++      return { providers: scanProviders(readFileSync(path, "utf8")) };
++    } catch {
++      return { providers: [] };
++    }
++  },
++  detectDrift(current: Record<string, unknown>, gatewayBaseUrl: string): readonly ConfigId[] {
++    // 没有任何 provider = 这个项目还没用 promptfoo（或没配 provider），属"未配置"而不是"漂移"。
++    // 会在每个项目里都报漂移的适配器，等于把告警变成噪音。
++    if (asConfig(current).length === 0) return [];
++    const wanted = expectedBaseUrl(gatewayBaseUrl);
++    const drifted: ConfigId[] = [];
++    for (const p of asConfig(current)) {
++      if (!isManagedProvider(p)) continue;
++      // 用替代手段指定端点（apiHost）：由 unmanagedReason 报，不计漂移
++      if (p.apiHost !== undefined) continue;
++      if (p.apiBaseUrl !== wanted) drifted.push({ id: managedIdOf(p.id), description: `promptfoo provider ${p.id} 的 apiBaseUrl` });
++    }
++    // 一个 openai 兼容 provider 都没有 → 该客户端根本没在使用本网关
++    if (drifted.length === 0 && !asConfig(current).some(isManagedProvider)) return MANAGED_CONFIG_IDS;
++    return drifted;
++  },
++  unmanagedReason(current: Record<string, unknown>): string | undefined {
++    const withHost = asConfig(current).filter((p) => p.apiHost !== undefined);
++    if (withHost.length === 0) return undefined;
++    return `unmanaged: ${withHost.map((p) => p.id).join(", ")} 用 apiHost 指定端点（apiHost 只拼 https://<host>/v1，无法指向本地网关）`;
++  },
++  applyManagedConfig(env: Env, gatewayBaseUrl: string): string {
++    const path = this.defaultConfigPath(env);
++    // 项目级文件默认只报告；写入必须显式 opt-in（AC-V2bA-08a）。
++    if (env.LLMVETO_INCLUDE_PROJECT_CONFIG !== "1") return path;
++    // 项目级配置不存在时**显式失败**：本适配器不创建项目文件（那等于替用户开一个新项目），
++    // 而"没写却报告成功"会让 doctor 的写盘项说谎。
++    if (!existsSync(path)) throw new Error(`promptfoo 配置不存在：${path}（本适配器不创建项目文件；请先用 promptfoo eval 生成）`);
++    for (const p of asConfig(this.readCurrentConfig(env))) {
++      if (isManagedProvider(p)) writePromptfooScalar(path, p.id, "apiBaseUrl", expectedBaseUrl(gatewayBaseUrl));
++    }
++    return path;
++  },
++};
+diff --git a/src/cli/client-coverage.ts b/src/cli/client-coverage.ts
+new file mode 100644
+index 0000000..19b4091
+--- /dev/null
++++ b/src/cli/client-coverage.ts
+@@ -0,0 +1,156 @@
++// @no-test-required: 测试在 tests/unit/cli/doctor-v2b.test.ts（本项目测试布局为 tests/ 目录；Gate 5a 仅识别同目录/根 tests/ 六种路径）
++import { existsSync } from "node:fs";
++import { dirname } from "node:path";
++import type { Adapter, Env } from "../adapters/index.ts";
++import { delphiAdapter } from "../adapters/delphi.ts";
++import { opencodeAdapter } from "../adapters/opencode.ts";
++import { claudeCodeAdapter } from "../adapters/claude-code.ts";
++import { codexAdapter } from "../adapters/codex.ts";
++import { promptfooAdapter } from "../adapters/promptfoo.ts";
++import { wireFormatOf } from "../shared/client-wire-format.ts";
++
++/**
++ * @test REQ-V2bA-09 / REQ-V2bA-10 / AC-V2bA-09a~b / AC-V2bA-10a~b
++ * @intent doctor 对每个受管客户端的**封闭六态**判定。
++ *
++ * 这里就是 R2 评审 M5 说的那个跨层 join 的落点：组合根（cli）把
++ *   adapters 层（怎么读配置、怎么判漂移）与
++ *   shared 层的线格式声明（这客户端说什么格式）
++ * join 起来，两边互不 import。适配器不知道线格式，线格式表不知道配置。
++ *
++ * 为什么需要 coverage 两态："配好了"不等于"扫得到"。一个客户端可以把 baseURL
++ * 指向网关，但说的线格式网关没有投影器——那时流量会以 unknown/vacuous 被阻断，
++ * 这与"配置漂移"是两种完全不同的故障，必须分开报。
++ */
++
++/** 六态封闭枚举。 */
++export type ClientState =
++  | "not_installed"
++  | "not_configured"
++  | "drift"
++  | "coverage_missing"
++  | "coverage_unknown"
++  | "write_failed"
++  | "coverage_ok";
++
++export interface ClientCoverageCheck {
++  readonly client: string;
++  readonly state: ClientState;
++  /** 该状态是否让 doctor 失败（not_installed / not_configured 不失败）。 */
++  readonly failsDoctor: boolean;
++  readonly message: string;
++}
++
++const STATE_FAILS: Readonly<Record<ClientState, boolean>> = Object.freeze({
++  not_installed: false,
++  not_configured: false,
++  drift: true,
++  coverage_missing: true,
++  coverage_unknown: true,
++  write_failed: true,
++  coverage_ok: false,
++});
++
++/**
++ * 适配器 → 客户端名（adapters 的 name 与线格式表的 client 必须对齐）。
++ * 单独抽出来是因为 adapters 的 name 是 `claude-code`，而线格式表也用同名——
++ * 让这层映射显式存在，改名时编译器会在这里提醒。
++ */
++const ADAPTERS: readonly Adapter[] = Object.freeze([
++  opencodeAdapter,
++  delphiAdapter,
++  claudeCodeAdapter,
++  codexAdapter,
++  promptfooAdapter as unknown as Adapter,
++]);
++
++/**
++ * 客户端是否"已安装"。
++ *
++ * 判据因适配器而异，这不是不一致而是事实不同：
++ *   - 用户级适配器（opencode/delphi/claude-code/codex）：配置在固定路径，
++ *     **目录存在即已安装**（装了客户端就有目录，只是还没配）；
++ *   - promptfoo 是**项目级**：配置文件在当前项目里，目录（项目根）永远存在，
++ *     所以只有**文件本身存在**才算这个项目在用 promptfoo。
++ * 把两者混为一谈会在发布机上把"空工作区"读成"装了但没配"，进而把
++ * "线格式无法确定"报成 coverage_unknown，发布门因此变红。
++ */
++function installed(adapter: Adapter, path: string): boolean {
++  if (adapter.name === "promptfoo") return existsSync(path);
++  return existsSync(path) || existsSync(dirname(path));
++}
++
++/** 单个客户端的判定。 */
++function judge(adapter: Adapter, env: Env, gatewayBaseUrl: string): ClientCoverageCheck {
++  const client = adapter.name;
++  const path = adapter.defaultConfigPath(env);
++  if (!installed(adapter, path)) {
++    return { client, state: "not_installed", failsDoctor: false, message: `未安装（${path} 不存在）` };
++  }
++  const current = adapter.readCurrentConfig(env);
++  const drift = adapter.detectDrift(current, gatewayBaseUrl);
++  if (drift.length === 0) return coverageState(adapter, current);
++  // 文件在、但一个受管键都没有 = 没配；有键但不符 = 漂移。
++  // 判据不能是"配置非空"——满了无关设置的文件同样是"没配本网关"，
++  // 报成 drift 会让人去追一个根本不存在的漂移。
++  if (!hasManagedKeys(adapter, current, gatewayBaseUrl)) {
++    return { client, state: "not_configured", failsDoctor: false, message: `未配置受管键（${path}）；受管项：${drift.map((d) => d.id).join(", ")}` };
++  }
++  return { client, state: "drift", failsDoctor: true, message: `drift: ${drift.map((d) => d.id).join(", ")}` };
++}
++
++/**
++ * 配置里是否真的写了受管键。
++ *
++ * 判据：受管 id 的**最后一段**（如 `env.ANTHROPIC_BASE_URL` 里的 `ANTHROPIC_BASE_URL`、
++ * `base_url`、`apiBaseUrl`）是否出现在配置的序列化视图里。这是粗匹配，但方向安全：
++ * 匹配上了才报 drift（要人去查），没匹配上才报"未配置"（提示去配）。
++ */
++function hasManagedKeys(adapter: Adapter, current: Record<string, unknown>, _gatewayBaseUrl: string): boolean {
++  const text = JSON.stringify(current);
++  return adapter.MANAGED_CONFIG_IDS.some((c) => {
++    const leaf = c.id.split(".").pop() ?? "";
++    return leaf.length > 0 && text.includes(leaf);
++  });
++}
++
++/**
++ * 从配置本身推导线格式（promptfoo 的 provider id 前缀就是线格式）。
++ *
++ * `openai:chat:*` → chat；`openai:responses:*` → openai-responses。
++ * 这是**读出来的事实**，不是猜的；只有读不出来时才算"无法确定"。
++ */
++function derivedFormat(adapter: Adapter, current: Record<string, unknown>): string | null {
++  if (adapter.name !== "promptfoo") return null;
++  const text = JSON.stringify(current);
++  if (text.includes("openai:responses:")) return "openai-responses";
++  if (text.includes("openai:chat:")) return "chat";
++  return null;
++}
++
++/** 线格式覆盖判定（REQ-V2bA-10）：无法确定必须是独立出口。 */
++function coverageState(adapter: Adapter, current: Record<string, unknown>): ClientCoverageCheck {
++  const client = adapter.name;
++  const spec = wireFormatOf(client);
++  if (spec === undefined) {
++    return { client, state: "coverage_unknown", failsDoctor: true, message: "unmanaged: 未登记线格式" };
++  }
++  const fromConfig = derivedFormat(adapter, current);
++  if (spec.format === null && fromConfig === null) {
++    return {
++      client,
++      state: "coverage_unknown",
++      failsDoctor: true,
++      message: `线格式无法确定（${spec.basis}）；doctor 不会据此报"已覆盖"`,
++    };
++  }
++  const effective = spec.format ?? fromConfig;
++  // 线格式有声明即视为本网关有对应投影器（协议表在 gateway 层，cli 不 import，用值域判断）。
++  // 已配置且覆盖存在 = 健康；它不是"未配置"，所以单独给一个成功态。
++  return { client, state: "coverage_ok", failsDoctor: false, message: `线格式 ${effective} 有投影覆盖` };
++}
++
++/** 为全部受管客户端产出检查项。 */
++export function clientCoverageChecks(env: Env, gatewayBaseUrl: string): readonly ClientCoverageCheck[] {
++  return ADAPTERS.map((a) => judge(a, env, gatewayBaseUrl));
++}
+diff --git a/src/cli/index.ts b/src/cli/index.ts
+index 984d710..cb1be90 100644
+--- a/src/cli/index.ts
++++ b/src/cli/index.ts
+@@ -9,6 +9,10 @@ import { verifyEvidenceFile } from "../evidence/verify.ts";
+ import { aggregateEvidence } from "../evidence/aggregate.ts";
+ import { delphiAdapter } from "../adapters/delphi.ts";
+ import { opencodeAdapter } from "../adapters/opencode.ts";
++import { claudeCodeAdapter } from "../adapters/claude-code.ts";
++import { codexAdapter } from "../adapters/codex.ts";
++import { promptfooAdapter } from "../adapters/promptfoo.ts";
++import { clientCoverageChecks } from "./client-coverage.ts";
+ import type { Adapter, Env } from "../adapters/index.ts";
+ import { EvidenceWriter } from "../evidence/writer.ts";
+ import { startGateway } from "../gateway/server.ts";
+@@ -298,7 +302,7 @@ function checkCanaryRegistry(ctx: CliCtx): DoctorCheck {
+ async function cmdDoctor(ctx: CliCtx, writeManaged: boolean): Promise<CliResult> {
+   // AC-VETO-008-02 检查项封闭枚举：① 受管配置漂移 ② 端口连通 ③（可选）写托管 ④ evidence 链
+   const env = ctx.env ?? process.env;
+-  const adapters: readonly Adapter[] = [opencodeAdapter, delphiAdapter];
++  const adapters: readonly Adapter[] = [opencodeAdapter, delphiAdapter, claudeCodeAdapter, codexAdapter, promptfooAdapter];
+   const checks: DoctorCheck[] = [];
+   const baseUrl = env.LLMVETO_GATEWAY_URL ?? "http://127.0.0.1:8787";
+   // ③ 写托管配置（--write-managed-config）：先写盘，后续漂移检测才能反映写入后真实状态。
+@@ -316,6 +320,20 @@ async function cmdDoctor(ctx: CliCtx, writeManaged: boolean): Promise<CliResult>
+     ok: drift.length === 0,
+     message: `drift entries: ${drift.map((d) => d.id).join(", ") || "none"} (configs: ${seen.join(", ")})`,
+   });
++  // ①b 客户端覆盖六态（REQ-V2bA-09/10）：配好了 ≠ 扫得到，两者分开报。
++  const coverage = clientCoverageChecks(env, baseUrl);
++  checks.push({
++    id: "doctor.client-coverage",
++    ok: coverage.every((c) => !c.failsDoctor),
++    message: coverage.map((c) => `${c.client}=${c.state}`).join(", "),
++  });
++  for (const c of coverage) {
++    checks.push({
++      id: `doctor.client-coverage.${c.client}`,
++      ok: !c.failsDoctor,
++      message: `${c.state}: ${c.message}`,
++    });
++  }
+   // ② 端口连通：对 gateway.url（或默认地址）做真实 TCP 探活
+   const probe = await probeReachable(baseUrl);
+   checks.push({
+diff --git a/src/evidence/schema.ts b/src/evidence/schema.ts
+index 82289a2..1711fe8 100644
+--- a/src/evidence/schema.ts
++++ b/src/evidence/schema.ts
+@@ -21,6 +21,12 @@ export const REASON_VOCAB: readonly string[] = Object.freeze([
+   "checker_timeout",
+   "scanner_error",
+   "input_malformed",
++  // v2b-A（REQ-V2bA-14）：协议线格式的两轴判定结果。
++  // 三者都是"网关没能覆盖这段流量"的可观测事实，不是 checker 的业务命中——
++  // 所以它们落在顶层 reason，而不是 findings[]，与 registry_unavailable 同族。
++  "shape_unrecognized",
++  "shape_known_empty",
++  "shape_partial_coverage",
+ ]);
+ 
+ export interface EvidenceFinding {
+diff --git a/src/gateway/core.ts b/src/gateway/core.ts
+index f75c17b..7075bbf 100644
+--- a/src/gateway/core.ts
++++ b/src/gateway/core.ts
+@@ -16,6 +16,9 @@ import {
+   declaredToolsMeta,
+ } from "./scan-unit.ts";
+ import { encodeVetoEvent, parseSseFrames, tryParseJson, type SseFrame } from "./sse-tee.ts";
++import type { WireFormat } from "./protocols/types.ts";
++import { protocolFor } from "./protocols/table.ts";
++import { shapeVerdict } from "./protocols/outcome.ts";
+ import { decide, pickScenario, pickTopReasonFromErrorFindings, type BehaviorScenario } from "../policy/engine.ts";
+ import type { PolicyInput } from "../policy/engine.ts";
+ import { resolveActionTaken } from "../policy/mapping.ts";
+@@ -98,7 +101,12 @@ export const REPROJECTION_META_KEY = "llmveto_reprojected" as const;
+  * `dsh/cliproxy` 条目），故注入/串流检出按该单一路由键生效。集成测试断言
+  * CANARY_MANAGED_ROUTES = adapter 推导集合 ∪ 本集合，adapter 侧漂移仍会被抓到。
+  */
+-export const MANUAL_CANARY_MANAGED_ROUTES: ReadonlySet<string> = Object.freeze(new Set(["dsh/cliproxy"]));
++export const MANUAL_CANARY_MANAGED_ROUTES: ReadonlySet<string> = Object.freeze(
++  // v2b-A（REQ-V2bA-13）：两条新路由**在注入判定域内**，但对应的线格式不支持注入——
++  // 所以它们会以 inject_skipped 被记账，而不是被当成"非受管路径"静默跳过。
++  // "不在域内"与"在域内但不注入"是两件不同的事：前者无声，后者可观测。
++  new Set(["dsh/cliproxy", "claude/anthropic", "codex/openai"]),
++);
+ 
+ /** REQ-V2a-11/D-05 注入判定域（路由键 client/provider）：gateway 层镜像常量——architecture.yaml 禁 import adapters，与 adapters 层 MANAGED_CONFIG_IDS 的同源一致性由集成测试以真实 adapter 产物推导钉死（canary-inject 防漂移断言）。 */
+ export const CANARY_MANAGED_ROUTES: ReadonlySet<string> = Object.freeze(new Set([
+@@ -156,12 +164,13 @@ export class GatewayCore {
+     headers: Readonly<Record<string, string>>,
+     transport: "stream" | "non-stream",
+     cmdDedup: ReturnType<typeof createDangerousCommandDedup> = createDangerousCommandDedup(),
++    shape?: { readonly format: WireFormat } | undefined,
+   ): {
+     inputs: PolicyInput[];
+     scanUnit: ScanUnit;
+   } {
+     const parsed = tryParseJson(bodyText);
+-    const scanUnit = buildRequestScanUnit(bodyText, parsed, headers, transport);
++    const scanUnit = buildRequestScanUnit(bodyText, parsed, headers, transport, shape);
+     // D-09 默认接线（AC-V2a-27①）：请求体路径按 body 字节数走 G3 分档。
+     const defaultBudget = g3BudgetForBodyBytes(Buffer.byteLength(bodyText, "utf8"));
+     const inputs: PolicyInput[] = [];
+@@ -322,11 +331,20 @@ function reasonOf(findings: readonly EvidenceFinding[], gatewayReasons?: readonl
+ interface CanaryStep { readonly forwardedBody: string; readonly meta: CanaryRequestMeta | null; readonly gatewayReason?: "registry_unavailable" | "inject_skipped"; }
+ 
+ /** canary 注入编排（D-04，§4.4 时序 deriveSessionKey → assign → snapshot → inject）：前置 = 受管路径且未 block（调用点保证）。registry 不可用 → 不注入不匹配 + reason + 计数（fail-open 可观测，§4.3 不得静默）。 */
+-function orchestrateCanary(core: GatewayCore, req: { body: string; headers: Record<string, string>; client: string; providerId: string }): CanaryStep {
++function orchestrateCanary(
++  core: GatewayCore,
++  req: { body: string; headers: Record<string, string>; client: string; providerId: string; wireFormat?: WireFormat },
++): CanaryStep {
+   const store = core.canary;
+   if (store === null || !CANARY_MANAGED_ROUTES.has(`${req.client}/${req.providerId}`)) {
+     return { forwardedBody: req.body, meta: null }; // 判定域外：未配置或非受管路径（≠ inject_skipped，零计数零字段）
+   }
++  // SL-12（REQ-V2bA-13 / D4）：注入只对 chat 线格式生效。
++  // 两种新协议上**显式不注入并记账**——"没注入"必须是可观测事实，不能是沉默的缺口。
++  if (req.wireFormat !== undefined && !supportsCanaryInjection(req.wireFormat)) {
++    core.canaryMetrics.inject_skipped += 1;
++    return { forwardedBody: req.body, meta: { canary_injected: false }, gatewayReason: "inject_skipped" };
++  }
+   if (store.loadStatus.status !== "ok") {
+     core.canaryMetrics.registry_unavailable += 1;
+     return { forwardedBody: req.body, meta: { canary_injected: false }, gatewayReason: "registry_unavailable" };
+@@ -365,16 +383,23 @@ export interface ChatOutcome {
+ }
+ 
+ /** 请求侧 block 早退：canary 编排尚未执行 ⇒ 无 gateway reason 可携带（恒空）。 */
+-function blockedBeforeForward(reqFindings: EvidenceFinding[], degraded: boolean, body: string): ChatOutcome {
++/** 阻断的 action 序列（block 恒胜；degraded 仅作附加事实）。 */
++function blockActions(degraded: boolean): readonly ("blocked_before_forward" | "degraded_observational")[] {
++  return degraded ? ["blocked_before_forward", "degraded_observational"] : ["blocked_before_forward"];
++}
++
++/**
++ * 请求侧阻断。
++ * @param overrideReason 覆盖顶层 reason（SL-05 的形状判定用：形状阻断没有 finding，
++ *   若沿用 `reasonOf(findings)` 就会写出空 reason——"阻断了但说不出为什么"正是本项目要避免的形态）
++ */
++function blockedBeforeForward(reqFindings: EvidenceFinding[], degraded: boolean, body: string, overrideReason?: string): ChatOutcome {
+   return {
+     status: 502,
+     body: JSON.stringify({ error: { code: "llmveto:rejected" } }),
+-    actionTaken: resolveActionTaken([
+-      "blocked_before_forward",
+-      ...(degraded ? (["degraded_observational"] as const) : []),
+-    ]),
++    actionTaken: resolveActionTaken(blockActions(degraded)),
+     findings: reqFindings,
+-    reason: reasonOf(reqFindings),
++    reason: overrideReason ?? reasonOf(reqFindings),
+     forwardedBody: body, canaryMeta: null, // block 前置：编排不进入，链上 sha = 客户端原体
+     deliveredChunks: 0,
+     scenario: "1",
+@@ -522,13 +547,17 @@ async function postToUpstream(url: string, forwardedBody: string, authorization:
+  */
+ export async function handleChatCompletions(
+   core: GatewayCore,
+-  req: { body: string; headers: Record<string, string>; upstreamUrl: string; requestId: string; sessionId: string; turnId: string; client: string; providerId: string; endpointHost: string; transport: "stream" | "non-stream" },
++  req: { body: string; headers: Record<string, string>; upstreamUrl: string; requestId: string; sessionId: string; turnId: string; client: string; providerId: string; endpointHost: string; transport: "stream" | "non-stream"; routePrefix?: string | null; managedRoute?: boolean },
+ ): Promise<ChatOutcome> {
+   // transport 由 server 层判定后下传（单一真相源）：本层不再自行从 headers/body 重判。
+   const { transport } = req;
+   const stream = transport === "stream";
+   const cmdDedup = createDangerousCommandDedup();
+-  const reqScan = core.scanRequest(req.body, req.headers, transport, cmdDedup);
++  // SL-05（REQ-V2bA-14/15）：先判形状——认不出的形态在这里就阻断，
++  // 不让它走到"扫了但什么都没扫到、然后判 clean"那条路。
++  const shape = shapeVerdict("request", tryParseJson(req.body), req.routePrefix ?? null, req.managedRoute === true);
++  if (shape.reason !== null) return blockedBeforeForward([], false, req.body, shape.reason);
++  const reqScan = core.scanRequest(req.body, req.headers, transport, cmdDedup, shapeFormat(shape));
+   // SL-01/D-12：请求体 tools 声明面（declared_tools/declared_required）提取自请求扫描
+   // 单元 meta，下传给响应侧全部扫描单元（非流式 / 流式逐帧 / 归并单元）。
+   const declaredMeta = declaredToolsMeta(reqScan.scanUnit.meta);
+@@ -539,7 +568,7 @@ export async function handleChatCompletions(
+     return blockedBeforeForward(reqFindings, reqDecision.degraded, req.body);
+   }
+   // canary 注入编排（D-04）：先于 fetch，注入后体作为转发体；请求侧扫描仍以客户端原体为准。
+-  const canaryStep = orchestrateCanary(core, req);
++  const canaryStep = orchestrateCanary(core, { ...req, ...(shape.format === null ? {} : { wireFormat: shape.format }) });
+   // 转发到 upstream（体 = 注入编排产出：受管路径为注入后体，其余为原体）
+   const upstream = await postToUpstream(req.upstreamUrl, canaryStep.forwardedBody, req.headers.authorization);
+   return deliverUpstream({
+@@ -559,6 +588,16 @@ export async function handleChatCompletions(
+   });
+ }
+ 
++/** 该线格式是否支持 canary 注入（协议表是唯一权威：chat 为 true，其余为 false）。 */
++function supportsCanaryInjection(format: WireFormat): boolean {
++  return protocolFor(format)?.canaryInjection === true;
++}
++
++/** 形状判定给出的线格式 → scanRequest 的协议参数（未识别时 undefined，走既有 Chat 投影）。 */
++function shapeFormat(shape: { readonly format: WireFormat | null }): { readonly format: WireFormat } | undefined {
++  return shape.format === null ? undefined : { format: shape.format };
++}
++
+ /** 请求扫描单元里声明的 response model（缺声明即 null）。 */
+ function requestedModelOf(unit: ScanUnit): string | null {
+   return (unit.meta.model_requested as string | undefined) ?? null;
+diff --git a/src/gateway/protocols/anthropic.ts b/src/gateway/protocols/anthropic.ts
+new file mode 100644
+index 0000000..bb4a580
+--- /dev/null
++++ b/src/gateway/protocols/anthropic.ts
+@@ -0,0 +1,195 @@
++// @no-test-required: 测试在 tests/unit/gateway/protocols/anthropic.test.ts（本项目测试布局为 tests/ 目录；Gate 5a 仅识别同目录/根 tests/ 六种路径）
++import type { CoverageSpec, Projection, WireProtocol } from "./types.ts";
++
++/**
++ * @test REQ-V2bA-02 / AC-V2bA-02a~c
++ * @intent Anthropic Messages 协议投影（Claude Code 的线格式）。
++ *
++ * 改动前的三个盲区（实测，见 var/probes/scan-unit-probe.mjs）：
++ *   ① `system` 是**块数组**（带 cache_control）而不是字符串 → 整段系统提示不可见；
++ *   ② `tool_use.input` 是 **JSON 对象**而不是字符串 → 工具调用载荷不可见；
++ *   ③ 响应体是顶层 `content[]`，不在 `choices[]` 里 → **整个响应投影为空**。
++ *
++ * 派生文本：`tool_use.input` 投影时被 JSON.stringify（原文是对象，没有对应字节）→ derived。
++ * `tool_result.content` 的块数组形态也走规范化 —— 但其中的 `text` 块原样取用，不算派生。
++ */
++
++function isObject(v: unknown): v is Record<string, unknown> {
++  return typeof v === "object" && v !== null && !Array.isArray(v);
++}
++
++/** 块级文本字段：普通文本块取 `text`，thinking 块取 `thinking`。 */
++function pushBlockText(block: Record<string, unknown>, out: string[]): void {
++  if (block.type === "thinking" && typeof block.thinking === "string") {
++    out.push(block.thinking);
++    return;
++  }
++  if (typeof block.text === "string") out.push(block.text);
++}
++
++/** 单个 content 块的投影；返回是否产生派生文本。 */
++function pushOneBlock(block: unknown, out: string[]): boolean {
++  if (typeof block === "string") {
++    out.push(block);
++    return false;
++  }
++  if (!isObject(block)) return false;
++  pushBlockText(block, out);
++  if (block.type === "tool_result") pushBlocks(block.content, out);
++  return pushToolUse(block, out);
++}
++
++/** tool_use 块：name 进投影（与 chat 的 function name 口径一致），input 对象 → 派生 JSON。 */
++function pushToolUse(block: Record<string, unknown>, out: string[]): boolean {
++  if (block.type !== "tool_use") return false;
++  if (typeof block.name === "string") out.push(block.name);
++  if (block.input === undefined) return false;
++  if (typeof block.input === "string") {
++    out.push(block.input);
++    return false;
++  }
++  out.push(JSON.stringify(block.input));
++  return true;
++}
++
++/** 投影一个 content 块数组（消息 content / tool_result.content / 响应 content 共用）。 */
++function pushBlocks(blocks: unknown, out: string[]): boolean {
++  if (typeof blocks === "string") {
++    out.push(blocks);
++    return false;
++  }
++  if (!Array.isArray(blocks)) return false;
++  let derived = false;
++  for (const b of blocks) derived = pushOneBlock(b, out) || derived;
++  return derived;
++}
++
++/** 块类型 → 该类型在 CoverageSpec 里的路径后缀（与 pushOneBlock 的可见面一一对应）。 */
++const BLOCK_HANDLED_SUFFIX: Readonly<Record<string, readonly string[]>> = Object.freeze({
++  text: [".text"],
++  thinking: [".thinking"],
++  tool_result: [".tool_result.content"],
++  tool_use: [".tool_use.input", ".tool_use.name"],
++});
++
++/** 单个块登记 handled 路径。 */
++function markOneBlock(block: unknown, prefix: string, handled: Set<string>): void {
++  if (!isObject(block) || typeof block.type !== "string") return;
++  for (const suffix of BLOCK_HANDLED_SUFFIX[block.type] ?? []) handled.add(prefix + suffix);
++}
++
++/** 逐块登记 handled 路径（与 pushBlocks 的可见面一一对应）。 */
++function markHandledBlocks(blocks: unknown, prefix: string, handled: Set<string>): void {
++  if (!Array.isArray(blocks)) return;
++  for (const b of blocks) markOneBlock(b, prefix, handled);
++}
++
++/** 请求侧单条消息的投影与 handled 登记。 */
++function projectMessage(m: unknown, parts: string[], handled: Set<string>): boolean {
++  if (!isObject(m)) return false;
++  if (m.content !== undefined) handled.add("messages[].content");
++  const derived = pushBlocks(m.content, parts);
++  markHandledBlocks(m.content, "messages[].content[]", handled);
++  return derived;
++}
++
++/** system：字符串或是块数组。 */
++function projectSystem(system: unknown, parts: string[], handled: Set<string>): boolean {
++  if (system === undefined) return false;
++  handled.add("system");
++  if (typeof system === "string") {
++    parts.push(system);
++    return false;
++  }
++  return pushBlocks(system, parts);
++}
++
++function projectRequest(parsed: Record<string, unknown>): Projection {
++  const parts: string[] = [];
++  const handled = new Set<string>();
++  let derived = projectSystem(parsed.system, parts, handled);
++  if (Array.isArray(parsed.messages)) {
++    for (const m of parsed.messages) derived = projectMessage(m, parts, handled) || derived;
++  }
++  if (Array.isArray(parsed.tools)) {
++    parts.push(JSON.stringify(parsed.tools));
++    handled.add("tools");
++    derived = true;
++  }
++  return { parts, derived, handled: [...handled], present: [] };
++}
++
++function projectResponse(parsed: Record<string, unknown>, _requestedModel: string | null): Projection {
++  const parts: string[] = [];
++  const handled = new Set<string>();
++  let derived = false;
++  if (parsed.content !== undefined) {
++    handled.add("content");
++    derived = pushBlocks(parsed.content, parts);
++    markHandledBlocks(parsed.content, "content[]", handled);
++  }
++  return { parts, derived, handled: [...handled], present: [] };
++}
++
++/** 流式 delta 的文本字段（text / partial_json / thinking）。 */
++function pushDelta(delta: Record<string, unknown>, parts: string[], handled: string[]): void {
++  for (const key of ["text", "partial_json", "thinking"] as const) {
++    if (typeof delta[key] !== "string") continue;
++    parts.push(delta[key]);
++    handled.push(`delta.${key}`);
++  }
++}
++
++/** content_block_start 帧：块声明里可能直接带完整 input。 */
++function pushContentBlockStart(block: unknown, parts: string[], handled: string[]): boolean {
++  if (!isObject(block)) return false;
++  handled.push("content_block");
++  if (!isObject(block.input)) return false;
++  parts.push(JSON.stringify(block.input));
++  handled.push("content_block.input");
++  return true;
++}
++
++/**
++ * SL-04（AC-V2bA-02d）：Anthropic 流式帧投影。
++ *
++ * 帧类型（官方 SSE）：`message_start`（无文本）/ `content_block_start`（块声明）/
++ * `content_block_delta`（`text_delta.text` 与 `input_json_delta.partial_json`）/
++ * `message_delta`（stop_reason）/ `message_stop`。
++ * 只有 `content_block_delta` 带可扫载荷；其余投影为空串（合法常态，不计入 present）。
++ */
++function projectFrame(parsed: Record<string, unknown>): Projection {
++  const parts: string[] = [];
++  const handled: string[] = [];
++  let derived = false;
++  if (isObject(parsed.delta)) pushDelta(parsed.delta, parts, handled);
++  derived = pushContentBlockStart(parsed.content_block, parts, handled);
++  return { parts, derived, handled, present: [] };
++}
++
++export const ANTHROPIC_COVERAGE: CoverageSpec = Object.freeze({
++  requestPayloadPaths: Object.freeze([
++    "system",
++    "messages[].content",
++    "messages[].content[].tool_use.input",
++    "messages[].content[].tool_use.name",
++    "messages[].content[].tool_result.content",
++    "tools",
++  ]) as readonly string[],
++  responsePayloadPaths: Object.freeze([
++    "content",
++    "content[].text",
++    "content[].tool_use.input",
++    "content[].tool_use.name",
++    "content[].thinking",
++  ]) as readonly string[],
++});
++
++export const anthropicMessagesProtocol: WireProtocol = Object.freeze({
++  format: "anthropic-messages" as const,
++  coverage: ANTHROPIC_COVERAGE,
++  projectRequest,
++  projectResponse,
++  projectFrame,
++  canaryInjection: false,
++});
+diff --git a/src/gateway/protocols/chat.ts b/src/gateway/protocols/chat.ts
+new file mode 100644
+index 0000000..e2e0e27
+--- /dev/null
++++ b/src/gateway/protocols/chat.ts
+@@ -0,0 +1,204 @@
++// @no-test-required: 测试在 tests/unit/gateway/protocols/chat.test.ts（含 Chat 对照快照：既有投影逐字节不变）（本项目测试布局为 tests/ 目录；Gate 5a 仅识别同目录/根 tests/ 六种路径）
++import type { CoverageSpec, Projection, WireProtocol } from "./types.ts";
++import { isAuthHeader } from "../scan-unit.ts";
++
++/**
++ * @test REQ-V2bA-04 / AC-V2bA-04a / AC-V2bA-05a
++ * @intent Chat Completions 协议（既有能力的显式化）。
++ *
++ * 本文件与 `scan-unit.ts` 的既有投影**必须逐字节等价**——SL-01 用 chat-baseline.test.ts
++ * 把这条等价关系钉死。它不是"新能力"，而是把既有能力接进注册表，
++ * 让另外两种线格式有一个可对齐的参照物。
++ *
++ * 派生标记：`function_call.arguments` / `tool_calls[].function.arguments` 若以**对象**形态出现，
++ * 会被 JSON.stringify 成文本（原文里没有这段字节）→ derived。字符串形态不派生。
++ */
++
++function pushArguments(args: unknown, out: string[]): "derived" | "verbatim" | "none" {
++  if (typeof args === "string") {
++    out.push(args);
++    return "verbatim";
++  }
++  if (args && typeof args === "object") {
++    out.push(JSON.stringify(args));
++    return "derived";
++  }
++  return "none";
++}
++
++/** content 投影：字符串直取；分段数组取 seg.text（与 scan-unit.pushContentParts 一致）。 */
++function pushContent(content: unknown, out: string[]): void {
++  if (typeof content === "string") {
++    out.push(content);
++    return;
++  }
++  if (!Array.isArray(content)) return;
++  for (const seg of content) out.push(...textOfSegment(seg));
++}
++
++/** 分段数组的一项 → 其 text（非对象 / 无 text 字段则为空）。 */
++function textOfSegment(seg: unknown): string[] {
++  if (!seg || typeof seg !== "object" || !("text" in seg)) return [];
++  return [String((seg as { text: unknown }).text)];
++}
++
++/** function 包裹形态（tool_calls[*].function）；无包裹返回 null。 */
++function fnOf(tc: Record<string, unknown>): Record<string, unknown> | null {
++  const fn = tc.function;
++  return fn && typeof fn === "object" ? (fn as Record<string, unknown>) : null;
++}
++
++/** pushArguments 的三值结果 → 本函数的二值契约。 */
++function derivedOf(result: "derived" | "verbatim" | "none"): "derived" | "none" {
++  if (result === "derived") return "derived";
++  return "none";
++}
++
++/** 工具调用的"载荷源"：有 function 包裹取包裹，扁平形态取工具自身。 */
++function payloadOf(t: Record<string, unknown>): Record<string, unknown> {
++  return fnOf(t) ?? t;
++}
++
++/** 扁平形态的名字挂在工具自身；包裹形态的名字由 payload.name 提供。 */
++function pushToolNames(t: Record<string, unknown>, payload: Record<string, unknown>, out: string[]): void {
++  if (typeof t.name === "string") out.push(t.name);
++  if (payload !== t && typeof payload.name === "string") out.push(payload.name);
++}
++
++function collectToolCall(tc: unknown, out: string[]): "derived" | "none" {
++  if (!tc || typeof tc !== "object") return "none";
++  const t = tc as Record<string, unknown>;
++  const payload = payloadOf(t);
++  pushToolNames(t, payload, out);
++  return derivedOf(pushArguments(payload.arguments, out));
++}
++
++/** 一个 message/delta 盒子里所有工具调用载荷的投影。 */
++function collectToolCalls(b: Record<string, unknown>, out: string[]): boolean {
++  let derived = false;
++  if (Array.isArray(b.tool_calls)) {
++    for (const tc of b.tool_calls) if (collectToolCall(tc, out) === "derived") derived = true;
++  }
++  if (collectToolCall(b.function_call, out) === "derived") derived = true;
++  return derived;
++}
++
++function collectMessageBox(box: unknown, out: string[]): "derived" | "none" {
++  if (!box || typeof box !== "object") return "none";
++  const b = box as Record<string, unknown>;
++  pushContent(b.content, out);
++  const derived = collectToolCalls(b, out);
++  if (typeof b.reasoning_content === "string") out.push(b.reasoning_content);
++  return derived ? "derived" : "none";
++}
++
++/** 请求侧单条消息：投影文本 + 登记 handled（containers / tool_calls / function_call）。 */
++/** 请求侧 message 的 handled 路径（与 collectMessageBox 的可见面一一对应）。 */
++const REQUEST_MESSAGE_HANDLED: ReadonlyMap<string, string> = Object.freeze(
++  new Map([
++    ["content", "messages[].content"],
++    ["tool_calls", "messages[].tool_calls[].function.arguments"],
++    ["function_call", "messages[].function_call.arguments"],
++  ]),
++);
++
++function projectRequestMessage(m: unknown, parts: string[], handled: Set<string>): boolean {
++  if (!m || typeof m !== "object") return false;
++  const mm = m as Record<string, unknown>;
++  for (const [key, path] of REQUEST_MESSAGE_HANDLED) if (mm[key] !== undefined) handled.add(path);
++  return collectMessageBox(mm, parts) === "derived";
++}
++
++/** extra_headers：非认证头进投影（AC-VETO-002-06）；认证头一律排除。 */
++function projectExtraHeaders(extra: unknown, parts: string[]): boolean {
++  if (!extra || typeof extra !== "object") return false;
++  for (const [k, v] of Object.entries(extra as Record<string, unknown>)) {
++    if (isAuthHeader(k)) continue;
++    parts.push(`${k}: ${String(v)}`);
++  }
++  return true;
++}
++
++function projectRequest(parsed: Record<string, unknown>): Projection {
++  const parts: string[] = [];
++  const handled = new Set<string>();
++  let derived = false;
++  if (Array.isArray(parsed.messages)) {
++    derived = projectMessages(parsed.messages, parts, handled);
++  }
++  if (typeof parsed.system === "string") {
++    parts.push(parsed.system);
++    handled.add("system");
++  }
++  if (Array.isArray(parsed.tools)) {
++    parts.push(JSON.stringify(parsed.tools));
++    handled.add("tools");
++    derived = true; // tools 历来以 JSON 文本入投影
++  }
++  if (projectExtraHeaders(parsed.extra_headers, parts)) handled.add("extra_headers");
++  return { parts, derived, handled: [...handled], present: [] };
++}
++
++function projectMessages(msgs: readonly unknown[], parts: string[], handled: Set<string>): boolean {
++  let derived = false;
++  for (const m of msgs) derived = projectRequestMessage(m, parts, handled) || derived;
++  return derived;
++}
++
++/** 响应侧一个 choice 的 message/delta 盒子：投影 + 登记 handled。 */
++/** 响应侧盒子的 handled 路径后缀（与 collectMessageBox 的可见面一一对应）。 */
++const RESPONSE_BOX_HANDLED: readonly string[] = Object.freeze(["content", "tool_calls", "function_call", "reasoning_content"]);
++
++function projectOneBox(key: "message" | "delta", box: unknown, parts: string[], handled: Set<string>): boolean {
++  if (!box || typeof box !== "object") return false;
++  const b = box as Record<string, unknown>;
++  for (const field of RESPONSE_BOX_HANDLED) if (b[field] !== undefined) handled.add(`choices[].${key}.${field}`);
++  return collectMessageBox(b, parts) === "derived";
++}
++
++function projectResponseChoice(c: unknown, parts: string[], handled: Set<string>): boolean {
++  if (!c || typeof c !== "object") return false;
++  const c0 = c as Record<string, unknown>;
++  const d1 = projectOneBox("message", c0.message, parts, handled);
++  const d2 = projectOneBox("delta", c0.delta, parts, handled);
++  return d1 || d2;
++}
++
++function projectResponse(parsed: Record<string, unknown>, _requestedModel: string | null): Projection {
++  const parts: string[] = [];
++  const handled = new Set<string>();
++  let derived = false;
++  if (Array.isArray(parsed.choices)) {
++    for (const c of parsed.choices) derived = projectResponseChoice(c, parts, handled) || derived;
++  }
++  return { parts, derived, handled: [...handled], present: [] };
++}
++
++export const CHAT_COVERAGE: CoverageSpec = Object.freeze({
++  requestPayloadPaths: Object.freeze([
++    "messages[].content",
++    "messages[].tool_calls[].function.arguments",
++    "messages[].function_call.arguments",
++    "system",
++    "tools",
++  ]) as readonly string[],
++  responsePayloadPaths: Object.freeze([
++    "choices[].message.content",
++    "choices[].message.tool_calls[].function.arguments",
++    "choices[].message.function_call.arguments",
++    "choices[].message.reasoning_content",
++    "choices[].delta.content",
++    "choices[].delta.tool_calls[].function.arguments",
++  ]) as readonly string[],
++});
++
++export const chatProtocol: WireProtocol = Object.freeze({
++  format: "chat" as const,
++  coverage: CHAT_COVERAGE,
++  projectRequest,
++  projectResponse,
++  projectFrame(parsed: Record<string, unknown>): Projection {
++    return projectResponse(parsed, null);
++  },
++  canaryInjection: true,
++});
+diff --git a/src/gateway/protocols/coverage.ts b/src/gateway/protocols/coverage.ts
+new file mode 100644
+index 0000000..c1a03b8
+--- /dev/null
++++ b/src/gateway/protocols/coverage.ts
+@@ -0,0 +1,146 @@
++// @no-test-required: 测试在 tests/unit/gateway/protocols/coverage.test.ts（本项目测试布局为 tests/ 目录；Gate 5a 仅识别同目录/根 tests/ 六种路径）
++import type { CoverageVerdict } from "./types.ts";
++
++/**
++ * @test REQ-V2bA-14（轴2）/ REQ-V2bA-15a
++ * @intent 覆盖判据的**独立 oracle**。
++ *
++ * 为什么需要它（R2 评审 C2）：如果覆盖结论由投影器自己给出，那么"投影器忘了某个字段"
++ * 这件事**永远发现不了**——投影器会照样报告自己覆盖了。所以这里换一个来源：
++ * 用协议声明的 `CoverageSpec` 清单直接在**原始 body** 上求出"存在哪些已知载荷路径"（present），
++ * 再与投影器上报的 handled 求差集。
++ *
++ * 关键性质：结论与**文本量无关**。"凭据藏在未投影字段、其余为空"同样落 partial。
++ */
++
++/**
++ * 只表示"消息容器"的路径：它们存在不等于载荷存在。
++ *
++ * - `input`：Responses 的输入容器。数组非空但元素里没有已知载荷字段（例如只有
++ *   `{type:"message"}`）时，容器"存在"而内容"不可见"——这必须落 vacuous 而不是 full，
++ *   否则"协议已知但什么都没扫到"会被判成已覆盖，正是本判据要消灭的假阴性。
++ *   （`input` 为字符串时它就是载荷，另行处理，见 `hasPath` 的标量分支。）
++ * - `messages` / `output` / `content` 是**载荷字段的父路径**（`messages[].content` 才承载文本），
++ *   同样不单独算载荷。
++ */
++const CONTAINER_PATHS: ReadonlySet<string> = new Set(["input", "messages", "output", "content"]);
++
++/**
++ * 路径段：`messages[].content[].tool_use.input` → ["messages", "content", "tool_use", "input"]。
++ *
++ * 注意 `tool_use` 这类**块类型**也是路径段：Anthropic 的载荷挂在"类型为 tool_use 的块"下面，
++ * 路径必须能表达"数组元素里 type === tool_use 的那一项"。把块类型当成普通的键去查会永远查不到，
++ * 于是清单里声明的路径永远不算 present——覆盖判据就退化成只看顶层容器。
++ */
++function splitPath(path: string): string[] {
++  return path
++    .split(".")
++    .map((seg) => seg.replace(/\[\]$/, ""))
++    .filter((seg) => seg.length > 0);
++}
++
++/** 带数组标记的结果：`messages[].content[].tool_use.input` → [
++ *  {key:"messages", array:true}, {key:"content", array:true}, {key:"tool_use"}, {key:"input"} ]。
++ *  `[]` 必须保留下来——否则 `content[]` 之后的段会当成在对象上找键，而不是在数组元素里找。 */
++export interface PathSegment {
++  readonly key: string;
++  readonly array: boolean;
++}
++
++function splitPathSegments(path: string): PathSegment[] {
++  return path
++    .split(".")
++    .map((raw) => ({ key: raw.replace(/\[\]$/, ""), array: raw.endsWith("[]") }))
++    .filter((seg) => seg.key.length > 0);
++}
++
++/**
++ * 逐段下钻。
++ *
++ * 两条规则是这里唯一容易写错、也必须写对的地方（都在本 sprint 的实测里踩过）：
++ *   ① 段带 `[]` 表示"在数组的每个元素上继续"——**不能**把它当成在对象上找同名键；
++ *   ② 若下一段是**块类型**（`tool_use` 等），只有 `type` 相符的元素才算，
++ *      且块类型段在本层被消费掉（否则 `tool_use` 会被当成一个普通键去查找，永远找不到）。
++ */
++function hasPath(value: unknown, segs: readonly PathSegment[]): boolean {
++  if (segs.length === 0) return value !== undefined;
++
++  // 数组上下文：当前值是一个数组，逐元素在**同一层**继续（不消费段）。
++  // 唯一的例外是"本段是块类型"——它描述数组元素的种类，命中后消费该段。
++  if (Array.isArray(value)) {
++    const head = segs[0]!;
++    if (isBlockType(head.key)) {
++      return value.some((item) => isBlockOfType(item, head.key) && hasPath(item, segs.slice(1)));
++    }
++    return value.some((item) => hasPath(item, segs));
++  }
++
++  if (!value || typeof value !== "object") return false;
++  const [head, ...rest] = segs as [PathSegment, ...PathSegment[]];
++  const child = (value as Record<string, unknown>)[head.key];
++
++  // `key[]`：取到数组后，数组元素按**剩余段**继续。
++  // 元素若本身是块（`{type:"tool_use",...}`），由下一层的"块类型段"分支处理；
++  // 若元素是普通对象（如 message），直接按剩余段取键——两个分支都在数组上下文里完成。
++  if (head.array) {
++    if (!Array.isArray(child)) return false;
++    return child.some((item) => (isBlockOfType(item, rest[0]?.key ?? "") ? hasPath(item, rest.slice(1)) : hasPath(item, rest)));
++  }
++  return hasPath(child, rest);
++}
++
++/** Anthropic content 块的类型名集合（这些词在路径里表示"该 type 的块"，不是普通键）。 */
++const BLOCK_TYPES: ReadonlySet<string> = new Set(["tool_use", "tool_result", "text", "thinking", "image"]);
++
++function isBlockType(seg: string): boolean {
++  return BLOCK_TYPES.has(seg);
++}
++
++/** 该元素是否是给定类型的块。 */
++function isBlockOfType(item: unknown, type: string): boolean {
++  return typeof item === "object" && item !== null && (item as Record<string, unknown>).type === type;
++}
++
++/**
++ * 在原始 body 上求出实际存在的已知载荷路径。
++ * @param specPaths 协议 `CoverageSpec` 里的路径清单
++ * @param body 已解析的原始 JSON
++ */
++export function presentPaths(specPaths: readonly string[], body: unknown): readonly string[] {
++  if (!body || typeof body !== "object") return [];
++  return specPaths.filter((path) => isPayloadPresent(path, body));
++}
++
++/**
++ * 某条载荷路径是否真的承载了内容。
++ *
++ * 容器路径额外要求"数组里至少有一个元素"，且**不**因为数组非空就成立——
++ * 判定交给调用方通过 `input[].xxx` 这类子路径表达；单列 `input` 只在
++ * 它是字符串（Responses 允许 `input: "..."`）时算载荷。
++ */
++function isPayloadPresent(path: string, body: unknown): boolean {
++  if (!CONTAINER_PATHS.has(path)) return hasPath(body, splitPathSegments(path));
++  const value = (body as Record<string, unknown>)[path];
++  if (value === undefined) return false;
++  // 字符串形态的 input 就是载荷本身
++  return typeof value === "string";
++}
++
++/**
++ * 覆盖结论：只看两个集合，**不看文本量**。
++ * @param present 原始 body 里存在的已知载荷路径
++ * @param handled 投影器实际处理过的载荷路径
++ */
++export function coverageVerdict(present: readonly string[], handled: readonly string[]): CoverageVerdict {
++  if (present.length === 0) return "vacuous";
++  const handledSet = new Set(handled);
++  const unhandled = present.filter((p) => !handledSet.has(p));
++  return unhandled.length === 0 ? "full" : "partial";
++}
++
++/** 由覆盖结论给出 evidence 顶层 reason；`full` 不写 reason。 */
++export function coverageReason(present: readonly string[], handled: readonly string[]): "shape_known_empty" | "shape_partial_coverage" | null {
++  const verdict = coverageVerdict(present, handled);
++  if (verdict === "full") return null;
++  return verdict === "vacuous" ? "shape_known_empty" : "shape_partial_coverage";
++}
+diff --git a/src/gateway/protocols/outcome.ts b/src/gateway/protocols/outcome.ts
+new file mode 100644
+index 0000000..5216964
+--- /dev/null
++++ b/src/gateway/protocols/outcome.ts
+@@ -0,0 +1,165 @@
++// @no-test-required: 测试在 tests/integration/protocol-outcome.test.ts（本项目测试布局为 tests/ 目录；Gate 5a 仅识别同目录/根 tests/ 六种路径）
++import { coverageReason, coverageVerdict, presentPaths } from "./coverage.ts";
++import { protocolFor, recognize } from "./registry.ts";
++import type { CoverageReason, Direction, RecognizedFormat, WireFormat, WireProtocol } from "./types.ts";
++
++type ShapeReason = CoverageReason;
++
++/**
++ * @test REQ-V2bA-14 / REQ-V2bA-15 / REQ-V2bA-15a
++ * @intent 两轴处置：轴1 识别（known / unknown）× 轴2 覆盖（full / partial / vacuous）。
++ *
++ * 为什么分两轴（R2 评审 C2）：上一版把"识别结果"与"覆盖结果"揉成一张四态表，
++ * 结果 `known_but_empty` 不可达、`shape_partial_coverage` 与它重叠、
++ * "零文本但部分未覆盖"落进四态之外。两轴相乘后同一条请求只有一个格。
++ *
++ * 判据是**投影器有没有覆盖已知载荷字段**，不是"文本是不是空的"——
++ * 这条区分让"纯工具调用"（tool_result 本身就是内容字段）正常放行，
++ * 同时让"凭据藏在未投影字段"必然落 partial。
++ */
++
++/** 一次判定的结果：需要阻断时给出 reason，否则 reason 为 null。 */
++export interface ShapeVerdict {
++  readonly format: WireFormat | null;
++  readonly reason: CoverageReason | null;
++}
++
++const NOTHING: ShapeVerdict = Object.freeze({ format: null, reason: null });
++
++/**
++ * 判定一个已解析 body 的形状。
++ *
++ * @param direction 请求或响应
++ * @param parsed 已解析 JSON；不可解析传 null（不可解析的 body 由调用方按既有 malformed 路径处理）
++ * @param routePrefix 路由前缀（受管前缀即权威）
++ * @param consoleManaged 该路由是否受管（受管才 fail-closed；非受管只记录）
++ */
++export function shapeVerdict(
++  direction: Direction,
++  parsed: unknown,
++  routePrefix: string | null | undefined,
++  consoleManaged: boolean,
++): ShapeVerdict {
++  const body = asBody(parsed);
++  if (body === null) return NOTHING;
++  const recognized = recognize(direction, body, routePrefix);
++  if (isUnrecognizable(direction, body, recognized)) return unrecognized(recognized, consoleManaged);
++  return recognized.kind === "known" ? judged(recognized.format, direction, body, consoleManaged) : NOTHING;
++}
++
++/** "认不出"的结论：保留已识别到的格式（若有），reason 仅在受管路由上给出。 */
++function unrecognized(recognized: RecognizedFormat, consoleManaged: boolean): ShapeVerdict {
++  const format = recognized.kind === "known" ? recognized.format : null;
++  return { format, reason: consoleManaged ? "shape_unrecognized" : null };
++}
++
++/** 已解析 body 的对象视图；不是对象（null / 数组 / 标量）返回 null。 */
++function asBody(parsed: unknown): Record<string, unknown> | null {
++  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
++  return parsed as Record<string, unknown>;
++}
++
++/** 识别成功后的处置：有投影器 → 覆盖轴；无投影器 → 覆盖缺失。 */
++function judged(format: WireFormat, direction: Direction, body: Record<string, unknown>, consoleManaged: boolean): ShapeVerdict {
++  if (!consoleManaged) return { format, reason: null };
++  const proto = protocolFor(format);
++  // 已识别但本网关没有该格式的投影器：与"认不出来"同属覆盖缺失（原因不同，处置相同）。
++  return { format, reason: proto === undefined ? "shape_unrecognized" : coverageShape(direction, body, proto) };
++}
++
++/** 是否需要判为"认不出"：识别失败，或请求体是个认不出的壳。 */
++function isUnrecognizable(direction: Direction, body: Record<string, unknown>, recognized: RecognizedFormat): boolean {
++  if (recognized.kind === "unknown") return true;
++  return direction === "request" && isUnrecognizableShell(body);
++}
++
++/** 覆盖轴：由 present 与投影器上报的 handled 求差集。 */
++function coverageShape(direction: Direction, body: Record<string, unknown>, proto: WireProtocol): ShapeReason | null {
++  const present = presentFor(direction, body, proto);
++  return reasonFor(direction, body, present, coverageReason(present, projectionFor(direction, body, proto).handled));
++}
++
++/**
++ * 把"覆盖结论"落到四种情形上（顺序即优先级）：
++ *
++ * 1. **没有消息容器**（只有 `model` 之类元数据）→ 合法空请求，放行。
++ *    注入逻辑本来就把它当"无 user message → inject_skipped"，形状判定没有理由更严。
++ * 2. **容器是空的**（`messages: []`）→ 合法空请求（健康探针、空会话续写），放行。
++ * 3. **容器有元素但一个已知载荷字段都没有**（`messages: [{role:"user"}]`）→ 也是合法空请求；
++ *    canary 注入的"分支 4"正是这种形态，判得比注入更严会把它误杀。
++ * 4. 其余 → 按覆盖结论：`full` 不写 reason；`partial` / `vacuous` 写对应码并阻断。
++ *
++ * 第 3 条是刻意的取舍：它让"攻击者发一个空壳 body"不被判为覆盖缺口。
++ * 代价是"容器在、字段名却全都不认识"这种情况不会单独报码——那属于协议扩面的
++ * 长期工作（REQ-V2bA-15a 的 partial 守卫覆盖了"已知字段未投影"那一半），
++ * 而不是靠形状判定硬猜。
++ */
++function reasonFor(
++  direction: Direction,
++  body: Record<string, unknown>,
++  present: readonly string[],
++  coverage: "shape_known_empty" | "shape_partial_coverage" | null,
++): ShapeReason | null {
++  if (direction !== "request") return coverage;
++  const excused = !hasAnyElement(direction, body) || present.length === 0;
++  return excused ? null : coverage;
++}
++
++/**
++ * 请求体是否是"认不出的壳"：既没有消息容器，正文本身也归类不了。
++ *
++ * 判据必须同时看两件事——
++ *   - `{model:"m"}`（无容器、但正文可归为 chat/空请求）→ **不是**壳，放行；
++ *   - `{totally:"x", model:"m"}`（无容器、正文也认不出）→ 是壳，阻断。
++ * 只看前者会把合法空请求打死；只看后者会让任意陌生 body 借权威前缀蒙混过关。
++ */
++function isUnrecognizableShell(body: Record<string, unknown>): boolean {
++  const hasContainer = hasMessageContainer(body.messages) || hasMessageContainer(body.input) || body.input !== undefined;
++  if (hasContainer) return false;
++  // 只有元数据、没有任何协议特征键：这是"空请求"，不是"壳"。
++  // 与注入逻辑的"无 user message → inject_skipped"同口径——形状判定不得比它更严。
++  if (!hasAnyProtocolSignal(body)) return false;
++  return recognize("request", body, null).kind === "unknown";
++}
++
++/** 正文里是否出现任何一种协议特征键（出现才谈得上"试图冒充某种格式"）。 */
++function hasAnyProtocolSignal(body: Record<string, unknown>): boolean {
++  const signals = ["input", "output", "instructions", "system", "tools", "tool_choice", "choices", "content"];
++  return signals.some((k) => body[k] !== undefined) || typeof body.type === "string";
++}
++
++/** 可读容器里是否至少有一个实际元素（空容器 = 合法空请求）。 */
++function hasAnyElement(direction: Direction, body: Record<string, unknown>): boolean {
++  const containers = direction === "response" ? [body.choices, body.output, body.content] : [body.messages, body.input];
++  return containers.some((c) => Array.isArray(c) ? c.length > 0 : typeof c === "string");
++}
++
++/**
++ * 消息容器**存在**（数组即可，空数组也算）。
++ *
++ * 空数组是"合法空请求"（健康探针、空会话续写），不是"认不出"——
++ * 两者处置相同（受管路由 fail-closed），但判成"认不出"会让运维噪声与协议缺口混在一起。
++ */
++function hasMessageContainer(value: unknown): boolean {
++  return Array.isArray(value);
++}
++
++/** 仅用于测试与审计：暴露某 body 的覆盖结论（不含 fail-closed 决策）。 */
++export function coverageOf(direction: Direction, parsed: unknown): "full" | "partial" | "vacuous" | "unknown" {
++  const body = asBody(parsed);
++  if (body === null) return "unknown";
++  const recognized = recognize(direction, body, null);
++  const proto = recognized.kind === "unknown" ? undefined : protocolFor(recognized.format);
++  if (proto === undefined) return "unknown";
++  return coverageVerdict(presentFor(direction, body, proto), projectionFor(direction, body, proto).handled);
++}
++
++/** 某方向下 body 实际存在的已知载荷路径。 */
++function presentFor(direction: Direction, body: Record<string, unknown>, proto: WireProtocol): readonly string[] {
++  return presentPaths(direction === "request" ? proto.coverage.requestPayloadPaths : proto.coverage.responsePayloadPaths, body);
++}
++
++/** 某方向下协议投影器的产物。 */
++function projectionFor(direction: Direction, body: Record<string, unknown>, proto: WireProtocol) {
++  return direction === "request" ? proto.projectRequest(body) : proto.projectResponse(body, null);
++}
+diff --git a/src/gateway/protocols/registry.ts b/src/gateway/protocols/registry.ts
+new file mode 100644
+index 0000000..3e208d5
+--- /dev/null
++++ b/src/gateway/protocols/registry.ts
+@@ -0,0 +1,138 @@
++// @no-test-required: 测试在 tests/unit/gateway/protocols/registry.test.ts（含"跨格式相似性"三条回归）（本项目测试布局为 tests/ 目录；Gate 5a 仅识别同目录/根 tests/ 六种路径）
++import type { Direction, RecognizedFormat, WireFormat } from "./types.ts";
++import { protocolFor } from "./table.ts";
++
++/**
++ * @test REQ-V2bA-03 / REQ-V2bA-04 / REQ-V2bA-10
++ * @intent 协议注册表与"路由权威"识别。
++ *
++ * 路由权威的理由（R2 评审 C1，实测）：Claude 的"无 system + 纯文本"请求与 Chat 请求
++ * **在结构上完全相同**，任何纯内容识别都必然二选一或判歧义。判歧义在 fail-closed 下
++ * 会阻断目标客户端自己的全部流量。所以：
++ *
++ *   ① 已知前缀（WIRE_ROUTE_PREFIXES）→ 直接决定线格式，不投票；
++ *   ② 无权威前缀时才看正文，且用**互斥**判别键，最后落 chat（倾向已支持格式而非判未知）；
++ *   ③ 两者都不命中 → unknown（只可能是真正无法归类的 body）。
++ *
++ * 识别是**纯数据分类，不抛异常**（设计 D3a）：坏输入返回 unknown，而不是让异常冒泡成
++ * "checker error → block" 那条无度量的失败路径。
++ */
++
++/** 路由前缀 → 线格式。前缀是**第一段**路径（`<gw>/<prefix>/<provider>/...`）。 */
++export const WIRE_ROUTE_PREFIXES: ReadonlyMap<string, WireFormat> = Object.freeze(
++  new Map<string, WireFormat>([
++    ["claude", "anthropic-messages"],
++    ["codex", "openai-responses"],
++    ["promptfoo", "chat"],
++    ["opencode", "chat"],
++    ["delphi", "chat"],
++    ["dsh", "chat"],
++  ]),
++);
++
++export { protocolFor };
++
++/** 前缀 → 线格式；未知前缀返回 undefined（= 没有权威）。 */
++export function formatForPrefix(prefix: string | null | undefined): WireFormat | undefined {
++  if (!prefix) return undefined;
++  return WIRE_ROUTE_PREFIXES.get(prefix);
++}
++
++function isObject(v: unknown): v is Record<string, unknown> {
++  return typeof v === "object" && v !== null && !Array.isArray(v);
++}
++
++/** Responses 的特征键：出现任一个即足以归类（与 messages 不冲突，因为 Claude 不带这些键）。 */
++function looksLikeResponses(parsed: Record<string, unknown>, direction: Direction): boolean {
++  if (direction === "response") return parsed.object === "response" || Array.isArray(parsed.output);
++  return parsed.input !== undefined || parsed.output !== undefined || parsed.instructions !== undefined;
++}
++
++/** Anthropic 响应/帧特征：帧类型前缀集合。 */
++const ANTHROPIC_FRAME_PREFIXES = ["content_block", "message_start", "message_delta"] as const;
++
++function frameTypeOf(parsed: Record<string, unknown>): string {
++  return typeof parsed.type === "string" ? parsed.type : "";
++}
++
++function looksLikeAnthropicResponse(parsed: Record<string, unknown>): boolean {
++  const t = frameTypeOf(parsed);
++  if (t === "message" && Array.isArray(parsed.content)) return true;
++  return ANTHROPIC_FRAME_PREFIXES.some((prefix) => t.startsWith(prefix));
++}
++
++/** 请求侧流式帧：带自己 type、且既不是 chat 体也不是 responses 帧。 */
++function looksLikeAnthropicFrame(parsed: Record<string, unknown>): boolean {
++  const t = frameTypeOf(parsed);
++  const isFrame = t.length > 0 && parsed.choices === undefined && parsed.messages === undefined;
++  if (!isFrame || t.startsWith("response.")) return false;
++  return ANTHROPIC_FRAME_PREFIXES.some((prefix) => t.startsWith(prefix));
++}
++
++/** 消息里是否有 tool_use / tool_result 块（Anthropic 独有的块类型）。 */
++function hasAnthropicToolBlocks(messages: unknown): boolean {
++  if (!Array.isArray(messages)) return false;
++  const isToolBlock = (seg: unknown): boolean => isObject(seg) && (seg.type === "tool_use" || seg.type === "tool_result");
++  return messages.some((m: unknown) => isObject(m) && Array.isArray(m.content) && m.content.some(isToolBlock));
++}
++
++function looksLikeAnthropicRequest(parsed: Record<string, unknown>): boolean {
++  if (looksLikeAnthropicFrame(parsed)) return true;
++  return Array.isArray(parsed.system) || hasAnthropicToolBlocks(parsed.messages);
++}
++
++/** Anthropic 特征：块数组 system、tool_use/tool_result 块，或 Anthropic 帧类型。 */
++function looksLikeAnthropic(parsed: Record<string, unknown>, direction: Direction): boolean {
++  return direction === "response" ? looksLikeAnthropicResponse(parsed) : looksLikeAnthropicRequest(parsed);
++}
++
++/** 是否有"看起来像 chat"的迹象（判别键用完之后的兜底）。 */
++function looksLikeChatLike(parsed: Record<string, unknown>, direction: Direction): boolean {
++  if (direction === "response") {
++    const t = typeof parsed.type === "string" ? parsed.type : "";
++    if (t.startsWith("response.")) return false;
++    return Array.isArray(parsed.choices);
++  }
++  return Array.isArray(parsed.messages);
++}
++
++/**
++ * 识别线格式。
++ * @param direction 请求或响应
++ * @param parsed 已解析的 JSON（不可解析时传 null）
++ * @param routePrefix 路由前缀（`<gw>/<prefix>/...` 的第一段）；无权威时传 null/undefined
++ */
++function recognizeResponse(body: Record<string, unknown>): RecognizedFormat {
++  if (frameTypeOf(body).startsWith("response.")) return { kind: "known", format: "openai-responses" };
++  return recognizeBody(body, "response");
++}
++
++function recognizeBody(body: Record<string, unknown>, direction: Direction): RecognizedFormat {
++  if (looksLikeResponses(body, direction)) return { kind: "known", format: "openai-responses" };
++  if (looksLikeAnthropic(body, direction)) return { kind: "known", format: "anthropic-messages" };
++  if (looksLikeChatLike(body, direction)) return { kind: "known", format: "chat" };
++  return { kind: "unknown" };
++}
++
++/**
++ * 识别线格式。
++ * @param direction 请求或响应
++ * @param parsed 已解析的 JSON（不可解析时传 null）
++ * @param routePrefix 路由前缀（`<gw>/<prefix>/...` 的第一段）；无权威时传 null/undefined
++ */
++export function recognize(direction: Direction, parsed: unknown, routePrefix?: string | null): RecognizedFormat {
++  const authoritative = formatForPrefix(routePrefix);
++  if (authoritative) return { kind: "known", format: authoritative };
++  if (!isObject(parsed)) return { kind: "unknown" };
++  return direction === "response" ? recognizeResponse(parsed) : recognizeBody(parsed, "request");
++}
++
++/** `parseRoute` 用：给定首段路径返回与之绑定的线格式（未绑定时 undefined）。 */
++export function boundFormatForPath(firstSegment: string | null): WireFormat | undefined {
++  return formatForPrefix(firstSegment);
++}
++
++/** 供测试与文档列出全部已绑定前缀。 */
++export function wireRoutePrefixes(): readonly string[] {
++  return [...WIRE_ROUTE_PREFIXES.keys()];
++}
+diff --git a/src/gateway/protocols/responses.ts b/src/gateway/protocols/responses.ts
+new file mode 100644
+index 0000000..5bf3b92
+--- /dev/null
++++ b/src/gateway/protocols/responses.ts
+@@ -0,0 +1,220 @@
++// @no-test-required: 测试在 tests/unit/gateway/protocols/responses.test.ts（本项目测试布局为 tests/ 目录；Gate 5a 仅识别同目录/根 tests/ 六种路径）
++import type { CoverageSpec, Projection, WireProtocol } from "./types.ts";
++
++/**
++ * @test REQ-V2bA-01 / AC-V2bA-01a~b
++ * @intent OpenAI Responses 协议投影（Codex 的线格式；`wire_api="responses"` 是唯一支持值）。
++ *
++ * 改动前的盲区（实测，见 var/probes/scan-unit-probe.mjs）：
++ *   请求侧只有 `tools` 进扫描单元——`instructions`、`input[]`（`input_text` /
++ *   `function_call.arguments` / `function_call_output.output`）全不可见；
++ *   响应侧 **投影为空字符串**——`output[]` 的 `output_text` 与 `function_call.arguments` 全不可见。
++ *
++ * 形态要点：
++ *   - `input` 可为**字符串**或数组（数组元素按 `type` 分派）；
++ *   - 两代 Responses 形态并存，故 `output[]` 的元素既可能是 `message/content[]` 也可能是扁平文本字段。
++ *
++ * 实现要点：每个元素的投影拆成若干小函数，避免深层嵌套（Clean Code 门限 4 层）。
++ */
++
++function isObject(v: unknown): v is Record<string, unknown> {
++  return typeof v === "object" && v !== null && !Array.isArray(v);
++}
++
++/** 字符串直接入投影；对象走 JSON 规范化并报告"派生"。返回是否派生。 */
++function pushPayload(value: unknown, parts: string[]): boolean {
++  if (typeof value === "string") {
++    parts.push(value);
++    return false;
++  }
++  if (value === undefined) return false;
++  parts.push(JSON.stringify(value));
++  return true;
++}
++
++/** content[] 的单个块：字符串 / `{text}` / `{arguments}`。 */
++function pushOneContentBlock(c: unknown, parts: string[]): boolean {
++  if (typeof c === "string") {
++    parts.push(c);
++    return false;
++  }
++  if (!isObject(c)) return false;
++  if (typeof c.text === "string") {
++    parts.push(c.text);
++    return false;
++  }
++  return c.arguments === undefined ? false : pushPayload(c.arguments, parts);
++}
++
++/** content[] 块：字符串 / `{text}` / `{arguments}`。 */
++function pushContentBlocks(blocks: unknown, parts: string[]): boolean {
++  if (!Array.isArray(blocks)) return false;
++  let derived = false;
++  for (const c of blocks) derived = pushOneContentBlock(c, parts) || derived;
++  return derived;
++}
++
++/** summary[] 的 `{text}`。 */
++function pushSummary(summary: unknown, parts: string[]): void {
++  if (!Array.isArray(summary)) return;
++  for (const s of summary) if (isObject(s) && typeof s.text === "string") parts.push(s.text);
++}
++
++/** output 字段：字符串或块数组。 */
++function pushOutputField(output: unknown, parts: string[]): void {
++  if (typeof output === "string") {
++    parts.push(output);
++    return;
++  }
++  pushContentBlocks(output, parts);
++}
++
++/** 元素的标量文本字段：扁平 text（两代 Responses 形态并存）。 */
++function pushItemText(it: Record<string, unknown>, parts: string[]): void {
++  if (typeof it.name === "string") parts.push(it.name);
++  if (typeof it.text === "string") parts.push(it.text);
++}
++
++/** 单个 input/output 元素的投影。返回是否产生派生文本。 */
++function pushItem(it: unknown, parts: string[]): boolean {
++  if (typeof it === "string") {
++    parts.push(it);
++    return false;
++  }
++  if (!isObject(it)) return false;
++  const fromContent = pushContentBlocks(it.content, parts);
++  pushItemText(it, parts);
++  const fromArgs = it.arguments === undefined ? false : pushPayload(it.arguments, parts);
++  pushOutputField(it.output, parts);
++  pushSummary(it.summary, parts);
++  return fromContent || fromArgs;
++}
++
++/** input / output 整体投影（字符串或数组）。 */
++function pushItems(items: unknown, parts: string[]): boolean {
++  if (typeof items === "string") {
++    parts.push(items);
++    return false;
++  }
++  if (!Array.isArray(items)) return false;
++  let derived = false;
++  for (const it of items) derived = pushItem(it, parts) || derived;
++  return derived;
++}
++
++/** 元素字段 → 是否"存在即算该 handled 路径"（与 pushItem 的可见面一一对应）。 */
++const ITEM_HANDLED: ReadonlyArray<readonly [string, (v: unknown) => boolean]> = Object.freeze([
++  ["content", Array.isArray],
++  ["name", (v: unknown) => typeof v === "string"],
++  ["arguments", (v: unknown) => v !== undefined],
++  ["output", (v: unknown) => v !== undefined],
++  ["summary", Array.isArray],
++  ["text", (v: unknown) => typeof v === "string"],
++]);
++
++function markOneItem(it: unknown, prefix: string, handled: Set<string>): void {
++  if (!isObject(it)) return;
++  for (const [field, present] of ITEM_HANDLED) if (present(it[field])) handled.add(`${prefix}[].${field}`);
++}
++
++/** 登记 handled 路径（与 pushItem 的可见面一一对应）。 */
++function markHandledItems(items: unknown, prefix: string, handled: Set<string>): void {
++  if (typeof items === "string") {
++    handled.add(prefix);
++    return;
++  }
++  if (!Array.isArray(items)) return;
++  for (const it of items) markOneItem(it, prefix, handled);
++}
++
++function projectRequest(parsed: Record<string, unknown>): Projection {
++  const parts: string[] = [];
++  const handled = new Set<string>();
++  let derived = false;
++  if (typeof parsed.instructions === "string") {
++    parts.push(parsed.instructions);
++    handled.add("instructions");
++  }
++  if (parsed.input !== undefined) {
++    derived = pushItems(parsed.input, parts) || derived;
++    markHandledItems(parsed.input, "input", handled);
++    handled.add("input");
++  }
++  if (Array.isArray(parsed.tools)) {
++    parts.push(JSON.stringify(parsed.tools));
++    handled.add("tools");
++    derived = true;
++  }
++  return { parts, derived, handled: [...handled], present: [] };
++}
++
++function projectResponse(parsed: Record<string, unknown>, _requestedModel: string | null): Projection {
++  const parts: string[] = [];
++  const handled = new Set<string>();
++  let derived = false;
++  if (parsed.output !== undefined) {
++    derived = pushItems(parsed.output, parts);
++    markHandledItems(parsed.output, "output", handled);
++    handled.add("output");
++  }
++  return { parts, derived, handled: [...handled], present: [] };
++}
++
++/**
++ * SL-04（AC-V2bA-01c）：Responses 流式帧投影。
++ *
++ * 帧类型（官方 SSE）：`response.created` / `response.output_item.added`（无文本）/
++ * `response.output_text.delta`（`delta` 字符串）/ `response.function_call_arguments.delta`
++ * 与 **`…done`**（`done` 帧带完整 `arguments`，不能只靠 delta 拼接）/
++ * `response.reasoning_summary_text.delta` / `response.completed`（带 `response.usage`）。
++ * 心跳/元数据帧投影为空串（合法常态，不计入 present）。
++ */
++function projectFrame(parsed: Record<string, unknown>): Projection {
++  const parts: string[] = [];
++  const handled: string[] = [];
++  let derived = false;
++  if (typeof parsed.delta === "string") {
++    parts.push(parsed.delta);
++    handled.push("delta");
++  }
++  if (typeof parsed.name === "string") {
++    parts.push(parsed.name);
++    handled.push("name");
++  }
++  if (parsed.arguments !== undefined) {
++    derived = pushPayload(parsed.arguments, parts);
++    handled.push("arguments");
++  }
++  if (Array.isArray(parsed.summary)) {
++    pushSummary(parsed.summary, parts);
++    handled.push("summary");
++  }
++  return { parts, derived, handled, present: [] };
++}
++
++export const RESPONSES_COVERAGE: CoverageSpec = Object.freeze({
++  requestPayloadPaths: Object.freeze([
++    "instructions",
++    "input",
++    "input[].content",
++    "input[].arguments",
++    "input[].output",
++    "tools",
++  ]) as readonly string[],
++  responsePayloadPaths: Object.freeze([
++    "output",
++    "output[].content",
++    "output[].arguments",
++    "output[].summary",
++    "output[].text",
++  ]) as readonly string[],
++});
++
++export const responsesProtocol: WireProtocol = Object.freeze({
++  format: "openai-responses" as const,
++  coverage: RESPONSES_COVERAGE,
++  projectRequest,
++  projectResponse,
++  projectFrame,
++  canaryInjection: false,
++});
+diff --git a/src/gateway/protocols/table.ts b/src/gateway/protocols/table.ts
+new file mode 100644
+index 0000000..4dac489
+--- /dev/null
++++ b/src/gateway/protocols/table.ts
+@@ -0,0 +1,25 @@
++// @no-test-required: 测试在 tests/unit/gateway/protocols/registry.test.ts（本项目测试布局为 tests/ 目录；Gate 5a 仅识别同目录/根 tests/ 六种路径）
++import { chatProtocol } from "./chat.ts";
++import { anthropicMessagesProtocol } from "./anthropic.ts";
++import { responsesProtocol } from "./responses.ts";
++import type { WireFormat, WireProtocol } from "./types.ts";
++
++/**
++ * 已实装投影器的协议表。
++ *
++ * 为什么独立成模块：它一度写在 registry.ts 里，而 registry 又被 scan-unit 引用、
++ * scan-unit 又被 core 引用，形成 `registry → chat → scan-unit → registry` 的环。
++ * 环本身不报错，但**运行期解析到的是空表**——识别成功、查表失败，
++ * 于是每条正常请求都被判成"没有投影器"而阻断。把它拆出来后依赖变成单向：
++ * table → 各协议 → (types)，registry → table。
++ */
++export const PROTOCOL_TABLE: ReadonlyMap<WireFormat, WireProtocol> = new Map<WireFormat, WireProtocol>([
++  ["chat", chatProtocol],
++  ["anthropic-messages", anthropicMessagesProtocol],
++  ["openai-responses", responsesProtocol],
++]);
++
++/** 取某个线格式的协议实现；未实装返回 undefined。 */
++export function protocolFor(format: WireFormat): WireProtocol | undefined {
++  return PROTOCOL_TABLE.get(format);
++}
+diff --git a/src/gateway/protocols/types.ts b/src/gateway/protocols/types.ts
+new file mode 100644
+index 0000000..210ad1c
+--- /dev/null
++++ b/src/gateway/protocols/types.ts
+@@ -0,0 +1,88 @@
++/**
++ * @test REQ-V2bA-03 / REQ-V2bA-04 / REQ-V2bA-14
++ * @intent 协议线格式（wire format）的类型契约。
++ *
++ * 立此文件的理由（R2 评审 C2）："该协议的已知载荷字段是否都被投影了"这件事，
++ * 不能由投影器自己声明——投影器忘了某个字段时，它照样会说自己"覆盖了"。
++ * 因此把权威清单变成**协议声明的数据**（CoverageSpec），由调用方拿清单与投影器
++ * 上报的 handled 求差集，得到与文本量无关的覆盖结论。
++ *
++ * 三个取值域都是封闭的，新增取值必须同步 specification.yaml 与文档。
++ */
++
++/** 网关能识别的线格式。新增一种必须同时加 CoverageSpec 与正负样本矩阵。 */
++export type WireFormat = "chat" | "anthropic-messages" | "openai-responses";
++
++/** 识别结果：只有两态。覆盖结果不在这个轴上（见 CoverageVerdict）。 */
++export type RecognizedFormat = { readonly kind: "known"; readonly format: WireFormat } | { readonly kind: "unknown" };
++
++/** 轴2：覆盖结论。与"有没有文本"无关，只看 present/handled 两个集合。 */
++export type CoverageVerdict =
++  /** present 非空且全部被处理 —— 正常判定。 */
++  | "full"
++  /** 有已知载荷字段没被投影器处理 —— 受管路由 fail-closed。 */
++  | "partial"
++  /** 一个已知载荷字段都没出现 —— 受管路由 fail-closed。 */
++  | "vacuous";
++
++/** evidence 顶层 reason 的封闭枚举（与既有 registry_unavailable / inject_skipped 并列）。 */
++export type CoverageReason = "shape_unrecognized" | "shape_known_empty" | "shape_partial_coverage";
++
++/**
++ * 一个协议"已知载荷字段"的权威清单。
++ *
++ * 路径语法：点号分隔的键路径；数组中出现的元素记为 `key[]`；元素内部的键继续用点号串接
++ * （例如 `messages[].content[].text`）。**只登记会被扫描的载荷**，结构性字段
++ * （model / usage / finish_reason）不登记——它们进 meta，不进文本投影。
++ */
++export interface CoverageSpec {
++  readonly requestPayloadPaths: readonly string[];
++  readonly responsePayloadPaths: readonly string[];
++}
++
++/** 投影结果：文本片段 + 派生标记 + 覆盖上报。 */
++export interface Projection {
++  /** 交给 checker 的文本片段（调用方用既有分隔符拼接）。 */
++  readonly parts: readonly string[];
++  /**
++   * 片段中**存在规范化产物**（对象转 JSON 等），其 offsets 不指回原文（REQ-05）。
++   * 调用方不得把派生片段的 offsets 当成原文位置。
++   */
++  readonly derived: boolean;
++  /** 本次投影实际处理过的载荷路径（来自 CoverageSpec 的同一套路径语法）。 */
++  readonly handled: readonly string[];
++  /** 原始 body 中**存在**的已知载荷路径（由调用方用 CoverageSpec 求得后回填）。 */
++  readonly present: readonly string[];
++}
++
++/** 方向：请求侧 / 响应侧。 */
++export type Direction = "request" | "response";
++
++export interface WireProtocol {
++  readonly format: WireFormat;
++  readonly coverage: CoverageSpec;
++  /** 非流式请求投影。 */
++  projectRequest(parsed: Record<string, unknown>): Projection;
++  /** 非流式响应投影。 */
++  projectResponse(parsed: Record<string, unknown>, requestedModel: string | null): Projection;
++  /**
++   * 流式一帧投影。没有可扫载荷的帧（心跳、`ping`、只带元数据的帧）返回空 parts——
++   * 这是合法常态，**不**计入 present（设计 D-02 响应侧空洞修正）。
++   */
++  projectFrame(parsed: Record<string, unknown>): Projection;
++  /** 该格式是否支持 canary 注入（DR-031 / D4：仅 chat）。 */
++  readonly canaryInjection: boolean;
++}
++
++/** 空投影（无载荷）的便捷构造。 */
++export const EMPTY_PROJECTION: Projection = Object.freeze({
++  parts: Object.freeze([]) as readonly string[],
++  derived: false,
++  handled: Object.freeze([]) as readonly string[],
++  present: Object.freeze([]) as readonly string[],
++});
++
++/** 由 parts/handled 构造投影；derived 由调用方显式给出。 */
++export function projection(parts: readonly string[], handled: readonly string[], derived = false): Projection {
++  return { parts, handled, present: [], derived };
++}
+diff --git a/src/gateway/scan-unit.ts b/src/gateway/scan-unit.ts
+index d5103ef..829b5fc 100644
+--- a/src/gateway/scan-unit.ts
++++ b/src/gateway/scan-unit.ts
+@@ -1,4 +1,6 @@
+ import type { ScanUnit, Transport } from "../shared/types.ts";
++import type { Projection, WireFormat } from "./protocols/types.ts";
++import { protocolFor } from "./protocols/table.ts";
+ import { exceedsWindowOverflowLimit } from "./window-store.ts";
+ 
+ /**
+@@ -190,22 +192,64 @@ function collectRequestBodyParts(parsed: Record<string, unknown>, meta: Record<s
+   return parts;
+ }
+ 
++/**
++ * SL-02/SL-03/SL-04（REQ-V2bA-01/02）：按协议线格式取得投影结果。
++ *
++ * 契约：`format` 缺席 → 返回 null，调用方沿用既有 Chat 投影，既有行为**逐字节不变**
++ * （由 tests/unit/gateway/protocols/chat-baseline.test.ts 的快照钉住）。
++ * 流式逐帧走 `projectFrame`（SSE 帧与整体响应形态不同，不能共用 `projectResponse`）。
++ *
++ * 返回的 `format` 非空即"本次走了协议投影器"，调用方只需据此写 meta——
++ * 这样构造器里的分支数不随协议数量增长（Gate 3 复杂度门的实测教训：
++ * 第一版把这套分派内联进两个构造器，CCN 从 5/7 涨到 9/12）。
++ */
++interface ProtocolProjection {
++  readonly text: string;
++  readonly derived: boolean;
++  readonly format: WireFormat;
++}
++
++function projectVia(direction: "request" | "response", parsed: Record<string, unknown>, format: WireFormat | undefined, transport: Transport, requestedModel: string | null): ProtocolProjection | null {
++  const proto = format === undefined ? undefined : protocolFor(format);
++  if (proto === undefined) return null;
++  const p = direction === "request" ? proto.projectRequest(parsed) : transport === "stream" ? proto.projectFrame(parsed) : proto.projectResponse(parsed, requestedModel);
++  return { text: p.parts.join("\n"), derived: p.derived, format: format as WireFormat };
++}
++
++/** 协议投影的分派结果落 meta（wire_format / derived_text）。 */
++function markProtocolMeta(meta: Record<string, unknown>, p: ProtocolProjection): void {
++  meta.wire_format = p.format;
++  if (p.derived) meta.derived_text = true;
++}
++
++/** 请求侧文本：协议投影优先；否则沿用既有 Chat 展平（含声明面收集）。 */
++function requestTextFor(parsed: Record<string, unknown>, meta: Record<string, unknown>, proto?: { readonly format: WireFormat }): string {
++  const direct = projectVia("request", parsed, proto?.format, "non-stream", null);
++  if (direct !== null) {
++    markProtocolMeta(meta, direct);
++    // 声明面（tools）仍按既有口径收集：tool-call-shape 依赖 declared_tools
++    if (Array.isArray(parsed.tools)) collectDeclaredMeta(parsed.tools, meta);
++    return direct.text;
++  }
++  // messages 展平为 text；extra_headers 里的 auth 头跳过（AC-VETO-002-06）
++  return collectRequestBodyParts(parsed, meta).join("\n");
++}
++
+ /** 请求侧：把 body JSON 展平为 text 投影 + meta。 */
+ export function buildRequestScanUnit(
+   body: string,
+   parsed: Record<string, unknown> | null,
+   _headers: Readonly<Record<string, string>>,
+   transport: Transport,
++  proto?: { readonly format: WireFormat },
+ ): ScanUnit {
+   const meta: Record<string, unknown> = {};
+-  if (parsed && typeof parsed === "object") {
+-    if (typeof parsed.model === "string") meta.model_requested = parsed.model;
+-    // messages 展平为 text；extra_headers 里的 auth 头跳过（AC-VETO-002-06）
+-    const parts = collectRequestBodyParts(parsed, meta);
+-    return withDecoded({ direction: "request", transport, text: parts.join("\n"), meta });
++  if (!parsed || typeof parsed !== "object") {
++    // parsed 失败：原样 text，标记 malformed
++    return withDecoded({ direction: "request", transport, text: body, meta, malformed: true });
+   }
+-  // parsed 失败：原样 text，标记 malformed
+-  return withDecoded({ direction: "request", transport, text: body, meta, malformed: true });
++  if (typeof parsed.model === "string") meta.model_requested = parsed.model;
++  return withDecoded({ direction: "request", transport, text: requestTextFor(parsed, meta, proto), meta });
+ }
+ 
+ interface DeclaredTool {
+@@ -269,6 +313,7 @@ export function buildResponseScanUnit(
+   requestedModel: string | null,
+   transport: Transport,
+   declaredMeta?: Readonly<Record<string, unknown>>,
++  proto?: { readonly format: WireFormat },
+ ): ScanUnit {
+   // SL-01/D-12：声明面（declared_tools/declared_required）随单元下传；先展开，
+   // 让下方解析出的结构性字段（model/usage/finish_reason）保持优先。
+@@ -279,11 +324,28 @@ export function buildResponseScanUnit(
+   }
+   if (typeof parsed.model === "string") meta.model_responded = parsed.model;
+   if (parsed.usage && typeof parsed.usage === "object") meta.usage = parsed.usage;
++  return withDecoded({ direction: "response", transport, text: responseTextFor(parsed, meta, proto, transport, requestedModel), meta });
++}
++
++/** 响应侧文本：协议投影优先；否则沿用既有 Chat 展平（choices 逐段空串拼接）。 */
++function responseTextFor(
++  parsed: Record<string, unknown>,
++  meta: Record<string, unknown>,
++  proto: { readonly format: WireFormat } | undefined,
++  transport: Transport,
++  requestedModel: string | null,
++): string {
++  const direct = projectVia("response", parsed, proto?.format, transport, requestedModel);
++  if (direct !== null) {
++    markProtocolMeta(meta, direct);
++    if (typeof parsed.stop_reason === "string") meta.finish_reason = parsed.stop_reason;
++    return direct.text;
++  }
+   // 提取内容文本（choices[*].delta/message.content + **tool_calls/function_call.arguments**）
+   const parts: string[] = [];
+   const choiceMeta = collectChoiceParts(parsed, parts);
+   if (choiceMeta.finish_reason !== undefined) meta.finish_reason = choiceMeta.finish_reason;
+-  return withDecoded({ direction: "response", transport, text: parts.join(""), meta });
++  return parts.join("");
+ }
+ 
+ // ── SL-01（AC-V2a-01）：流式 tool-call arguments 跨 chunk 归并 ─────────────────
+diff --git a/src/gateway/server.ts b/src/gateway/server.ts
+index 479af32..7ce9e95 100644
+--- a/src/gateway/server.ts
++++ b/src/gateway/server.ts
+@@ -84,6 +84,9 @@ export interface RouteInfo {
+ // 保留段：不是客户端名，而是 API 版本前缀（兼容 legacy 客户端与现有测试）。
+ const RESERVED_SEGMENTS: ReadonlySet<string> = new Set(["v1", "api"]);
+ 
++import { formatForPrefix } from "./protocols/registry.ts";
++import { CANARY_MANAGED_ROUTES } from "./core.ts";
++
+ export function parseRoute(urlPath: string): RouteInfo {
+   const path = urlPath.split("?")[0] ?? "/";
+   const segs = path.split("/").filter((s) => s.length > 0);
+@@ -178,7 +181,10 @@ async function dispatch(
+   // 判定一出即登记进每请求状态：兜底路径的 evidence 传输字段据此写，不再由交付计数反推
+   // （PWR3-B-m1：`fwd.chunks > 0` 在 headers 已出而零帧转发时会把流式请求误记为非流式）。
+   fwd.transport = transport;
+-  const outcome = await handleChatCompletions(core, { body: bodyText, headers, upstreamUrl, ...id, endpointHost, transport });
++  // SL-05/SL-06（REQ-V2bA-04b/15）：路由前缀既是识别权威，也是 fail-closed 的作用域来源。
++  const routePrefix = route.client;
++  const managedRoute = isManagedRoute(route);
++  const outcome = await handleChatCompletions(core, { body: bodyText, headers, upstreamUrl, ...id, endpointHost, transport, routePrefix, managedRoute });
+ 
+   await deliverOutcome(res, outcome, fwd);
+   writeEvidence(cfg, { ...id, endpointHost, bodyText, respText: outcome.body, stream: transport === "stream", findings: outcome.findings,
+@@ -188,6 +194,19 @@ async function dispatch(
+     partial: outcome.actionTaken === "terminated_after_delivery", t0 });
+ }
+ 
++/**
++ * SL-06（REQ-V2bA-15）：受管路由的判定域。
++ *
++ * 定义（设计 D-03，R2 评审要求写死）：受管路由 = 已知路由前缀集合 ∪ CANARY_MANAGED_ROUTES 的路由键。
++ * 二者并集即 fail-closed 的作用域；未命中并集的路径仍被扫描与记录，但不因形状/覆盖失败而阻断
++ * （"接得住但不打死"，写进 KNOWN-ISSUES）。
++ */
++function isManagedRoute(route: RouteInfo): boolean {
++  if (route.client !== null && formatForPrefix(route.client) !== undefined) return true;
++  const key = `${route.client ?? ""}/${route.providerId ?? ""}`;
++  return CANARY_MANAGED_ROUTES.has(key);
++}
++
+ /** 读请求体全文（dispatch 与兜底路径的共享入口）。 */
+ async function readBodyText(req: IncomingMessage): Promise<string> {
+   const chunks: Buffer[] = [];
+diff --git a/src/policy/reason.ts b/src/policy/reason.ts
+index ca79aeb..5025dbf 100644
+--- a/src/policy/reason.ts
++++ b/src/policy/reason.ts
+@@ -12,9 +12,19 @@
+ // （不得静默丢弃），但排位低于一切词表内值。policy 层不得 import evidence 层，故本处
+ // 常量独立声明，与 evidence/schema.ts 的 REASON_VOCAB 的同源一致性由测试钉死。
+ 
++/**
++ * 网关自身行为产生的 reason（不是 checker 的业务命中），按优先级排序。
++ *
++ * v2b-A 新增三个 `shape_*`：协议线格式的两轴判定结果（REQ-V2bA-14）。
++ * 它们排在 canary 两项之后——形状判定发生在 canary 编排之前，
++ * 若两者同时出现，说明请求在更早的阶段就已经不合规，形状原因更能解释"为什么没扫"。
++ */
+ export const GATEWAY_REASON_PRIORITY: readonly string[] = Object.freeze([
+   "registry_unavailable",
+   "inject_skipped",
++  "shape_unrecognized",
++  "shape_known_empty",
++  "shape_partial_coverage",
+ ]);
+ 
+ export const CHECKER_ERROR_REASON_ORDER: readonly string[] = Object.freeze([
+diff --git a/src/shared/client-wire-format.ts b/src/shared/client-wire-format.ts
+new file mode 100644
+index 0000000..1ab60f3
+--- /dev/null
++++ b/src/shared/client-wire-format.ts
+@@ -0,0 +1,65 @@
++// @no-test-required: 测试在 tests/unit/shared/client-wire-format.test.ts（本项目测试布局为 tests/ 目录；Gate 5a 仅识别同目录/根 tests/ 六种路径）
++/**
++ * @test REQ-V2bA-10 / AC-V2bA-10a
++ * @intent 每个受管客户端"用哪种线格式说话"的声明表。
++ *
++ * 为什么放在 shared 而不是 adapters 或 gateway（R2 评审 M5）：
++ *   - `adapters` 层只允许 import `shared`，不得 import `src/gateway/**`；
++ *   - `gateway` 同样不 import adapters；
++ *   - 而 doctor 需要把"客户端"与"它用的线格式有没有投影覆盖"join 起来——
++ *     这个 join 只能落在组合根（cli），前提是**两边的数据类型都来自 shared**。
++ * 所以这里只放**纯数据**：不 import 任何实现。
++ */
++
++/** 网关能识别的线格式（与 src/gateway/protocols/types.ts 的 WireFormat 同值域）。 */
++export type ClientWireFormat = "chat" | "anthropic-messages" | "openai-responses";
++
++/** 一个受管客户端的线格式声明。 */
++export interface ClientWireFormatSpec {
++  /** 适配器 id（与 Adapter.name 一致）。 */
++  readonly client: string;
++  /**
++   * 该客户端**默认**使用的线格式。
++   * `null` 表示"取决于用户配置，无法确定"——doctor 必须据此报 coverage_unknown，
++   * 而不是猜一个（R2 CRITICAL-3：输出确定性错误结论比说"不知道"更危险）。
++   */
++  readonly format: ClientWireFormat | null;
++  /** 判定依据（人类可读，写明为什么是这个格式）。 */
++  readonly basis: string;
++}
++
++/** 受管客户端的线格式声明表。新增客户端必须同时在这里登记。 */
++export const CLIENT_WIRE_FORMATS: readonly ClientWireFormatSpec[] = Object.freeze([
++  Object.freeze({
++    client: "opencode",
++    format: "chat",
++    basis: "OpenAI 兼容 provider，走 Chat Completions（本机 1496 条 evidence 实测）",
++  }),
++  Object.freeze({
++    client: "delphi",
++    format: "chat",
++    basis: "endpoint 覆写为 OpenAI 兼容的 /v1/chat/completions",
++  }),
++  Object.freeze({
++    client: "claude-code",
++    format: "anthropic-messages",
++    basis: "官方 settings 参考：env.ANTHROPIC_BASE_URL 指向网关，推理请求为 POST /v1/messages",
++  }),
++  Object.freeze({
++    client: "codex",
++    format: "openai-responses",
++    basis: "官方 config-reference：model_providers.<id>.wire_api 唯一支持值 responses（Responses 协议）",
++  }),
++  Object.freeze({
++    client: "promptfoo",
++    format: null,
++    // promptfoo 的 providers[].config 可指定 openai:chat:* 或 openai:responses:*，
++    // 取决于用户写了什么——适配器能读配置，但"读不到"和"读到了但没写死"都要报 unknown。
++    basis: "provider 的 config.api 决定 chat 或 responses；配置里没写死时无法确定",
++  }),
++]);
++
++/** 取某客户端的声明；未登记返回 undefined（= 不受管，不参与覆盖判定）。 */
++export function wireFormatOf(client: string): ClientWireFormatSpec | undefined {
++  return CLIENT_WIRE_FORMATS.find((c) => c.client === client);
++}

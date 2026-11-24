@@ -1,5 +1,5 @@
 // @no-test-required: 测试在 tests/unit/cli/doctor-v2b.test.ts（本项目测试布局为 tests/ 目录；Gate 5a 仅识别同目录/根 tests/ 六种路径）
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Adapter, Env } from "../adapters/index.ts";
 import { delphiAdapter } from "../adapters/delphi.ts";
@@ -88,6 +88,11 @@ function judge(adapter: Adapter, env: Env, gatewayBaseUrl: string): ClientCovera
     return { client, state: "not_installed", failsDoctor: false, message: `未安装（${path} 不存在）` };
   }
   const current = adapter.readCurrentConfig(env);
+  // 配置存在却读不出任何内容 = 损坏，不是"没配"。把损坏报成 not_configured 会让 doctor 绿灯，
+  // 而这恰恰是最该被发现的状态（适配器自己的注释写着"绝不把读不到当成配好了"）。
+  if (isUnreadableConfig(path, current)) {
+    return { client, state: "drift", failsDoctor: true, message: `配置不可解析：${path}（修复或删除后重试）` };
+  }
   const drift = adapter.detectDrift(current, gatewayBaseUrl);
   if (drift.length === 0) return coverageState(adapter, current);
   // 文件在、但一个受管键都没有 = 没配；有键但不符 = 漂移。
@@ -112,6 +117,11 @@ function hasManagedKeys(adapter: Adapter, current: Record<string, unknown>, _gat
     const leaf = c.id.split(".").pop() ?? "";
     return leaf.length > 0 && text.includes(leaf);
   });
+}
+
+/** 配置文件存在、但读回来的对象是空的（解析失败）→ 视为损坏。 */
+function isUnreadableConfig(path: string, current: Record<string, unknown>): boolean {
+  return existsSync(path) && Object.keys(current).length === 0 && readFileSync(path, "utf8").trim().length > 0;
 }
 
 /**

@@ -383,6 +383,17 @@ export interface ChatOutcome {
 }
 
 /** 请求侧 block 早退：canary 编排尚未执行 ⇒ 无 gateway reason 可携带（恒空）。 */
+/**
+ * 网关侧 reason 清单。
+ *
+ * 形状降级（受管路由上已阻断，走到这说明是非受管路径）与 canary 原因可能同时存在；
+ * 两者都是"网关没能覆盖这段流量"的事实，都要可查。
+ */
+function gatewayReasonsOf(canaryReason: string | undefined, shapeReason: string | undefined): readonly string[] | undefined {
+  const out = [shapeReason, canaryReason].filter((r): r is string => r !== undefined);
+  return out.length === 0 ? undefined : out;
+}
+
 /** 阻断的 action 序列（block 恒胜；degraded 仅作附加事实）。 */
 function blockActions(degraded: boolean): readonly ("blocked_before_forward" | "degraded_observational")[] {
   return degraded ? ["blocked_before_forward", "degraded_observational"] : ["blocked_before_forward"];
@@ -556,7 +567,13 @@ export async function handleChatCompletions(
   // SL-05（REQ-V2bA-14/15）：先判形状——认不出的形态在这里就阻断，
   // 不让它走到"扫了但什么都没扫到、然后判 clean"那条路。
   const shape = shapeVerdict("request", tryParseJson(req.body), req.routePrefix ?? null, req.managedRoute === true);
-  if (shape.reason !== null) return blockedBeforeForward([], false, req.body, shape.reason);
+  let degradedReason: string | undefined;
+  // 受管路由上覆盖降级 = 阻断；非受管路由上只记录（REQ-15 的分权），由 shape.block 表达。
+  if (shape.block && shape.reason !== null) return blockedBeforeForward([], false, req.body, shape.reason);
+  if (shape.reason !== null) {
+    // 非受管路径的覆盖降级：不阻断，但必须可查——把它挂到 outcome.reason 上落链。
+    degradedReason = shape.reason;
+  }
   const reqScan = core.scanRequest(req.body, req.headers, transport, cmdDedup, shapeFormat(shape));
   // SL-01/D-12：请求体 tools 声明面（declared_tools/declared_required）提取自请求扫描
   // 单元 meta，下传给响应侧全部扫描单元（非流式 / 流式逐帧 / 归并单元）。
@@ -584,7 +601,7 @@ export async function handleChatCompletions(
     reqFindings,
     forwardedBody: canaryStep.forwardedBody,
     canaryMeta: canaryStep.meta,
-    gwReasons: canaryStep.gatewayReason !== undefined ? [canaryStep.gatewayReason] : undefined,
+    gwReasons: gatewayReasonsOf(canaryStep.gatewayReason, degradedReason),
   });
 }
 

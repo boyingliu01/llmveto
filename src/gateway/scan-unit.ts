@@ -303,7 +303,18 @@ export function declaredToolsMeta(meta: Readonly<Record<string, unknown>>): Reco
   const out: Record<string, unknown> = {};
   if (meta.declared_tools !== undefined) out.declared_tools = meta.declared_tools;
   if (meta.declared_required !== undefined) out.declared_required = meta.declared_required;
+  // v2b-A：线格式必须随声明面一路下传到响应侧。
+  // 这是第三个"逐键构造导致静默丢弃"的点（前两个见 P1-2）：请求侧识别出了格式，
+  // 若不带上这一键，响应侧就永远走既有 Chat 投影，Anthropic 的 content[] 与
+  // Responses 的 output[] 依然不可见——那正是本 sprint 要消灭的那一半缺口。
+  if (meta.wire_format !== undefined) out.wire_format = meta.wire_format;
   return out;
+}
+
+/** 从响应侧 meta 里取线格式（缺席 = 走既有 Chat 投影）。 */
+function wireFormatOfMeta(meta: Readonly<Record<string, unknown>> | undefined): { readonly format: WireFormat } | undefined {
+  const f = meta?.wire_format;
+  return typeof f === "string" ? { format: f as WireFormat } : undefined;
 }
 
 /** 响应侧：SSE data 或 body 文本 → 扫描单元；已解析 JSON 时提取 model / usage / finish_reason。 */
@@ -315,6 +326,9 @@ export function buildResponseScanUnit(
   declaredMeta?: Readonly<Record<string, unknown>>,
   proto?: { readonly format: WireFormat },
 ): ScanUnit {
+  // v2b-A：调用方未显式给协议时，按声明面里的 wire_format 走（这是响应侧的唯一接线点，
+  // 三个调用点都只需经过 declaredToolsMeta 就会自动带上）。
+  const effectiveProto = proto ?? wireFormatOfMeta(declaredMeta);
   // SL-01/D-12：声明面（declared_tools/declared_required）随单元下传；先展开，
   // 让下方解析出的结构性字段（model/usage/finish_reason）保持优先。
   const meta: Record<string, unknown> = { ...declaredMeta };
@@ -324,7 +338,7 @@ export function buildResponseScanUnit(
   }
   if (typeof parsed.model === "string") meta.model_responded = parsed.model;
   if (parsed.usage && typeof parsed.usage === "object") meta.usage = parsed.usage;
-  return withDecoded({ direction: "response", transport, text: responseTextFor(parsed, meta, proto, transport, requestedModel), meta });
+  return withDecoded({ direction: "response", transport, text: responseTextFor(parsed, meta, effectiveProto, transport, requestedModel), meta });
 }
 
 /** 响应侧文本：协议投影优先；否则沿用既有 Chat 展平（choices 逐段空串拼接）。 */

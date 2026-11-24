@@ -188,10 +188,11 @@ async function dispatch(
   // GLM 席 M1：查询串是**另一条**出境通道——`?api_key=%73k%2Dant%2D…` 在 body 里
   // 一个字面凭据字符都没有，而 HTTP 语义下资源端会 percent-decode 它。
   // 查询串会原样拼进 upstreamUrl 转发，所以这里先解码再扫；命中即阻断。
-  const querySecret = managedRoute ? secretInQuery(url.search) : null;
-  if (querySecret !== null) {
-    const outcome = blockedBeforeForwardQuery(res, cfg, id, { bodyText, endpointHost, t0 }, querySecret);
-    await outcome;
+  // 同一条道理适用于 URL 的**所有**组成部分（GLM 席终审）：path 段与 userinfo 同样会被
+  // 上游 percent-decode，`/v1/messages/%67%68%70%5F…` 与 query 完全同构。只扫 query 是半个修复。
+  const urlSecret = managedRoute ? secretInUrl(url) : null;
+  if (urlSecret !== null) {
+    await blockedBeforeForwardUrl(res, cfg, id, { bodyText, endpointHost, t0 }, urlSecret);
     return;
   }
   const outcome = await handleChatCompletions(core, { body: bodyText, headers, upstreamUrl, ...id, endpointHost, transport, routePrefix, managedRoute });
@@ -239,25 +240,32 @@ export const MANAGED_ROUTE_KEYS: ReadonlySet<string> = Object.freeze(
 );
 
 /**
- * 查询串里是否有凭据（percent-decode 后再扫）。
+ * URL 的任一部分（path / query / userinfo）里是否有凭据，percent-decode 后再扫。
  *
  * 为什么需要：body 之外的出境通道同样能带凭据，而形状判定只看 body。
- * `?api_key=%73k%2Dant%2Dapi03%2D…` 解码后就是完整凭据，上游按 query 取 key 即被外带。
+ * `?api_key=%73k%2Dant%2D…` 与 `/v1/messages/%67%68%70%5F…` 解码后都是完整凭据，
+ * 上游按 RFC 3986 会解码它们。**只扫 query 是半个修复**——path 与 userinfo 同构。
  */
-function secretInQuery(search: string): string | null {
-  if (search.length <= 1) return null;
-  let decoded: string;
-  try {
-    decoded = decodeURIComponent(search);
-  } catch {
-    decoded = search; // 非法 percent 编码：按原文扫，不因解析失败放行
+function secretInUrl(url: URL): string | null {
+  const candidates = [url.pathname, url.search, `${url.username}:${url.password}`].filter((s) => s.length > 0);
+  for (const part of candidates) {
+    const scan = egressSecretScan({ direction: "request", transport: "non-stream", text: decodeSafe(part), meta: {} });
+    if (scan.verdict === "finding") return "url_secret";
   }
-  const scan = egressSecretScan({ direction: "request", transport: "non-stream", text: decoded, meta: {} });
-  return scan.verdict === "finding" ? "query_secret" : null;
+  return null;
+}
+
+/** percent-decode；非法编码按原文返回（不因解析失败而放行）。 */
+function decodeSafe(text: string): string {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
 }
 
 /** 查询串含凭据 → 502 + evidence（与请求体阻断同形）。 */
-async function blockedBeforeForwardQuery(
+async function blockedBeforeForwardUrl(
   res: ServerResponse,
   cfg: GatewayConfig,
   id: { requestId: string; sessionId: string; turnId: string; client: string; providerId: string },

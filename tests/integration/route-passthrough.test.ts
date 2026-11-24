@@ -101,6 +101,21 @@ describe("SL-06 查询串里的编码凭据（R6 M1 回归）", () => {
     expect(mock!.requests).toHaveLength(0);
   });
 
+  it("path 段里的 percent-encoded 凭据 → 同样阻断（与 query 同构，GLM 终审指出）", async () => {
+    const url = await boot();
+    const token = /ghp_[A-Za-z0-9]{36}/.exec(
+      readFileSync(join(import.meta.dirname, "..", "fixtures", "threats", "T1b", "secrets.yaml"), "utf8"),
+    )![0];
+    const r = await fetch(`${url}/claude/anthropic/v1/messages/${encodeURIComponent(token)}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "c", max_tokens: 8, messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }] }),
+    });
+    await r.text();
+    expect(r.status).toBe(502);
+    expect(mock!.requests).toHaveLength(0);
+  });
+
   it("对照：普通查询串（如 ?beta=true）照常透传", async () => {
     const url = await boot();
     const r = await fetch(`${url}/claude/anthropic/v1/messages?beta=true`, {

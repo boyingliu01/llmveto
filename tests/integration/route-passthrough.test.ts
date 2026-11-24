@@ -7,6 +7,7 @@ import { startGateway } from "../../src/gateway/server.ts";
 import { parseRoute } from "../../src/gateway/server.ts";
 import { WIRE_ROUTE_PREFIXES, formatForPrefix } from "../../src/gateway/protocols/registry.ts";
 import { startMockUpstream, type MockUpstream } from "../utils/mock-upstream.ts";
+import { gzipSync } from "node:zlib";
 
 // @test REQ-V2bA-04b / AC-V2bA-04b1~2
 // @intent 路由前缀是识别权威，同时必须把 rest 与查询串**原样**送到上游。
@@ -121,6 +122,39 @@ describe("SL-06 查询串里的编码凭据（R6 M1 回归）", () => {
     const r = await fetch(`${url}/claude/anthropic/v1/messages?beta=true`, {
       method: "POST",
       headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "c", max_tokens: 8, messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }] }),
+    });
+    await r.text();
+    expect(r.status).toBe(200);
+  });
+});
+
+// @test REQ-V2bA-15（code-walkthrough 终审 / GLM 席 C-1 回归）
+// @intent 传输层压缩体是**第三条**出境通道：gzip 字节对任何文本域变换都是乱码，
+//         而上游栈会自动解压。网关不还原就等于"扫了空气"——实测曾放行并到达上游。
+//         受管路由上无法还原的传输编码一律 fail-closed。
+describe("SL-06 传输层压缩体（终审 C-1 回归）", () => {
+  it("gzip 压缩体带凭据 → 阻断且上游 0 请求", async () => {
+    const url = await boot();
+    const token = /ghp_[A-Za-z0-9]{36}/.exec(
+      readFileSync(join(import.meta.dirname, "..", "fixtures", "threats", "T1b", "secrets.yaml"), "utf8"),
+    )![0];
+    const body = JSON.stringify({ model: "c", max_tokens: 8, messages: [{ role: "user", content: [{ type: "text", text: `hi ${token}` }] }] });
+    const r = await fetch(`${url}/claude/anthropic/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "content-encoding": "gzip" },
+      body: new Uint8Array(gzipSync(body)),
+    });
+    await r.text();
+    expect(r.status).toBe(502);
+    expect(mock!.requests).toHaveLength(0);
+  });
+
+  it("对照：identity 与无编码照常透传", async () => {
+    const url = await boot();
+    const r = await fetch(`${url}/claude/anthropic/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "content-encoding": "identity" },
       body: JSON.stringify({ model: "c", max_tokens: 8, messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }] }),
     });
     await r.text();

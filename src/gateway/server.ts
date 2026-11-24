@@ -166,6 +166,10 @@ async function dispatch(
   const bodyText = await readBodyText(req);
   const headers = normalizeHeaders(req.headers);
   const id = resolveIdentity(route, headers, cfg);
+  // GLM 席终审 C-1：传输层压缩体不还原 = 整段不可见。上游栈会自动解压，
+  // 网关不还原就是"扫了空气"（实测：gzip 体带凭据 → 200 且已到达上游）。
+  // 受管路由上无法还原的压缩体一律 fail-closed——不放行看不懂的字节。
+  const encodingReason = managedRouteSecretGuard(route, headers["content-encoding"]);
 
   const resolution = resolveUpstream(route, headers, cfg);
   // 查询串随路径一并转发（如受管 Delphi endpoint 的 `?stream=1`、Azure 风格 api-version）
@@ -175,6 +179,11 @@ async function dispatch(
   // fail-closed：无任何路由可解析 → 502，不转发，evidence 记录 router finding
   if (!upstreamUrl) {
     respondNoUpstreamRoute(res, cfg, id, { bodyText, endpointHost, t0 });
+    return;
+  }
+
+  if (encodingReason !== null) {
+    await blockedBeforeForwardUrl(res, cfg, id, { bodyText, endpointHost, t0 }, encodingReason);
     return;
   }
 
@@ -238,6 +247,22 @@ export const MANAGED_ROUTE_KEYS: ReadonlySet<string> = Object.freeze(
     "promptfoo/openai",
   ]),
 );
+
+/**
+ * 受管路由上的压缩体守卫。
+ *
+ * 为什么是阻断而不是解压后继续：解压要引入解码器与解压炸弹防护（zip bomb），
+ * 那是独立议题；而"看不懂的传输编码"对一个安全网关而言就是覆盖缺口，
+ * 按 fail-closed 直接拒绝，比假装扫过安全。
+ *
+ * @returns 需要阻断时返回 reason，否则 null
+ */
+function managedRouteSecretGuard(route: RouteInfo, contentEncoding: string | undefined): string | null {
+  if (!isManagedRoute(route)) return null;
+  const enc = (contentEncoding ?? "").trim().toLowerCase();
+  if (enc === "" || enc === "identity") return null;
+  return "unsupported_content_encoding";
+}
 
 /**
  * URL 的任一部分（path / query / userinfo）里是否有凭据，percent-decode 后再扫。

@@ -396,6 +396,13 @@ function gatewayReasonsOf(canaryReason: string | undefined, shapeReason: string 
   return out.length === 0 ? undefined : out;
 }
 
+/** 非受管路由的形状判定占位（不识别、不记 reason、不阻断）。 */
+const NOTHING_SHAPE = Object.freeze({ format: null, reason: null, block: false }) as {
+  readonly format: null;
+  readonly reason: null;
+  readonly block: false;
+};
+
 /** 阻断的 action 序列（block 恒胜；degraded 仅作附加事实）。 */
 function blockActions(degraded: boolean): readonly ("blocked_before_forward" | "degraded_observational")[] {
   return degraded ? ["blocked_before_forward", "degraded_observational"] : ["blocked_before_forward"];
@@ -592,7 +599,14 @@ export async function handleChatCompletions(
   // 解析结果直接交给 scanRequest 复用，避免同一份 body 被 JSON.parse 两遍。
   // CI 的 G2 512KB 档实测：多解析一次就是 0.44ms，足以把这一档推过门槛。
   const reqParsed = tryParseJson(req.body);
-  const shape = shapeVerdict("request", reqParsed, req.routePrefix ?? null, req.managedRoute === true, req.body);
+  // 形状判定只在**受管路由**上做（用户的决定，取舍写在 KNOWN-ISSUES）。
+  //
+  // 为什么：非受管路由上它的唯一产物是"记录不阻断的 reason"，成本却随 body 线性增长
+  // （CI 实测 512KB 档 p50 从 1.8ms 涨到 4.5ms，超相对门）。受管路由的完整保护不变。
+  // 代价如实登记：非受管路径不再产出 shape_* 的覆盖降级 reason。
+  const shape = req.managedRoute === true
+    ? shapeVerdict("request", reqParsed, req.routePrefix ?? null, true, req.body)
+    : NOTHING_SHAPE;
   let degradedReason: string | undefined;
   // 受管路由上覆盖降级 = 阻断；非受管路由上只记录（REQ-15 的分权），由 shape.block 表达。
   if (shape.block && shape.reason !== null) return blockedBeforeForward([], false, req.body, shape.reason);

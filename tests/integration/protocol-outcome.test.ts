@@ -77,13 +77,15 @@ describe("SL-05 两轴处置（REQ-V2bA-14/15/15a）", () => {
     expect(g.records().at(-1)!.reason).toBeUndefined();
   });
 
-  it("非受管路由：同样写 reason，但不阻断（REQ-15 的分权，CRITICAL-3 回归）", async () => {
+  it("非受管路由：不阻断，也不做形状判定（性能与覆盖的取舍，见 KNOWN-ISSUES）", async () => {
+    // 决策（用户 2026-11-24 拍板）：形状判定只在受管路由上跑。
+    // 非受管路径上它的唯一产物是"记录不阻断的 reason"，成本却随 body 线性增长
+    // （CI 实测 512KB 档 p50 1.8 → 4.5ms，超相对门）。
+    // **代价**：本用例此前断言的"非受管也写 shape reason"不再成立——已登记 KNOWN-ISSUES。
     const g = await boot();
-    // 自建前缀（不在受管判定域里）：
     const res = await post(`${g.url}/my-own-gateway/x/v1/messages`, { content: "unknown-shape", model: "m" });
     expect(res.status).toBe(200); // 不阻断
-    const rec = g.records().at(-1)!;
-    expect(rec.reason).toBe("shape_unrecognized"); // 但必须可查
+    expect(g.records().at(-1)!.reason).toBeUndefined(); // 也不记 reason（取舍）
   });
 
   it("受管路由 + 正常 anthropic 请求 → 放行（不写 reason）", async () => {

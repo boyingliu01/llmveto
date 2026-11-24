@@ -46,6 +46,20 @@
 - **Closing it properly**: a per-header scan with an explicit allow-list, or a header allow-list
   enforced fail-closed on managed routes. Registered here so it is not mistaken for coverage.
 
+### Shape verdict runs on managed routes only
+
+- **Decision** (2026-11-24): the two-axis shape verdict runs on managed routes. On an unmanaged
+  path it is skipped entirely.
+- **Why**: on unmanaged routes its only product is a recorded reason with no block, while its cost
+  grows linearly with the body — measured in CI, G2's 512 KB tier went from 1.8 ms to 4.5 ms p50,
+  past the relative gate. Managed routes — every route an adapter actually writes — keep the full
+  fail-closed behaviour.
+- **Cost**: an unmanaged path no longer records `shape_*` degradation reasons. Traffic there is still
+  scanned by every checker; only the coverage-degradation signal is absent.
+- **Scope note**: REQ-V2bA-15 asked for the reason on unmanaged routes too. This is a deliberate,
+  recorded departure from that wording, chosen by the user in the trade-off between coverage
+  telemetry and the latency budget.
+
 ### Transport-compressed bodies are rejected, not decompressed
 
 - **What changed in v2b-A**: on managed routes a `Content-Encoding` other than `identity` (or absent)

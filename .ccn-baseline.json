@@ -480,7 +480,7 @@
     "src/gateway/core.ts::get findings": 1,
     "src/gateway/core.ts::get reason": 1,
     "src/gateway/core.ts::get scenario": 1,
-    "src/gateway/core.ts::handleChatCompletions": 7,
+    "src/gateway/core.ts::handleChatCompletions": 8,
     "src/gateway/core.ts::handleNonStreamResponse": 6,
     "src/gateway/core.ts::handleStreaming": 2,
     "src/gateway/core.ts::meta": 1,

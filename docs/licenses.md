@@ -32,6 +32,19 @@ G-LIC 不通过后采用。模式列表（写死在 `src/checkers/egress-secret-
 - 自写 token / 内网 URL / 客户数据 / 变形 base64/hex **一律漏检**；
 - v2 计划扩展自定义模式库。
 
+## v2b-A 新增运行时依赖（2026-11-24）
+
+| # | 能力 | 项目 | 许可 | 核实来源 | 结论 |
+|---|---|---|---|---|---|
+| 7 | TOML 解析（定位 Codex 配置键） | [smol-toml](https://www.npmjs.com/package/smol-toml) `1.9.1` | **BSD-3-Clause** | `registry.npmjs.org/smol-toml` 的 `license` 字段 + 包内 LICENSE（2026-11-24 核对） | **可引入** |
+
+- **版本精确钉死**（`"smol-toml": "1.9.1"`，不是 `^1.9.1`）：它只用于定位配置键，
+  行为一旦随版本漂移就可能改错用户的 `config.toml`；这里宁可让升级变成显式动作。
+- **零运行时依赖**：`dependencies` 为空，不引入传递依赖面。
+- **只用于解析与定位**，不用于 `stringify`：Codex 的写回是定点编辑（`src/adapters/codex-io.ts`），
+  全量重写会丢掉用户写的注释。
+- 许可与 npm 上的 `dist-tags.latest` 一致，无双重授权。
+
 ## 判定与留痕
 
 - 判定日期：2026-09-15

@@ -17,6 +17,7 @@ import {
 } from "./scan-unit.ts";
 import { encodeVetoEvent, parseSseFrames, tryParseJson, type SseFrame } from "./sse-tee.ts";
 import type { WireFormat } from "./protocols/types.ts";
+import { protocolFor } from "./protocols/table.ts";
 import { shapeVerdict } from "./protocols/outcome.ts";
 import { decide, pickScenario, pickTopReasonFromErrorFindings, type BehaviorScenario } from "../policy/engine.ts";
 import type { PolicyInput } from "../policy/engine.ts";
@@ -100,7 +101,12 @@ export const REPROJECTION_META_KEY = "llmveto_reprojected" as const;
  * `dsh/cliproxy` 条目），故注入/串流检出按该单一路由键生效。集成测试断言
  * CANARY_MANAGED_ROUTES = adapter 推导集合 ∪ 本集合，adapter 侧漂移仍会被抓到。
  */
-export const MANUAL_CANARY_MANAGED_ROUTES: ReadonlySet<string> = Object.freeze(new Set(["dsh/cliproxy"]));
+export const MANUAL_CANARY_MANAGED_ROUTES: ReadonlySet<string> = Object.freeze(
+  // v2b-A（REQ-V2bA-13）：两条新路由**在注入判定域内**，但对应的线格式不支持注入——
+  // 所以它们会以 inject_skipped 被记账，而不是被当成"非受管路径"静默跳过。
+  // "不在域内"与"在域内但不注入"是两件不同的事：前者无声，后者可观测。
+  new Set(["dsh/cliproxy", "claude/anthropic", "codex/openai"]),
+);
 
 /** REQ-V2a-11/D-05 注入判定域（路由键 client/provider）：gateway 层镜像常量——architecture.yaml 禁 import adapters，与 adapters 层 MANAGED_CONFIG_IDS 的同源一致性由集成测试以真实 adapter 产物推导钉死（canary-inject 防漂移断言）。 */
 export const CANARY_MANAGED_ROUTES: ReadonlySet<string> = Object.freeze(new Set([
@@ -325,10 +331,19 @@ function reasonOf(findings: readonly EvidenceFinding[], gatewayReasons?: readonl
 interface CanaryStep { readonly forwardedBody: string; readonly meta: CanaryRequestMeta | null; readonly gatewayReason?: "registry_unavailable" | "inject_skipped"; }
 
 /** canary 注入编排（D-04，§4.4 时序 deriveSessionKey → assign → snapshot → inject）：前置 = 受管路径且未 block（调用点保证）。registry 不可用 → 不注入不匹配 + reason + 计数（fail-open 可观测，§4.3 不得静默）。 */
-function orchestrateCanary(core: GatewayCore, req: { body: string; headers: Record<string, string>; client: string; providerId: string }): CanaryStep {
+function orchestrateCanary(
+  core: GatewayCore,
+  req: { body: string; headers: Record<string, string>; client: string; providerId: string; wireFormat?: WireFormat },
+): CanaryStep {
   const store = core.canary;
   if (store === null || !CANARY_MANAGED_ROUTES.has(`${req.client}/${req.providerId}`)) {
     return { forwardedBody: req.body, meta: null }; // 判定域外：未配置或非受管路径（≠ inject_skipped，零计数零字段）
+  }
+  // SL-12（REQ-V2bA-13 / D4）：注入只对 chat 线格式生效。
+  // 两种新协议上**显式不注入并记账**——"没注入"必须是可观测事实，不能是沉默的缺口。
+  if (req.wireFormat !== undefined && !supportsCanaryInjection(req.wireFormat)) {
+    core.canaryMetrics.inject_skipped += 1;
+    return { forwardedBody: req.body, meta: { canary_injected: false }, gatewayReason: "inject_skipped" };
   }
   if (store.loadStatus.status !== "ok") {
     core.canaryMetrics.registry_unavailable += 1;
@@ -553,7 +568,7 @@ export async function handleChatCompletions(
     return blockedBeforeForward(reqFindings, reqDecision.degraded, req.body);
   }
   // canary 注入编排（D-04）：先于 fetch，注入后体作为转发体；请求侧扫描仍以客户端原体为准。
-  const canaryStep = orchestrateCanary(core, req);
+  const canaryStep = orchestrateCanary(core, { ...req, ...(shape.format === null ? {} : { wireFormat: shape.format }) });
   // 转发到 upstream（体 = 注入编排产出：受管路径为注入后体，其余为原体）
   const upstream = await postToUpstream(req.upstreamUrl, canaryStep.forwardedBody, req.headers.authorization);
   return deliverUpstream({
@@ -571,6 +586,11 @@ export async function handleChatCompletions(
     canaryMeta: canaryStep.meta,
     gwReasons: canaryStep.gatewayReason !== undefined ? [canaryStep.gatewayReason] : undefined,
   });
+}
+
+/** 该线格式是否支持 canary 注入（协议表是唯一权威：chat 为 true，其余为 false）。 */
+function supportsCanaryInjection(format: WireFormat): boolean {
+  return protocolFor(format)?.canaryInjection === true;
 }
 
 /** 形状判定给出的线格式 → scanRequest 的协议参数（未识别时 undefined，走既有 Chat 投影）。 */

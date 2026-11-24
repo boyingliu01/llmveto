@@ -25,7 +25,13 @@ import type { CoverageVerdict } from "./types.ts";
  */
 const CONTAINER_PATHS: ReadonlySet<string> = new Set(["input", "messages", "output", "content"]);
 
-/** 路径段：`messages[].content[].text` → ["messages", "content", "text"] */
+/**
+ * 路径段：`messages[].content[].tool_use.input` → ["messages", "content", "tool_use", "input"]。
+ *
+ * 注意 `tool_use` 这类**块类型**也是路径段：Anthropic 的载荷挂在"类型为 tool_use 的块"下面，
+ * 路径必须能表达"数组元素里 type === tool_use 的那一项"。把块类型当成普通的键去查会永远查不到，
+ * 于是清单里声明的路径永远不算 present——覆盖判据就退化成只看顶层容器。
+ */
 function splitPath(path: string): string[] {
   return path
     .split(".")
@@ -33,15 +39,66 @@ function splitPath(path: string): string[] {
     .filter((seg) => seg.length > 0);
 }
 
-function hasPath(value: unknown, segs: readonly string[]): boolean {
+/** 带数组标记的结果：`messages[].content[].tool_use.input` → [
+ *  {key:"messages", array:true}, {key:"content", array:true}, {key:"tool_use"}, {key:"input"} ]。
+ *  `[]` 必须保留下来——否则 `content[]` 之后的段会当成在对象上找键，而不是在数组元素里找。 */
+export interface PathSegment {
+  readonly key: string;
+  readonly array: boolean;
+}
+
+function splitPathSegments(path: string): PathSegment[] {
+  return path
+    .split(".")
+    .map((raw) => ({ key: raw.replace(/\[\]$/, ""), array: raw.endsWith("[]") }))
+    .filter((seg) => seg.key.length > 0);
+}
+
+/**
+ * 逐段下钻。
+ *
+ * 两条规则是这里唯一容易写错、也必须写对的地方（都在本 sprint 的实测里踩过）：
+ *   ① 段带 `[]` 表示"在数组的每个元素上继续"——**不能**把它当成在对象上找同名键；
+ *   ② 若下一段是**块类型**（`tool_use` 等），只有 `type` 相符的元素才算，
+ *      且块类型段在本层被消费掉（否则 `tool_use` 会被当成一个普通键去查找，永远找不到）。
+ */
+function hasPath(value: unknown, segs: readonly PathSegment[]): boolean {
   if (segs.length === 0) return value !== undefined;
-  const [head, ...rest] = segs as [string, ...string[]];
+
+  // 数组上下文：当前值是一个数组，逐元素在**同一层**继续（不消费段）。
+  // 唯一的例外是"本段是块类型"——它描述数组元素的种类，命中后消费该段。
   if (Array.isArray(value)) {
-    // 数组段：任一项命中即算存在（"这条路径出现了"而非"全部出现"）。
+    const head = segs[0]!;
+    if (isBlockType(head.key)) {
+      return value.some((item) => isBlockOfType(item, head.key) && hasPath(item, segs.slice(1)));
+    }
     return value.some((item) => hasPath(item, segs));
   }
+
   if (!value || typeof value !== "object") return false;
-  return hasPath((value as Record<string, unknown>)[head], rest);
+  const [head, ...rest] = segs as [PathSegment, ...PathSegment[]];
+  const child = (value as Record<string, unknown>)[head.key];
+
+  // `key[]`：取到数组后，数组元素按**剩余段**继续。
+  // 元素若本身是块（`{type:"tool_use",...}`），由下一层的"块类型段"分支处理；
+  // 若元素是普通对象（如 message），直接按剩余段取键——两个分支都在数组上下文里完成。
+  if (head.array) {
+    if (!Array.isArray(child)) return false;
+    return child.some((item) => (isBlockOfType(item, rest[0]?.key ?? "") ? hasPath(item, rest.slice(1)) : hasPath(item, rest)));
+  }
+  return hasPath(child, rest);
+}
+
+/** Anthropic content 块的类型名集合（这些词在路径里表示"该 type 的块"，不是普通键）。 */
+const BLOCK_TYPES: ReadonlySet<string> = new Set(["tool_use", "tool_result", "text", "thinking", "image"]);
+
+function isBlockType(seg: string): boolean {
+  return BLOCK_TYPES.has(seg);
+}
+
+/** 该元素是否是给定类型的块。 */
+function isBlockOfType(item: unknown, type: string): boolean {
+  return typeof item === "object" && item !== null && (item as Record<string, unknown>).type === type;
 }
 
 /**
@@ -62,7 +119,7 @@ export function presentPaths(specPaths: readonly string[], body: unknown): reado
  * 它是字符串（Responses 允许 `input: "..."`）时算载荷。
  */
 function isPayloadPresent(path: string, body: unknown): boolean {
-  if (!CONTAINER_PATHS.has(path)) return hasPath(body, splitPath(path));
+  if (!CONTAINER_PATHS.has(path)) return hasPath(body, splitPathSegments(path));
   const value = (body as Record<string, unknown>)[path];
   if (value === undefined) return false;
   // 字符串形态的 input 就是载荷本身

@@ -5,6 +5,45 @@
 
 ---
 
+## v2b-A（多客户端接入）能力边界
+
+### T1a: canary injection is chat-only
+
+- **What changed**: Claude Code (Anthropic Messages) and Codex (OpenAI Responses) are now onboarded
+  and fully scanned, but canary injection is deliberately not implemented for either wire format.
+- **Consequence**: on those two routes there is no positive evidence of retention and reuse
+  (T1a's cross-session spill detection). `request_body_sha256` still proves what was sent; it cannot
+  prove what the upstream kept.
+- **Observability**: every non-injection writes `reason = "inject_skipped"` to the evidence record and
+  increments the `inject_skipped` metric. Seeing that counter grow on these routes is expected, not a fault.
+- **Why not do it now**: injection points differ per format (Anthropic has `system` block arrays and
+  `tool_result`; Responses has typed `input[]` elements). Three injection point sets is a second canary
+  redesign, not an extension. The full capability matrix is in
+  [docs/protocol-capability-matrix.md](protocol-capability-matrix.md).
+
+### Unknown wire shapes fail closed on managed routes only
+
+- **What it does**: on a managed route (`claude/*`, `codex/*`, `promptfoo/*`, plus the existing
+  managed routes) a body the gateway cannot classify is blocked with `reason = "shape_unrecognized"`.
+- **Boundary**: on an **unmanaged** path the same shape is only recorded and degraded, never blocked.
+  A user-created prefix is therefore not protected against this failure mode.
+- **Legal empty requests still pass**: `messages: []`, a body with only `model`, and requests whose
+  elements carry no known payload field are treated as legal empty requests, because canary injection's
+  own branch 4 has exactly that shape and the shape check must not be stricter than injection.
+- **The cost of that exemption**: a body whose container is present but whose field *names* are all
+  unknown does not raise a distinct code. The `shape_partial_coverage` guard covers the other half —
+  known fields that were not projected — and must stay at zero.
+
+### Clients are onboarded from documentation, not from a live install
+
+- **Measured precondition**: none of Claude Code, Codex or promptfoo is installed on the development
+  machine (`~/.claude/`, `~/.codex/`, and promptfoo configs are all absent).
+- **What that means**: adapter fields come from each vendor's published documentation, cited per field in
+  [docs/protocol-field-provenance.md](protocol-field-provenance.md). End-to-end tests drive the gateway with
+  real *adapter artifacts* plus a mock upstream, not with a real client binary.
+- **Residual**: a client release that changes its config shape would not be caught by CI. `doctor`
+  reports drift rather than silence, so the failure mode is visible on the next run.
+
 ## Security Residual Risks
 
 ### T1a: Data Exfiltration Detection (Canaries)

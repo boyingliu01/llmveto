@@ -586,7 +586,7 @@ export async function handleChatCompletions(
   const cmdDedup = createDangerousCommandDedup();
   // SL-05（REQ-V2bA-14/15）：先判形状——认不出的形态在这里就阻断，
   // 不让它走到"扫了但什么都没扫到、然后判 clean"那条路。
-  const shape = shapeVerdict("request", tryParseJson(req.body), req.routePrefix ?? null, req.managedRoute === true);
+  const shape = shapeVerdict("request", tryParseJson(req.body), req.routePrefix ?? null, req.managedRoute === true, req.body);
   let degradedReason: string | undefined;
   // 受管路由上覆盖降级 = 阻断；非受管路由上只记录（REQ-15 的分权），由 shape.block 表达。
   if (shape.block && shape.reason !== null) return blockedBeforeForward([], false, req.body, shape.reason);

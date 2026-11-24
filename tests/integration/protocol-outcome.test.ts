@@ -213,3 +213,50 @@ describe("SL-05 用扫描器本身做判据（R4 回归）", () => {
     expect(res.status).toBe(502);
   });
 });
+
+// @test REQ-V2bA-15（code-walkthrough R5 回归）
+// @intent 三条都来自"扫的是 JSON.parse→stringify 重建副本"这一个根因：
+//         重复键在 parse 时被后者覆盖、换行被写成两字符导致 PEM 规则不命中、
+//         认证头按设计排除却未在判据里同样排除。
+describe("SL-05 扫原始文本而非重建副本（R5 回归）", () => {
+  it("重复键：前者含凭据、后者为空对象 → 仍阻断（重建副本会丢掉前者）", async () => {
+    const g = await boot();
+    const raw = `{"model":"m","max_tokens":8,"messages":[{"role":"user","content":"hi"}],` +
+      `"metadata":{"user_id":"sk-ant-api03-REALKEYabcdefghijklmnop"},"metadata":{}}`;
+    const r = await fetch(`${g.url}/claude/anthropic/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: raw,
+    });
+    await r.text();
+    expect(r.status).toBe(502);
+    expect(g.records().at(-1)!.reason).toBe("shape_partial_coverage");
+  });
+
+  it("转义换行的 PEM 私钥块放在未投影字段 → 阻断", async () => {
+    const g = await boot();
+    const pem = "-----BEGIN RSA PRIVATE KEY-----\\nMIIEowIBAAKCAQEA\\n-----END RSA PRIVATE KEY-----";
+    const r = await fetch(`${g.url}/claude/anthropic/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "m", max_tokens: 8, messages: [{ role: "user", content: "hi" }], metadata: { note: pem } }),
+    });
+    await r.text();
+    expect(r.status).toBe(502);
+  });
+
+  it("认证头按设计排除 → 不作为覆盖缺口（不误伤 LiteLLM 类客户端）", async () => {
+    const g = await boot();
+    const r = await fetch(`${g.url}/promptfoo/openai/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-4o",
+        messages: [{ role: "user", content: "hi" }],
+        extra_headers: { "x-api-key": "sk-abcdefghijklmnopqrstuvwxyz1234" },
+      }),
+    });
+    await r.text();
+    expect(r.status).toBe(200);
+  });
+});

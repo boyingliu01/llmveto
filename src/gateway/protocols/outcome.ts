@@ -1,6 +1,7 @@
 // @no-test-required: 测试在 tests/integration/protocol-outcome.test.ts（本项目测试布局为 tests/ 目录；Gate 5a 仅识别同目录/根 tests/ 六种路径）
 import { coverageReason, coverageVerdict, presentPaths } from "./coverage.ts";
 import { egressSecretScan } from "../../checkers/egress-secret-scan.ts";
+import { isAuthHeader } from "../scan-unit.ts";
 import { protocolFor, recognize } from "./registry.ts";
 import type { CoverageReason, Direction, RecognizedFormat, WireFormat, WireProtocol } from "./types.ts";
 
@@ -43,12 +44,13 @@ export function shapeVerdict(
   parsed: unknown,
   routePrefix: string | null | undefined,
   consoleManaged: boolean,
+  rawBodyText?: string,
 ): ShapeVerdict {
   const body = asBody(parsed);
   if (body === null) return NOTHING;
   const recognized = recognize(direction, body, routePrefix);
   if (isUnrecognizable(direction, body, recognized)) return unrecognized(recognized, consoleManaged);
-  return recognized.kind === "known" ? judged(recognized.format, direction, body, consoleManaged) : NOTHING;
+  return recognized.kind === "known" ? judged(recognized.format, direction, body, consoleManaged, rawBodyText ?? JSON.stringify(body)) : NOTHING;
 }
 
 /**
@@ -70,10 +72,10 @@ function asBody(parsed: unknown): Record<string, unknown> | null {
 }
 
 /** 识别成功后的处置：有投影器 → 覆盖轴；无投影器 → 覆盖缺失。 */
-function judged(format: WireFormat, direction: Direction, body: Record<string, unknown>, consoleManaged: boolean): ShapeVerdict {
+function judged(format: WireFormat, direction: Direction, body: Record<string, unknown>, consoleManaged: boolean, rawText: string): ShapeVerdict {
   const proto = protocolFor(format);
   // 已识别但本网关没有该格式的投影器：与"认不出来"同属覆盖缺失（原因不同，处置相同）。
-  const reason = proto === undefined ? "shape_unrecognized" : coverageShape(direction, body, proto);
+  const reason = proto === undefined ? "shape_unrecognized" : coverageShape(direction, body, proto, rawText);
   return { format, reason, block: consoleManaged && reason !== null };
 }
 
@@ -84,14 +86,14 @@ function isUnrecognizable(direction: Direction, body: Record<string, unknown>, r
 }
 
 /** 覆盖轴：由 present 与投影器上报的 handled 求差集。 */
-function coverageShape(direction: Direction, body: Record<string, unknown>, proto: WireProtocol): ShapeReason | null {
+function coverageShape(direction: Direction, body: Record<string, unknown>, proto: WireProtocol, rawText: string): ShapeReason | null {
   const present = presentFor(direction, body, proto);
   const projection = projectionFor(direction, body, proto);
   const coverage = coverageReason(present, projection.handled);
   // 兜底**必须先于**豁免判定（R3 C1）：豁免的判据是"present 为空或容器为空"，
   // 而"凭据藏在未登记字段、恰好没有任何载荷字段"正是 present 为空的情形——
   // 把兜底放在豁免之后就等于给它留了一道门。
-  if (unseenSecret(body, projection.parts.join("\n"))) {
+  if (unseenSecret(body, rawText, projection.parts.join("\n"))) {
     return "shape_partial_coverage";
   }
   return reasonFor(direction, body, present, coverage);
@@ -110,18 +112,65 @@ function coverageShape(direction: Direction, body: Record<string, unknown>, prot
  * 扫到的每一处都必须能在投影文本里找到。找不到 = 这个凭据没有人看过 = 覆盖不足。
  * 判据就是扫描器自己的规则集，与真正拦截时用的是同一套，不需要猜"哪些字符串像载荷"。
  */
-function unseenSecret(body: Record<string, unknown>, scannedText: string): boolean {
-  const raw = JSON.stringify(body);
-  const scan = egressSecretScan({ direction: "request", transport: "non-stream", text: raw, meta: {} });
-  if (scan.verdict !== "finding") return false;
-  for (const finding of scan.evidence) {
+function unseenSecret(body: Record<string, unknown>, rawText: string, scannedText: string): boolean {
+  // 扫**原始 body 文本**（不是 JSON.parse→JSON.stringify 的重建副本）：
+  // 重建会丢重复键（后者覆盖前者）并把换行写成 `\n` 两字符，PEM 规则因此在重建串上恒不命中。
+  // 与此同时原始文本里的认证头按 AC-VETO-002-06 是**设计上排除**的，不能算成覆盖缺口。
+  // 两种形态都扫：原始文本，以及**换行已还原**的版本。
+  // 扫描器的 PEM 规则要求真实换行（0.6.1 为消除"讨论 PEM 格式即被拦"而引入），
+  // 而 JSON 里的私钥块换行是转义的 `\n` 两字符——只扫原始文本会漏掉它。
+  const unescaped = rawText.replace(/\\n/g, "\n").replace(/\\r/g, "\r");
+  const scan = egressSecretScan({ direction: "request", transport: "non-stream", text: rawText, meta: {} });
+  const scan2 = unescaped === rawText ? { verdict: "clean", evidence: [] } : egressSecretScan({ direction: "request", transport: "non-stream", text: unescaped, meta: {} });
+  const hits = scan.verdict === "finding" || scan2.verdict === "finding";
+  if (!hits) return false;
+  const all = [...scan.evidence, ...scan2.evidence];
+  return all.some((finding) => {
     const start = finding.offsets?.[0];
-    if (start === undefined) return true; // 有命中但拿不到位置：按"没看过"处理
-    const token = /^[^\s"',}\]]+/.exec(raw.slice(start));
-    const hit = token === null ? "" : token[0];
-    if (hit.length > 0 && !scannedText.includes(hit)) return true;
+    // 设计上排除在扫描单元之外的认证头：它出现在投影之外是**预期**，不是覆盖缺口。
+    if (start !== undefined && isExcludedHeaderHit(rawText, start)) return false;
+    // 未还原文本里找得到、或还原后找得到，都算"看过"
+    const hit = tokenedAt(rawText, finding.offsets).replace(/\\\\n/g, "\n");
+    return !visibleInProjection(hit, scannedText) && !visibleInProjection(tokenedAt(rawText, finding.offsets), scannedText);
+  });
+}
+
+/**
+ * 既被扫描器命中、又被设计排除在扫描单元之外的头：它们出现在投影之外的**预期**，不是缺口。
+ * 判据用 `isAuthHeader` 的同一份名单，不另造一套。
+ */
+function isExcludedHeaderHit(rawText: string, offset: number): boolean {
+  const head = rawText.slice(0, offset);
+  const m = /"([A-Za-z0-9-]+)"\s*:\s*"[^"]*$/.exec(head);
+  return m !== null && isAuthHeader(m[1] ?? "");
+}
+
+/**
+ * 命中位置附近的**凭据串**。
+ *
+ * 两条形态：
+ *   - PEM 块：以 `-----BEGIN` 开头，含转义换行与 END，整块取；
+ *   - 普通 token：到空白/引号/逗号为止。
+ * 只按"到分隔符为止"取会把 PEM 截断成 `-----BEGIN`，于是"投影里没有整块"无法判断。
+ */
+function tokenedAt(rawText: string, offsets: readonly number[] | undefined): string {
+  const start = offsets?.[0];
+  if (start === undefined) return "";
+  const rest = rawText.slice(start);
+  if (rest.startsWith("-----BEGIN")) {
+    const end = rest.indexOf("-----END");
+    if (end !== -1) {
+      const close = rest.indexOf("-----", end + "-----END".length);
+      if (close !== -1) return rest.slice(0, close + 5);
+    }
   }
-  return false;
+  const token = /^[^\s"',}\]]+/.exec(rest);
+  return token === null ? "" : token[0];
+}
+
+/** 该命中是否已在投影里被看过（或属于设计排除的头）。 */
+function visibleInProjection(hit: string, scannedText: string): boolean {
+  return hit.length === 0 || scannedText.includes(hit);
 }
 
 /**

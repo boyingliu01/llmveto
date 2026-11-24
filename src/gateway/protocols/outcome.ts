@@ -160,12 +160,19 @@ function decodeVariants(body: Record<string, unknown>): string {
         // 认证头的**值**按 AC-VETO-002-06 设计上不进扫描单元，这里同样不收：
         // 收了它就会在解码坐标系里成为"未被看过"的命中，把正常请求打成 502。
         if (parentKey === "extra_headers" && isAuthHeader(k)) continue;
-        out.push(k);
-        walk(item, k);
+        // 键值**同行**：`deployment_token: "ghp_..."` 这类同行规则才命中得到。
+        if (typeof item === "string") out.push(`${k}: ${item}`);
+        else {
+          out.push(k);
+          walk(item, k);
+        }
       }
     }
   };
   walk(body);
+  // 用 `key: value` 行式拼接而不是 join("\n")（GLM 席 M2）：
+  // 纯换行拼接会把键名和值拆到相邻两行，键值同行的规则（如 `token: "..."`）随之失配。
+  // 同时值里的真实换行（PEM）仍保留，多行规则照样命中。
   return out.join("\n");
 }
 

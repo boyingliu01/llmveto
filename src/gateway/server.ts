@@ -86,6 +86,7 @@ const RESERVED_SEGMENTS: ReadonlySet<string> = new Set(["v1", "api"]);
 
 import { formatForPrefix } from "./protocols/registry.ts";
 import { CANARY_MANAGED_ROUTES } from "./core.ts";
+import { egressSecretScan } from "../checkers/egress-secret-scan.ts";
 
 export function parseRoute(urlPath: string): RouteInfo {
   const path = urlPath.split("?")[0] ?? "/";
@@ -184,6 +185,15 @@ async function dispatch(
   // SL-05/SL-06（REQ-V2bA-04b/15）：路由前缀既是识别权威，也是 fail-closed 的作用域来源。
   const routePrefix = route.client;
   const managedRoute = isManagedRoute(route);
+  // GLM 席 M1：查询串是**另一条**出境通道——`?api_key=%73k%2Dant%2D…` 在 body 里
+  // 一个字面凭据字符都没有，而 HTTP 语义下资源端会 percent-decode 它。
+  // 查询串会原样拼进 upstreamUrl 转发，所以这里先解码再扫；命中即阻断。
+  const querySecret = managedRoute ? secretInQuery(url.search) : null;
+  if (querySecret !== null) {
+    const outcome = blockedBeforeForwardQuery(res, cfg, id, { bodyText, endpointHost, t0 }, querySecret);
+    await outcome;
+    return;
+  }
   const outcome = await handleChatCompletions(core, { body: bodyText, headers, upstreamUrl, ...id, endpointHost, transport, routePrefix, managedRoute });
 
   await deliverOutcome(res, outcome, fwd);
@@ -227,6 +237,38 @@ export const MANAGED_ROUTE_KEYS: ReadonlySet<string> = Object.freeze(
     "promptfoo/openai",
   ]),
 );
+
+/**
+ * 查询串里是否有凭据（percent-decode 后再扫）。
+ *
+ * 为什么需要：body 之外的出境通道同样能带凭据，而形状判定只看 body。
+ * `?api_key=%73k%2Dant%2Dapi03%2D…` 解码后就是完整凭据，上游按 query 取 key 即被外带。
+ */
+function secretInQuery(search: string): string | null {
+  if (search.length <= 1) return null;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(search);
+  } catch {
+    decoded = search; // 非法 percent 编码：按原文扫，不因解析失败放行
+  }
+  const scan = egressSecretScan({ direction: "request", transport: "non-stream", text: decoded, meta: {} });
+  return scan.verdict === "finding" ? "query_secret" : null;
+}
+
+/** 查询串含凭据 → 502 + evidence（与请求体阻断同形）。 */
+async function blockedBeforeForwardQuery(
+  res: ServerResponse,
+  cfg: GatewayConfig,
+  id: { requestId: string; sessionId: string; turnId: string; client: string; providerId: string },
+  p: { bodyText: string; endpointHost: string; t0: number },
+  reason: string,
+): Promise<void> {
+  const body = JSON.stringify({ error: { code: "llmveto:rejected" } });
+  finishFailureResponse(res, body);
+  writeEvidence(cfg, { ...id, endpointHost: p.endpointHost, bodyText: p.bodyText, respText: body, stream: false, findings: [],
+    actionTaken: "blocked_before_forward", deliveredChunks: 0, partial: false, reason, t0: p.t0 });
+}
 
 /** 读请求体全文（dispatch 与兜底路径的共享入口）。 */
 async function readBodyText(req: IncomingMessage): Promise<string> {

@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -79,5 +79,36 @@ describe("SL-06 路由与查询串透传（REQ-V2bA-04b）", () => {
       expect(parseRoute(`/${prefix}/openai/v1/x`).client).toBe(prefix);
       expect(formatForPrefix(prefix)).toBeDefined();
     }
+  });
+});
+
+// @test REQ-V2bA-15（code-walkthrough R6 / GLM 席 M1 回归）
+// @intent 查询串是**另一条**出境通道：`?api_key=%73k%2Dant%2D…` 在 body 里没有任何字面凭据字符，
+//         而 HTTP 语义下资源端会 percent-decode 它。形状判定只看 body，因此必须在 server 层单独处理。
+describe("SL-06 查询串里的编码凭据（R6 M1 回归）", () => {
+  it("percent-encoded 凭据放在 query → 阻断且上游 0 请求", async () => {
+    const url = await boot();
+    const token = /ghp_[A-Za-z0-9]{36}/.exec(
+      readFileSync(join(import.meta.dirname, "..", "fixtures", "threats", "T1b", "secrets.yaml"), "utf8"),
+    )![0];
+    const r = await fetch(`${url}/claude/anthropic/v1/messages?api_key=${encodeURIComponent(token)}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "c", max_tokens: 8, messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }] }),
+    });
+    await r.text();
+    expect(r.status).toBe(502);
+    expect(mock!.requests).toHaveLength(0);
+  });
+
+  it("对照：普通查询串（如 ?beta=true）照常透传", async () => {
+    const url = await boot();
+    const r = await fetch(`${url}/claude/anthropic/v1/messages?beta=true`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "c", max_tokens: 8, messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }] }),
+    });
+    await r.text();
+    expect(r.status).toBe(200);
   });
 });

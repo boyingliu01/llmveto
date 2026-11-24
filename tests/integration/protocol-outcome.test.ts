@@ -186,3 +186,30 @@ describe("SL-05 兜底顺序与键名豁免（R3 回归）", () => {
     expect(res.status).toBe(200);
   });
 });
+
+// @test REQ-V2bA-15（code-walkthrough R4 回归）
+// @intent 判据不能靠"猜哪些字符串像载荷"——每加一条豁免就多一个绕过面。
+//         现在的判据是：用**既有凭据扫描器**扫原始 body，命中但没进投影文本 = 覆盖不足。
+describe("SL-05 用扫描器本身做判据（R4 回归）", () => {
+  it("凭据放在 url 键下（R4 指出的键名豁免残留）→ 阻断", async () => {
+    const g = await boot();
+    const res = await post(`${g.url}/claude/anthropic/v1/messages`, {
+      model: "m",
+      max_tokens: 8,
+      messages: [{ role: "user", content: [{ type: "text", text: "hi there friend" }] }],
+      metadata: { url: "sk-ant-api03-REALKEYabcdefghijklmnop" },
+    });
+    expect(res.status).toBe(502);
+    expect(g.records().at(-1)!.reason).toBe("shape_partial_coverage");
+  });
+
+  it("凭据放在未登记字段（R3 C1 形态）→ 阻断", async () => {
+    const g = await boot();
+    const res = await post(`${g.url}/codex/openai/v1/responses`, {
+      model: "gpt-5",
+      input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] }],
+      metadata: { note: "sk-abcdefghijklmnopqrstuvwxyz1234" },
+    });
+    expect(res.status).toBe(502);
+  });
+});

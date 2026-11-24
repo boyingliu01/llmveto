@@ -1271,7 +1271,7 @@ index 82289a2..1711fe8 100644
  
  export interface EvidenceFinding {
 diff --git a/src/gateway/core.ts b/src/gateway/core.ts
-index d9444d3..b7a094e 100644
+index d9444d3..5b8eed0 100644
 --- a/src/gateway/core.ts
 +++ b/src/gateway/core.ts
 @@ -16,9 +16,13 @@ import {
@@ -1458,11 +1458,13 @@ index d9444d3..b7a094e 100644
  /**
   * 流式扫描的上下文解析（D-09）：advance 缺省为 true；只有 advance 且 windows 本身是
   * WindowStore 时才启用窗口账本；归并重投影（advance=false）给单元打 reprojected 标记，
-@@ -428,13 +499,36 @@ interface NonStreamResponseParams {
+@@ -428,13 +499,40 @@ interface NonStreamResponseParams {
    readonly forwardedBody: string;
    readonly canaryMeta: CanaryRequestMeta | null;
    readonly gwReasons: readonly string[] | undefined;
 +  readonly cmdDedup: ReturnType<typeof createDangerousCommandDedup>;
++  /** 该请求是否走在受管路由上（响应侧闸门据此决定阻断还是只记录）。 */
++  readonly managedRoute: boolean;
 +}
 +
 +/**
@@ -1477,7 +1479,9 @@ index d9444d3..b7a094e 100644
 +  // 只对**新协议**启用响应侧闸门：Chat 响应的既有语义（上游可能带各种字段）
 +  // 不在本 sprint 的改动面内，贸然收紧会误伤存量流量。两种新协议没有这样的历史包袱。
 +  if (fmt !== "anthropic-messages" && fmt !== "openai-responses") return undefined;
-+  return shapeVerdict("response", tryParseJson(p.text), null, true).reason ?? undefined;
++  // 受管标志必须与请求侧同源（R3：此前硬编码 true，使任何新协议响应都 502，
++  // 与非受管"只记录不阻断"的分权直接矛盾）。
++  return shapeVerdict("response", tryParseJson(p.text), null, p.managedRoute === true).reason ?? undefined;
  }
  
  function handleNonStreamResponse(p: NonStreamResponseParams): ChatOutcome {
@@ -1498,7 +1502,7 @@ index d9444d3..b7a094e 100644
      return {
        status: 502,
        body: "",
-@@ -443,7 +537,7 @@ function handleNonStreamResponse(p: NonStreamResponseParams): ChatOutcome {
+@@ -443,7 +541,7 @@ function handleNonStreamResponse(p: NonStreamResponseParams): ChatOutcome {
          ...(respDecision.degraded ? (["degraded_observational"] as const) : []),
        ]),
        findings: allFindings,
@@ -1507,7 +1511,7 @@ index d9444d3..b7a094e 100644
        forwardedBody: p.forwardedBody, canaryMeta: p.canaryMeta,
        deliveredChunks: 0,
        scenario: "2",
-@@ -480,12 +574,23 @@ async function postToUpstream(url: string, forwardedBody: string, authorization:
+@@ -480,12 +578,23 @@ async function postToUpstream(url: string, forwardedBody: string, authorization:
   */
  export async function handleChatCompletions(
    core: GatewayCore,
@@ -1533,7 +1537,7 @@ index d9444d3..b7a094e 100644
    // SL-01/D-12：请求体 tools 声明面（declared_tools/declared_required）提取自请求扫描
    // 单元 meta，下传给响应侧全部扫描单元（非流式 / 流式逐帧 / 归并单元）。
    const declaredMeta = declaredToolsMeta(reqScan.scanUnit.meta);
-@@ -496,7 +601,7 @@ export async function handleChatCompletions(
+@@ -496,7 +605,7 @@ export async function handleChatCompletions(
      return blockedBeforeForward(reqFindings, reqDecision.degraded, req.body);
    }
    // canary 注入编排（D-04）：先于 fetch，注入后体作为转发体；请求侧扫描仍以客户端原体为准。
@@ -1542,7 +1546,7 @@ index d9444d3..b7a094e 100644
    // 转发到 upstream（体 = 注入编排产出：受管路径为注入后体，其余为原体）
    const upstream = await postToUpstream(req.upstreamUrl, canaryStep.forwardedBody, req.headers.authorization);
    return deliverUpstream({
-@@ -507,14 +612,25 @@ export async function handleChatCompletions(
+@@ -507,14 +616,26 @@ export async function handleChatCompletions(
      // canary meta 随声明面并入全部响应侧扫描单元（SL-08 return-scan 判定面）；判定域外保持 declaredMeta 原样。
      responseMeta: responseMetaFor(canaryStep.meta, declaredMeta),
      requestInputs: reqScan.inputs,
@@ -1553,6 +1557,7 @@ index d9444d3..b7a094e 100644
      canaryMeta: canaryStep.meta,
 -    gwReasons: canaryStep.gatewayReason !== undefined ? [canaryStep.gatewayReason] : undefined,
 +    gwReasons: gatewayReasonsOf(canaryStep.gatewayReason, degradedReason),
++    managedRoute: req.managedRoute === true,
    });
  }
  
@@ -1569,24 +1574,27 @@ index d9444d3..b7a094e 100644
  /** 请求扫描单元里声明的 response model（缺声明即 null）。 */
  function requestedModelOf(unit: ScanUnit): string | null {
    return (unit.meta.model_requested as string | undefined) ?? null;
-@@ -533,6 +649,8 @@ interface UpstreamDelivery {
+@@ -533,6 +654,10 @@ interface UpstreamDelivery {
    readonly forwardedBody: string;
    readonly canaryMeta: CanaryRequestMeta | null;
    readonly gwReasons: readonly string[] | undefined;
++  /** 该请求是否走在受管路由上（响应侧闸门据此决定阻断还是只记录）。 */
++  readonly managedRoute: boolean;
 +  /** 危险命令去重状态（请求侧已消费），透传给响应侧各路径。 */
 +  readonly cmdDedup: ReturnType<typeof createDangerousCommandDedup>;
  }
  
  async function deliverUpstream(d: UpstreamDelivery): Promise<ChatOutcome> {
-@@ -558,6 +676,7 @@ async function deliverUpstream(d: UpstreamDelivery): Promise<ChatOutcome> {
+@@ -558,6 +683,8 @@ async function deliverUpstream(d: UpstreamDelivery): Promise<ChatOutcome> {
        forwardedBody: d.forwardedBody,
        canaryMeta: d.canaryMeta,
        gwReasons: d.gwReasons,
 +      cmdDedup: d.cmdDedup,
++      managedRoute: d.managedRoute,
      });
    }
    // 流式：tee（逐帧交付逻辑独立成 handleStreaming，主 handler 只保留分支骨架）
-@@ -572,6 +691,7 @@ async function deliverUpstream(d: UpstreamDelivery): Promise<ChatOutcome> {
+@@ -572,6 +699,7 @@ async function deliverUpstream(d: UpstreamDelivery): Promise<ChatOutcome> {
      forwardedBody: d.forwardedBody,
      canaryMeta: d.canaryMeta,
      gwReasons: d.gwReasons,
@@ -1594,7 +1602,7 @@ index d9444d3..b7a094e 100644
    });
  }
  
-@@ -587,6 +707,7 @@ interface StreamParams {
+@@ -587,6 +715,7 @@ interface StreamParams {
    readonly forwardedBody: string;
    readonly canaryMeta: CanaryRequestMeta | null;
    readonly gwReasons: readonly string[] | undefined;
@@ -1602,7 +1610,7 @@ index d9444d3..b7a094e 100644
  }
  
  /** 流式交付的跨帧可变状态：扫描窗口、归并桶与交付计数同住一处，收束时由 getter 读真值。 */
-@@ -597,6 +718,8 @@ interface StreamState {
+@@ -597,6 +726,8 @@ interface StreamState {
    readonly responseMeta: Record<string, unknown>;
    readonly requestInputs: readonly PolicyInput[];
    readonly argsMerger: ReturnType<typeof createToolCallArgsMerger>;
@@ -1611,7 +1619,7 @@ index d9444d3..b7a094e 100644
    readonly allFindings: EvidenceFinding[];
    pending: string;
    deliveredChunks: number;
-@@ -609,8 +732,11 @@ interface StreamState {
+@@ -609,8 +740,11 @@ interface StreamState {
  function scanDelivered(st: StreamState, text: string): boolean {
    const scan = st.core.scanResponseStreamChunk(st.windows, text, st.requested, st.responseMeta);
    st.argsMerger.feed(scan.parsed); // 帧内 delta 片段进归并桶（归并后统一扫描，不逐 chunk 扫碎片）
@@ -1625,7 +1633,7 @@ index d9444d3..b7a094e 100644
    if (d.degraded) st.degradedSeen = true;
    return d.action === "block";
  }
-@@ -647,9 +773,12 @@ function scanMergedArgs(st: StreamState): boolean {
+@@ -647,9 +781,12 @@ function scanMergedArgs(st: StreamState): boolean {
    }
    const merged = st.argsMerger.mergedText();
    if (merged === "") return false;
@@ -1641,7 +1649,7 @@ index d9444d3..b7a094e 100644
    if (d.degraded) st.degradedSeen = true;
    return d.action === "block";
  }
-@@ -771,6 +900,7 @@ function handleStreaming(p: StreamParams): ChatOutcome {
+@@ -771,6 +908,7 @@ function handleStreaming(p: StreamParams): ChatOutcome {
    const st: StreamState = {
      core, windows: createWindowStore(), requested, responseMeta, requestInputs,
      argsMerger: createToolCallArgsMerger(),
@@ -2214,10 +2222,10 @@ index 0000000..c1a03b8
 +}
 diff --git a/src/gateway/protocols/outcome.ts b/src/gateway/protocols/outcome.ts
 new file mode 100644
-index 0000000..a68e5c1
+index 0000000..4ebd6f1
 --- /dev/null
 +++ b/src/gateway/protocols/outcome.ts
-@@ -0,0 +1,246 @@
+@@ -0,0 +1,272 @@
 +// @no-test-required: 测试在 tests/integration/protocol-outcome.test.ts（本项目测试布局为 tests/ 目录；Gate 5a 仅识别同目录/根 tests/ 六种路径）
 +import { coverageReason, coverageVerdict, presentPaths } from "./coverage.ts";
 +import { protocolFor, recognize } from "./registry.ts";
@@ -2307,9 +2315,10 @@ index 0000000..a68e5c1
 +  const present = presentFor(direction, body, proto);
 +  const projection = projectionFor(direction, body, proto);
 +  const coverage = coverageReason(present, projection.handled);
-+  // 兜底：协议已知、载荷都覆盖了，但还有字符串内容没被任何投影器看过 → 覆盖不足。
-+  // 这一条独立于 CoverageSpec，因为它要覆盖的恰恰是清单之外的字段。
-+  if (coverage === null && unseenContent(direction, body, projection.parts.join("\n"))) {
++  // 兜底**必须先于**豁免判定（R3 C1）：豁免的判据是"present 为空或容器为空"，
++  // 而"凭据藏在未登记字段、恰好没有任何载荷字段"正是 present 为空的情形——
++  // 把兜底放在豁免之后就等于给它留了一道门。
++  if (unseenContent(direction, body, projection.parts.join("\n"))) {
 +    return "shape_partial_coverage";
 +  }
 +  return reasonFor(direction, body, present, coverage);
@@ -2337,44 +2346,69 @@ index 0000000..a68e5c1
 +  return false;
 +}
 +
-+/** 递归收集 JSON 里的全部字符串值（跳过结构字段与非文本载体）。 */
-+function collectStrings(value: unknown, key?: string): string[] {
-+  if (STRUCTURAL_KEYS.has(key ?? "")) return [];
-+  if (typeof value === "string") return [value];
++/**
++ * 递归收集 JSON 里的全部**可能是载荷**的字符串值。
++ *
++ * 第三条评审（R3 C2）推翻了按**裸键名**豁免的做法：`{"content":"hi","id":"sk-ant-..."}`
++ * 里 `id` 命中豁免表，整条凭据被跳过——豁免表本身成了绕过面。
++ *
++ * 现在的判据只看**值的形态**，不看键名：
++ *   - 短标识符（模型名、ID、状态码：无空格、长度 ≤ 80）→ 豁免；
++ *   - 非文本载体（URL / data URI / base64 大块）→ 豁免；
++ *   - **其余所有字符串都必须出现在投影文本里**。
++ * 代价是可能把某些元数据判成"没看过"而 fail-closed——那是安全方向。
++ */
++function collectStrings(value: unknown): string[] {
++  if (typeof value === "string") return maybePayload(value) ? [value] : [];
 +  if (Array.isArray(value)) return value.flatMap((v) => collectStrings(v));
 +  if (value && typeof value === "object") {
-+    return Object.entries(value as Record<string, unknown>).flatMap(([k, v]) => collectStrings(v, k));
++    return Object.entries(value as Record<string, unknown>).flatMap(([k, v]) =>
++      NON_TEXT_CARRIERS.has(k) ? [] : collectStrings(v),
++    );
 +  }
 +  return [];
 +}
 +
 +/**
-+ * 只进 meta、不进文本投影的结构性字段（与 scan-unit 的 meta 口径一致）。
-+ * 这些字段的值不要求出现在扫描文本里，否则每条正常请求都会被判"未看过"。
++ * 凭据形状：无论多短都算载荷。
++ *
++ * `sk-ant-api03-REALKEYabcdefghijklmnop` 只有 34 个字符，曾被"短标识符"判据豁免——
++ * 而那正是本项目最关心的东西。**长度不是安全信号**：一条 34 字符的凭据与一个
++ * 34 字符的模型名在长度上不可区分，所以判据必须先看形状。
 + */
-+const STRUCTURAL_KEYS: ReadonlySet<string> = new Set([
-+  "model",
-+  "usage",
-+  "finish_reason",
-+  "stop_reason",
-+  "id",
-+  "object",
-+  "type",
-+  "role",
-+  "call_id",
-+  "tool_use_id",
-+  "cache_control",
-+  "created",
-+  "created_at",
-+  "system_fingerprint",
-+  // 非文本载体：图片/文件 URL、base64 数据、MIME 类型。它们从设计上就不进文本投影
-+  // （scan-unit 只取 `seg.text`），把它们算作"没看过"会让每条带图请求都被误阻断。
++const CREDENTIALISH = /(^|[-_])(sk|pk|ghp|gho|ghs|xox[abps]|akia|aiza)[-_][A-Za-z0-9_-]{8,}|-----BEGIN [A-Z ]*PRIVATE KEY-----/;
++
++/** 该字符串是否"可能是载荷"（值得要求它出现在投影文本里）。 */
++function maybePayload(value: string): boolean {
++  const trimmed = value.trim();
++  if (trimmed.length === 0) return false;
++  // 凭据形状 → 一定算载荷，不看长度
++  if (CREDENTIALISH.test(trimmed)) return true;
++  // 短标识符：无内部空白且不长 → 模型名 / ID / 状态
++  if (trimmed.length <= SHORT_ID_MAX && !/\s/.test(trimmed)) return false;
++  // 非文本载体：data URI、URL、base64 大块
++  if (/^(data:|https?:\/\/|blob:)/.test(trimmed)) return false;
++  if (trimmed.length > BASE64_LOOKING_MIN && /^[A-Za-z0-9+/=_-]+$/.test(trimmed)) return false;
++  return true;
++}
++
++/** 短标识符上限：足够覆盖 model / id / 状态码，又不至于放过一整段凭据。 */
++const SHORT_ID_MAX = 40;
++/** 超过这个长度且全为 base64 字符集 → 视为二进制载荷，不是文本。 */
++const BASE64_LOOKING_MIN = 256;
++
++/**
++ * 键名层面的非文本载体（子树整体不进文本投影）：图片/文件内容、URL 等。
++ * 这**不是**按键名给"值"开豁免——它排除的是从设计上就不该被当文本扫的载体。
++ */
++const NON_TEXT_CARRIERS: ReadonlySet<string> = new Set([
 +  "url",
 +  "data",
-+  "media_type",
-+  "mimeType",
 +  "b64_json",
 +  "image_url",
++  "media_type",
++  "mimeType",
++  "mime_type",
 +  "source",
 +  "file_id",
 +  "filename",

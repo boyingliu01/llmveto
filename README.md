@@ -56,7 +56,7 @@ For the full statement see [REQ §v1 residual-risk register](docs/issues/1-req-t
 
 ```
 OpenCode / Delphi(XP-Gate)          ── v1 onboarding (baseURL / .delphi-config override)
-Claude Code / Codex / promptfoo     ── v2 onboarding
+Claude Code / Codex / promptfoo     ── v2b-A onboarding (Anthropic Messages / Responses / chat)
 Tools that cannot override baseURL  ── v3 onboarding (HTTPS_PROXY + NODE_EXTRA_CA_CERTS TLS interception)
         │
         ▼  v1/v2 only: loopback baseURL reverse proxy (v1 does not implement TLS interception)

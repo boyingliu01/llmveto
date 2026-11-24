@@ -45,7 +45,7 @@ NFKC 归一化后同形变体、自定义 PUA 编码、认证类头（`Authoriza
 
 ```
 OpenCode / Delphi(XP-Gate)          ── v1 接入（baseURL / .delphi-config 覆写）
-Claude Code / Codex / promptfoo     ── v2 接入
+Claude Code / Codex / promptfoo     ── v2b-A 接入（Anthropic Messages / Responses / chat）
 无法覆写 baseURL 的工具              ── v3 接入（HTTPS_PROXY + NODE_EXTRA_CA_CERTS TLS 拦截）
         │
         ▼  仅 v1/v2：loopback baseURL 反向代理（v1 不实现 TLS 拦截）

@@ -4,6 +4,33 @@ All notable changes to this project are documented in this file. The format is a
 take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.7] - 2026-11-25
+
+### Changed
+
+Fourth round, into the development tooling.
+
+| function | before | after |
+|---|---|---|
+| `inspectOutPath` | 11 | 6 |
+| `assertWritableOutPath` | 11 | under 5 |
+| `assertSmokeRow` | 10 | under 5 |
+| `main` (release-gate) | 10 | 6 |
+
+`assertWritableOutPath` is worth reading as an example of why the target is
+CCN >= 8 rather than 5. Its ceiling came from four independent preconditions
+(host non-empty, stream name valid, parent writable, target writable) written as
+consecutive `if (bad) throw` guards. Splitting them into four named functions
+made each one trivially readable, but it did not remove any branch — the same
+four checks still run in the same order. What improved is that the order is now
+a list you can read instead of a sequence you have to reconstruct.
+
+`inspectOutPath` had the opposite problem: three nested ternaries whose order
+was the semantics (stream alias beats hardlink alias beats same-name). Flattening
+them into `refusalVia` with sequential returns makes that ordering explicit.
+
+72 remain over 5, 15 at 8 or above. 844 tests, lint clean.
+
 ## [0.7.6] - 2026-11-25
 
 ### Changed

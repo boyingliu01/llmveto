@@ -125,6 +125,20 @@ export interface OutPathFate {
  * 判定 out 路径是否落在 tracked 基线上（**不**看 CI；调用方按 `isCi` 决定是否据此拒绝）。
  * 宿主折叠**先于**名字与身份两条判据生效。
  */
+/**
+ * 判定"为什么拒绝写这个路径"，null 表示不拒绝。
+ *
+ * 三条判据**顺序即语义**：同一条路径可能同时满足多个条件，报哪一条决定了排障方向
+ * ——流别名优先于硬链别名，硬链别名优先于同名。原实现压成三层嵌套三元，顺序读不出来。
+ */
+function refusalVia(f: { readonly sameName: boolean; readonly sameInode: boolean; readonly aliased: boolean }): RefusalVia | null {
+  if (!f.sameName && !f.sameInode) return null;
+  // 走的是流别名（/dev/stdout 一类）
+  if (f.aliased) return "stream";
+  // 硬链/符号链同 inode，但路径名不同 → 报"别名"，让排障指向链接而非名字冲突
+  return f.sameInode && !f.sameName ? "alias" : "tracked";
+}
+
 export function inspectOutPath(
   outPath: string,
   opts: { readonly tracked?: string; readonly plat?: string } = {},
@@ -136,13 +150,7 @@ export function inspectOutPath(
   const outIdentity = fileIdentity(outHost);
   const trackedIdentity = fileIdentity(tracked);
   const sameInode = outIdentity !== null && outIdentity === trackedIdentity;
-  const refusal: RefusalVia | null = !(sameName || sameInode)
-    ? null
-    : outHost !== outPath
-      ? "stream"
-      : sameInode && !sameName
-        ? "alias"
-        : "tracked";
+  const refusal = refusalVia({ sameName, sameInode, aliased: outHost !== outPath });
   return {
     outPath,
     outHost,
@@ -187,12 +195,8 @@ export function refusalMessage(via: RefusalVia): string {
  * 变红的。现在 `plat` 随 `OutPathFate` 一起产出，调用方无从再传第二个。
  */
 export function assertWritableOutPath(fate: OutPathFate): void {
-  const { outPath, outHost, plat } = fate;
-  if (outHost.trim() === "") {
-    throw new Error(
-      `invalid out path ${outPath}: its host is empty (a bare ":stream" suffix has no file to write to)`,
-    );
-  }
+  const { outHost, plat } = fate;
+  assertHostNonEmpty(fate);
   // NTFS 流名的字面约束（R10R4-A-m2）：宿主折叠后剩下的后缀若是 `:` + (空串 | 含冒号)，该路径**写不出**
   // 任何东西。实测以**多字母宿主**为准：`file:` / `file::` / `file:a:b` / `file:a:b:c` 即使 `file` 存在
   // 也一律 ENOENT（`file:tag`、`file:$DATA` 才合法）。
@@ -202,16 +206,34 @@ export function assertWritableOutPath(fate: OutPathFate): void {
   // 该折叠结果现已钉成断言 `hostPath("f:a:b", "win32") === "f:a"`，不再只活在注释里）。
   // 此前预检只看宿主，尾冒号那几类穿过预检、跑满 10×3 采样才在 writeFileSync 处失败，正是本函数要消灭的形态。
   // posix 上 `:` 是普通文件名字符（且 hostPath 恒等 → 后缀为空），故整条判据只在 win32 生效。
-  if (plat === "win32" && outHost !== outPath) {
-    const stream = outPath.slice(outHost.length + 1);
-    if (stream === "" || stream.includes(":")) {
-      throw new Error(
-        `invalid out path ${outPath}: an NTFS alternate data stream name must be non-empty and contain no ':' ` +
-          `(this form always fails with ENOENT, even when the host file exists)`,
-      );
-    }
-  }
+  assertStreamNameValid(fate);
   const dir = dirname(lexicalForPlat(outHost, plat));
+  assertParentWritable(outHost, dir);
+  if (!existsSync(outHost)) return;
+  assertTargetWritable(outHost);
+}
+
+/** 宿主为空 = 没有可写的文件（裸 `:stream` 后缀）。 */
+function assertHostNonEmpty(fate: OutPathFate): void {
+  if (fate.outHost.trim() !== "") return;
+  throw new Error(
+    `invalid out path ${fate.outPath}: its host is empty (a bare ":stream" suffix has no file to write to)`,
+  );
+}
+
+/** win32 上流名必须非空且不含 `:`（posix 上 hostPath 恒等，整支跳过）。 */
+function assertStreamNameValid(fate: OutPathFate): void {
+  if (fate.plat !== "win32" || fate.outHost === fate.outPath) return;
+  const stream = fate.outPath.slice(fate.outHost.length + 1);
+  if (stream !== "" && !stream.includes(":")) return;
+  throw new Error(
+    `invalid out path ${fate.outPath}: an NTFS alternate data stream name must be non-empty and contain no ':' ` +
+      `(this form always fails with ENOENT, even when the host file exists)`,
+  );
+}
+
+/** 父目录必须存在且可写。 */
+function assertParentWritable(outHost: string, dir: string): void {
   if (!existsSync(dir)) {
     throw new Error(
       `out path ${outHost}: parent directory ${dir} does not exist (create it first; bench:record never mkdirs)`,
@@ -225,14 +247,16 @@ export function assertWritableOutPath(fate: OutPathFate): void {
     // 并把原始 errno 一并带出供诊断。
     throw new Error(`out path ${outHost}: parent directory ${dir} cannot be verified as writable (${String(e)})`);
   }
-  if (existsSync(outHost)) {
-    if (!statSync(outHost).isFile()) {
-      throw new Error(`out path ${outHost} exists but is not a regular file`);
-    }
-    try {
-      accessSync(outHost, constants.W_OK);
-    } catch (e) {
-      throw new Error(`out path ${outHost} is not writable (${String(e)})`);
-    }
+}
+
+/** 目标已存在时必须是普通文件且可写。 */
+function assertTargetWritable(outHost: string): void {
+  if (!statSync(outHost).isFile()) {
+    throw new Error(`out path ${outHost} exists but is not a regular file`);
+  }
+  try {
+    accessSync(outHost, constants.W_OK);
+  } catch (e) {
+    throw new Error(`out path ${outHost} is not writable (${String(e)})`);
   }
 }

@@ -199,11 +199,17 @@ async function seedEvidenceRecord(gatewayUrl) {
   }
 }
 
+/** 期望出现却没出现的锚定串。 */
+function missingAnchors(want, got, stream) {
+  return (want ?? []).filter((s) => !got.includes(s)).map((s) => `${stream} missing: ${JSON.stringify(s)}`);
+}
+
 function assertSmokeRow(row, r) {
-  const problems = [];
-  if (r.code !== row.expect.exit) problems.push(`exit: want ${row.expect.exit}, got ${r.code}${r.timeoutHit ? " (timeout)" : ""}`);
-  for (const s of row.expect.stdout ?? []) if (!r.stdout.includes(s)) problems.push(`stdout missing: ${JSON.stringify(s)}`);
-  for (const s of row.expect.stderr ?? []) if (!r.stderr.includes(s)) problems.push(`stderr missing: ${JSON.stringify(s)}`);
+  const problems = [
+    ...(r.code === row.expect.exit ? [] : [`exit: want ${row.expect.exit}, got ${r.code}${r.timeoutHit ? " (timeout)" : ""}`]),
+    ...missingAnchors(row.expect.stdout, r.stdout, "stdout"),
+    ...missingAnchors(row.expect.stderr, r.stderr, "stderr"),
+  ];
   if (problems.length) {
     fail(`smoke row ${row.id} (llmveto ${row.args.join(" ")})`, [
       ...problems,
@@ -305,6 +311,65 @@ function preflight() {
   if (!pkg.bin?.llmveto) fail("package.json 缺 bin.llmveto");
 }
 
+/**
+ * 顺序跑门链；第一个失败步立即中断并打印其名。
+ *
+ * `failed` 由调用方据此区分"步骤失败"与"意外异常"——两者的收尾诊断不同，
+ * 所以这里只负责跑，不决定退出码。
+ */
+async function runStepChain(steps) {
+  for (let i = 0; i < steps.length; i++) {
+    const [name, fn] = steps[i];
+    const t0 = Date.now();
+    try {
+      await fn();
+      console.log(`[gate ${String(i + 1).padStart(2, "0")}/${steps.length}] ${name} ... ok (${Date.now() - t0}ms)`);
+    } catch (e) {
+      const extra = e instanceof GateError ? `\n${e.message}` : `\n${e?.stack ?? String(e)}`;
+      console.error(`\n[release-gate] 首个失败步 = ${name}${extra}`);
+      throw e;
+    }
+  }
+}
+
+/**
+ * 测试步：跑全量并核对吞吐基线。
+ *
+ * 单独成函数的理由：这一支里同时有"命令失败""汇总行解析不出""passed 数倒退"
+ * 三种失败面，各自要给不同的诊断；混在 main 的步骤表里会让整张表都难以扫读。
+ */
+function testStep() {
+  const r = run("bun", ["run", "test"], { timeout: 900_000 });
+  if (r.code !== 0) fail("test (bun run test)", [tail(r.stdout), tail(r.stderr)]);
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: ESC (0x1b) 是 ANSI SGR 序列的首字节，这里就是要剥掉它
+  const combined = (r.stdout + r.stderr).replace(/\x1b\[[0-9;]*m/g, ""); // 剥 ANSI，否则 \b 不成立（[32m326 无词边界）
+  const passed = /\bTests\s+(\d+)\s+passed\b/.exec(combined);
+  if (!passed) {
+    fail(
+      "test: 无法解析 vitest passed 计数（基线核对不可能）——若 vitest 版本升级导致汇总行格式变更，须同步修订本脚本正则",
+      [tail(combined, 10)],
+    );
+  }
+  if (Number(passed[1]) < TEST_BASELINE_MIN_PASSED) {
+    fail(`test 基线倒退: passed=${passed[1]} < 冻结基线 ${TEST_BASELINE_MIN_PASSED}`);
+  }
+  const skipped = /\bTests\s+\d+\s+passed\s*\|\s*(\d+)\s+skipped\b/.exec(combined);
+  console.log(`    baseline: ${passed[1]} passed | ${skipped ? skipped[1] : "?"} skipped (下界 ${TEST_BASELINE_MIN_PASSED})`);
+}
+
+/**
+ * 造一个"跑命令、非零即失败"的步骤函数。
+ *
+ * 五个步骤原本各写一遍 `const r = run(...); if (r.code !== 0) fail(...)`，
+ * 每个都带同样的两行分支；抽出来之后 `main` 剩下的分支只表达**这一步独有的判据**。
+ */
+function mustRun(cmd, args, label) {
+  return () => {
+    const r = run(cmd, args);
+    if (r.code !== 0) fail(label, [tail(r.stderr)]);
+  };
+}
+
 async function main() {
   if (process.env.RELEASE_GATE_RUNNING === "1") {
     // 兜底层：主防线是 publishDryRunStep 的 --ignore-scripts（prepublishOnly 不触发）；
@@ -319,53 +384,27 @@ async function main() {
   const steps = [
     // 链序注：D-01 原文为 clean → install，但 fresh checkout 下 rimraf 尚未安装（CI 能跑通仅因
     // 装依赖先行）。改为 install → clean：install 不产 dist，clean-rebuild 保证（dist 先删后建）不变。
-    ["install", () => { const r = run("bun", ["install"]); if (r.code !== 0) fail("install (bun install)", [tail(r.stderr)]); }],
-    ["clean", () => { const r = run("bun", ["run", "clean"]); if (r.code !== 0) fail("clean (bun run clean)", [tail(r.stderr)]); }],
+    ["install", mustRun("bun", ["install"], "install (bun install)")],
+    ["clean", mustRun("bun", ["run", "clean"], "clean (bun run clean)")],
     ["build", () => {
-      const r = run("bun", ["run", "build"]);
-      if (r.code !== 0) fail("build (bun run build)", [tail(r.stderr)]);
+      mustRun("bun", ["run", "build"], "build (bun run build)")();
       if (!existsSync(join(ROOT, "dist", "cli", "index.js"))) fail("build: dist/cli/index.js 未生成");
     }],
-    ["test", () => {
-      const r = run("bun", ["run", "test"], { timeout: 900_000 });
-      if (r.code !== 0) fail("test (bun run test)", [tail(r.stdout), tail(r.stderr)]);
-      // biome-ignore lint/suspicious/noControlCharactersInRegex: ESC (0x1b) 是 ANSI SGR 序列的首字节，这里就是要剥掉它
-      const combined = (r.stdout + r.stderr).replace(/\x1b\[[0-9;]*m/g, ""); // 剥 ANSI，否则 \b 不成立（[32m326 无词边界）
-      const passed = /\bTests\s+(\d+)\s+passed\b/.exec(combined);
-      if (!passed) fail("test: 无法解析 vitest passed 计数（基线核对不可能）——若 vitest 版本升级导致汇总行格式变更，须同步修订本脚本正则", [tail(combined, 10)]);
-      if (Number(passed[1]) < TEST_BASELINE_MIN_PASSED) {
-        fail(`test 基线倒退: passed=${passed[1]} < 冻结基线 ${TEST_BASELINE_MIN_PASSED}`);
-      }
-      const skipped = /\bTests\s+\d+\s+passed\s*\|\s*(\d+)\s+skipped\b/.exec(combined);
-      console.log(`    baseline: ${passed[1]} passed | ${skipped ? skipped[1] : "?"} skipped (下界 ${TEST_BASELINE_MIN_PASSED})`);
-    }],
-    ["typecheck", () => { const r = run("bun", ["run", "typecheck"]); if (r.code !== 0) fail("typecheck", [tail(r.stderr)]); }],
-    ["typecheck:dist", () => { const r = run("bun", ["run", "typecheck:dist"]); if (r.code !== 0) fail("typecheck:dist", [tail(r.stderr)]); }],
+    ["test", testStep],
+    ["typecheck", mustRun("bun", ["run", "typecheck"], "typecheck")],
+    ["typecheck:dist", mustRun("bun", ["run", "typecheck:dist"], "typecheck:dist")],
     ["pack", () => packStep(ctx)],
     ["install-tarball", () => installTarballStep(ctx)],
     ["smoke", () => smokeStep(ctx)],
     ["publish-dry-run", () => publishDryRunStep()],
   ];
 
-  let failed = false;
   try {
-    for (let i = 0; i < steps.length; i++) {
-      const [name, fn] = steps[i];
-      const t0 = Date.now();
-      try {
-        await fn();
-        console.log(`[gate ${String(i + 1).padStart(2, "0")}/${steps.length}] ${name} ... ok (${Date.now() - t0}ms)`);
-      } catch (e) {
-        failed = true;
-        const extra = e instanceof GateError ? `\n${e.message}` : `\n${e?.stack ?? String(e)}`;
-        console.error(`\n[release-gate] 首个失败步 = ${name}${extra}`);
-        throw e;
-      }
-    }
+    await runStepChain(steps);
     console.log(`\n[release-gate] PASS — 10 步门链全过；smoke 8 行判据全过（含 seed 留痕）；tarball: ${ctx.tgz}`);
   } catch (e) {
     process.exitCode = 1;
-    if (!failed && !(e instanceof GateError)) console.error(`[release-gate] UNEXPECTED: ${e?.stack ?? String(e)}`);
+    if (!(e instanceof GateError)) console.error(`[release-gate] UNEXPECTED: ${e?.stack ?? String(e)}`);
   } finally {
     teardown(ctx);
   }

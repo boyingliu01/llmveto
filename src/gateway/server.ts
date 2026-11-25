@@ -127,15 +127,21 @@ export function resolveUpstream(
 ): UpstreamResolution | null {
   const headerUrl = headers["x-llmveto-upstream-url"];
   if (cfg.allowUpstreamHeaderOverride === true && headerUrl) return { base: headerUrl, viaHeader: true };
+
   const client = route.client ?? "*";
   const provider = route.providerId ?? "*";
   const table = cfg.upstreams ?? {};
-  const exact = table[`${client}/${provider}`];
-  if (exact) return { base: exact, viaHeader: false };
-  const clientWide = table[`${client}/*`];
-  if (clientWide) return { base: clientWide, viaHeader: false };
-  const catchAll = cfg.upstreamBaseUrl;
-  return catchAll ? { base: catchAll, viaHeader: false } : null; // 空串 = 未配置 → fail-closed
+  // 三层回退按**从具体到宽泛**排列：精确 > 客户端通配 > 全量兜底。
+  // 写成数组而不是三个 if，是为了让顺序本身成为一个可见的常量——
+  // 这层的语义就是顺序，埋进分支里容易在改动时被无意识地打乱。
+  const candidates: readonly (string | undefined)[] = [
+    table[`${client}/${provider}`],
+    table[`${client}/*`],
+    cfg.upstreamBaseUrl,
+  ];
+  const base = candidates.find((c) => c !== undefined && c !== "");
+  // 空串 = 未配置 → fail-closed（返回 null，由调用方 502）
+  return base === undefined ? null : { base, viaHeader: false };
 }
 
 /** 拼接 upstream base + rest + 查询串（`search` 含前导 `?`）；去重双重 /v1（base 末尾带 /v1 且 rest 以 /v1 开头）。 */
@@ -511,14 +517,26 @@ interface EvidenceWriteParams {
   readonly t0: number;
 }
 
+/**
+ * 从 JSON 文本里取 `model`；解析失败或不是字符串时返回 null。
+ *
+ * 两个方向都出现过（请求→响应），各写一遍就是两次可解析判定，抽出来让
+ * `writeEvidence` 只表达"落哪些字段"。
+ */
+function modelNameOf(text: string): string | null {
+  const parsed = safeParse(text);
+  return parsed !== null && typeof parsed.model === "string" ? parsed.model : null;
+}
+
+/** `reason` 可选位：未传时**键整体缺席**（§14.4-4），不是显式 null。 */
+function optionalReason(reason: string | undefined): { readonly reason?: string } {
+  return reason === undefined ? {} : { reason };
+}
+
 function writeEvidence(cfg: GatewayConfig, p: EvidenceWriteParams): void {
   // D-04/#A：request_bytes/request_body_sha256 记**实际到达 upstream 的外部事实**（受管路径 = 注入后体）；
   // bodyText 仍为客户端原文，注入成功时二者有意不同，同为离境文本面各自过喉。
   const forwarded = p.forwardedBody ?? p.bodyText;
-  const parsedReq = safeParse(p.bodyText);
-  const modelReq = parsedReq && typeof parsedReq.model === "string" ? parsedReq.model : null;
-  const parsedResp = safeParse(p.respText);
-  const modelResp = parsedResp && typeof parsedResp.model === "string" ? parsedResp.model : null;
   const bodyCapture = cfg.bodyCapture ?? "metadata_only";
   // 咽喉点（AC-VETO-002-05）：文本写盘前必须过 redactSink。v1 evidence 只落 sha256 + 模式标记
   // （见 evidence/schema.ts），无原文落盘，故返回值不参与落盘；保留调用作为文本 sink 的强制入口。
@@ -527,14 +545,14 @@ function writeEvidence(cfg: GatewayConfig, p: EvidenceWriteParams): void {
   cfg.evidenceWriter.append({
     session_id: p.sessionId, turn_id: p.turnId, request_id: p.requestId,
     client: p.client, provider_id: p.providerId, endpoint_host: p.endpointHost,
-    model_requested: modelReq, model_responded: modelResp,
+    model_requested: modelNameOf(p.bodyText), model_responded: modelNameOf(p.respText),
     transport: p.stream ? "stream" : "non-stream",
     request_bytes: Buffer.byteLength(forwarded, "utf8"), response_bytes: Buffer.byteLength(p.respText, "utf8"),
     chunk_count: p.deliveredChunks,
     latency: Date.now() - p.t0,
     findings: p.findings,
     action_taken: p.actionTaken,
-    ...(p.reason !== undefined ? { reason: p.reason } : {}), // 可选位：未传时键整体缺席（§14.4-4），v1 记录形状零扰动
+    ...optionalReason(p.reason), // 可选位：未传时键整体缺席（§14.4-4），v1 记录形状零扰动
     response_delivered: { partial: p.partial, delivered_chunks: p.deliveredChunks },
     request_body_sha256: sha256Hex(forwarded),
     response_body_sha256: sha256Hex(p.respText),
@@ -564,6 +582,59 @@ function finishFailureResponse(res: ServerResponse, body: string): boolean {
 }
 
 /** 兜底路径的 evidence：error finding 承载成因（rule_id），交付字段取 fwd 的真实计数。 */
+/**
+ * 失败路径的身份四元组。
+ *
+ * 请求在 `resolveIdentity` 之前就失败的路径（上游连不上）没有现成的 id，
+ * 只能从转发头里取；缺什么补什么，且补出来的 id 必须**同源**——用同一个
+ * requestId 派生 session/turn，否则一条交互在审计面上会被拆成三条。
+ */
+function failureIdentity(
+  headers: Readonly<Record<string, string>>,
+  cfg: GatewayConfig,
+): {
+  sessionId: string;
+  turnId: string;
+  requestId: string;
+  client: string;
+  providerId: string;
+  endpointHost: string;
+} {
+  const requestId = headers["x-llmveto-request-id"] ?? randomUUID();
+  const short = requestId.slice(0, 8);
+  // 兜底值集中在表里，逐个 `??` 会让这个函数的分支数等于字段数（实测 8）。
+  // `""` 表示"该字段没有独立兜底，用派生值"。
+  const fallback: Readonly<Record<string, string>> = {
+    "x-llmveto-session-id": `s-${short}`,
+    "x-llmveto-turn-id": `t-${short}`,
+    "x-llmveto-client": "unknown",
+    "x-llmveto-provider": cfg.providerId ?? "unknown",
+    "x-llmveto-endpoint-host": "unknown",
+  };
+  const pick = (key: string): string => headers[key] ?? fallback[key] ?? "unknown";
+  return {
+    sessionId: pick("x-llmveto-session-id"),
+    turnId: pick("x-llmveto-turn-id"),
+    requestId,
+    client: pick("x-llmveto-client"),
+    providerId: pick("x-llmveto-provider"),
+    endpointHost: pick("x-llmveto-endpoint-host"),
+  };
+}
+
+/** 上游不可达的成因 finding。`rule_id` 是 error 类 finding 唯一的成因落点。 */
+function upstreamFailureFinding(err: unknown): EvidenceFinding {
+  const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+  return {
+    checker: "gateway",
+    threat: "T0",
+    verdict: "error",
+    severity: "high",
+    // 截断到 160 字符：evidence 是 append-only 审计面，不因超长错误串膨胀。
+    rule_id: `upstream-unreachable: ${detail}`.slice(0, 160),
+  };
+}
+
 function writeDispatchFailureEvidence(
   cfg: GatewayConfig,
   req: IncomingMessage,
@@ -573,23 +644,10 @@ function writeDispatchFailureEvidence(
   const { forwarded, body, fwd } = state;
   const t0 = Date.now();
   const headers = normalizeHeaders(req.headers);
-  const requestId = headers["x-llmveto-request-id"] ?? randomUUID();
-  const failureFinding: EvidenceFinding = {
-    checker: "gateway",
-    threat: "T0",
-    verdict: "error",
-    severity: "high",
-    // rule_id 承载可读成因摘要：error 类 finding 无 offsets，此处是唯一的成因落点。
-    // 截断到 160 字符：evidence 是 append-only 审计面，不因超长错误串膨胀。
-    rule_id: ("upstream-unreachable: " + (err instanceof Error ? `${err.name}: ${err.message}` : String(err))).slice(0, 160),
-  };
+  const ids = failureIdentity(headers, cfg);
+  const failureFinding = upstreamFailureFinding(err);
   writeEvidence(cfg, {
-    sessionId: headers["x-llmveto-session-id"] ?? "s-" + requestId.slice(0, 8),
-    turnId: headers["x-llmveto-turn-id"] ?? "t-" + requestId.slice(0, 8),
-    requestId,
-    client: headers["x-llmveto-client"] ?? "unknown",
-    providerId: headers["x-llmveto-provider"] ?? cfg.providerId ?? "unknown",
-    endpointHost: headers["x-llmveto-endpoint-host"] ?? "unknown",
+    ...ids,
     bodyText: "",
     // headers 已出时并未把 JSON body 交付给客户端——evidence 不虚报交付内容（respText 与
     // response_body_sha256 描述"实际交付面"），失败原因由 findings 承载。

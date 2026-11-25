@@ -80,18 +80,19 @@ function safeFromCodePoint(cp: number): string {
  * 否则又构成"载体丢失"（PWR1-B-m5）。`tool_call_id`/`id` 是随机标识、无可扫文本，**不**入单元
  * （原注释声称"另含 id"与代码不符，PWR1-B-m1 订正）。
  */
+/** 收一个 tool_call 的名字与参数；`function` 包裹与扁平两种形态并存。 */
 function collectToolCallParts(tc: unknown, out: string[]): void {
-  if (!tc || typeof tc !== "object") return;
-  const t = tc as Record<string, unknown>;
-  const fn = t.function;
-  if (fn && typeof fn === "object") {
-    const f = fn as Record<string, unknown>;
-    if (typeof f.name === "string") out.push(f.name);
-    pushArguments(f.arguments, out);
+  if (!isRecord(tc)) return;
+  const fn = tc.function;
+  if (isRecord(fn)) {
+    // OpenAI 标准形态：{ function: { name, arguments } }
+    pushIfString(fn.name, out);
+    pushArguments(fn.arguments, out);
+    return;
   }
-  // 扁平形态（无 function 包裹）
-  if (typeof t.name === "string") out.push(t.name);
-  if (!fn) pushArguments(t.arguments, out); // 扁平分支才在这里取；function 包裹的已在上面取过
+  // 扁平形态：{ name, arguments }（部分客户端与 MCP 桥接层这样发）
+  pushIfString(tc.name, out);
+  pushArguments(tc.arguments, out);
 }
 
 /** arguments 可为 string（协议）或 object（非标准网关直发）；其余类型不可扫。 */
@@ -101,14 +102,20 @@ function pushArguments(args: unknown, out: string[]): void {
 }
 
 /** content 投影：string 直取；多模态分段数组取 seg.text。请求侧 messages 与响应侧 choices 共用。 */
+/** 内容块数组里的 `text` 段（其余段型不是文本，忽略）。 */
+function pushTextSegments(segments: readonly unknown[], out: string[]): void {
+  for (const seg of segments) {
+    if (isRecord(seg) && "text" in seg) out.push(String(seg.text));
+  }
+}
+
+/** 消息 content：字符串直接收，数组收每个 text 段。 */
 function pushContentParts(content: unknown, out: string[]): void {
   if (typeof content === "string") {
     out.push(content);
-  } else if (Array.isArray(content)) {
-    for (const seg of content) {
-      if (seg && typeof seg === "object" && "text" in seg) out.push(String((seg as { text: unknown }).text));
-    }
+    return;
   }
+  if (Array.isArray(content)) pushTextSegments(content, out);
 }
 
 /** 请求侧单条 message 投影：content + 工具调用载荷（助手历史里的 arguments 同为 T2a 载体）。 */
@@ -121,36 +128,43 @@ function collectMessageParts(m: unknown, out: string[]): void {
 }
 
 /** 单个 delta/message 盒子的文本投影 + 工具调用载荷回填（content/工具调用/reasoning 三源）。 */
+/**
+ * 收一个 choice/message 盒子里的工具调用载荷（T2a 载体）。
+ *
+ * `has_tool_call_payload` 让流式 checker 区分"本片是 arguments 片段"与"本片是
+ * content/reasoning 文本"：256KiB 单笔硬顶只约束前者（G-WINDOW §4.2 计量口径），
+ * 否则一段超长正文会被误判 window_overflow 而阻断。标记与收集必须同进同退，
+ * 所以合成一个函数。
+ */
+function collectToolPayloads(b: Record<string, unknown>, out: string[], meta: Record<string, unknown>): void {
+  const legacy = b.function_call;
+  const calls = Array.isArray(b.tool_calls) ? b.tool_calls : [];
+  if (calls.length === 0 && legacy === undefined) return;
+  meta.has_tool_call_payload = true;
+  for (const tc of calls) collectToolCallParts(tc, out);
+  if (legacy !== undefined) collectToolCallParts(legacy, out);
+}
+
 function collectChoiceBox(box: unknown, out: string[], meta: Record<string, unknown>): void {
-  if (!box || typeof box !== "object") return;
-  const b = box as Record<string, unknown>;
-  pushContentParts(b.content, out);
-  // 工具调用载荷（T2a 载体）
-  // has_tool_call_payload 让流式 checker 区分“本片是 arguments 片段”与“本片是
-  // content/reasoning 文本”：256KiB 单笔硬顶只约束前者（G-WINDOW §4.2 计量口径），
-  // 否则一段超长正文会被误判 window_overflow 而阻断。
-  if (Array.isArray(b.tool_calls) && b.tool_calls.length > 0) {
-    meta.has_tool_call_payload = true;
-    for (const tc of b.tool_calls) collectToolCallParts(tc, out);
-  }
-  if (b.function_call) {
-    meta.has_tool_call_payload = true;
-    collectToolCallParts(b.function_call, out);
-  }
-  if (typeof b.reasoning_content === "string") out.push(b.reasoning_content);
+  if (!isRecord(box)) return;
+  pushContentParts(box.content, out);
+  collectToolPayloads(box, out, meta);
+  pushIfString(box.reasoning_content, out);
 }
 
 /** 抽 choices[*] 里 message/delta 的文本 + 工具调用载荷；同时回填结构性 meta。 */
+/** 单个 choice：收 delta 与 message 两个盒子，并记下 finish_reason。 */
+function collectOneChoice(c: unknown, out: string[], meta: Record<string, unknown>): void {
+  if (!isRecord(c)) return;
+  collectChoiceBox(c.delta, out, meta);
+  collectChoiceBox(c.message, out, meta);
+  if (typeof c.finish_reason === "string") meta.finish_reason = c.finish_reason;
+}
+
 function collectChoiceParts(parsed: Record<string, unknown>, out: string[]): Record<string, unknown> {
   const meta: Record<string, unknown> = {};
-  const choices = parsed.choices;
-  if (!Array.isArray(choices)) return meta;
-  for (const c of choices) {
-    if (!c || typeof c !== "object") continue;
-    const c0 = c as Record<string, unknown>;
-    for (const key of ["delta", "message"] as const) collectChoiceBox(c0[key], out, meta);
-    if (typeof c0.finish_reason === "string") meta.finish_reason = c0.finish_reason;
-  }
+  if (!Array.isArray(parsed.choices)) return meta;
+  for (const c of parsed.choices) collectOneChoice(c, out, meta);
   return meta;
 }
 
@@ -439,29 +453,61 @@ function feedToolCall(state: MergerState, ci: number, ti: number, t: unknown): v
 }
 
 /** 吸收单条 choice 的 delta：tool_calls 数组按 index 分桶，旧式 function_call 单独一桶。 */
+/** 字符串才收（其余形态不是内容，收了只会制造噪声）。 */
+function pushIfString(value: unknown, out: string[]): void {
+  if (typeof value === "string") out.push(value);
+}
+
+/** 非 null、非数组的对象（JSON 层面唯一的"记录"形态）。 */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** 取一个对象字段；不是记录时返回 undefined。 */
+function objectField(value: unknown, key: string): Record<string, unknown> | undefined {
+  if (!isRecord(value)) return undefined;
+  const inner = value[key];
+  return isRecord(inner) ? inner : undefined;
+}
+
+/** 旧式 `function_call` 增量（与 `tool_calls[]` 二选一，OpenAI 两种形态并存）。 */
+function feedLegacyFunctionCall(state: MergerState, ci: number, delta: Record<string, unknown>): void {
+  const fc = objectField(delta, "function_call");
+  if (fc !== undefined) appendFragment(state, `${ci}:fc`, fc.arguments);
+}
+
 function feedChoiceDelta(state: MergerState, ci: number, choice: unknown): void {
-  if (!choice || typeof choice !== "object") return;
-  const delta = (choice as Record<string, unknown>).delta;
-  if (!delta || typeof delta !== "object") return;
-  const d = delta as Record<string, unknown>;
-  if (Array.isArray(d.tool_calls)) {
-    for (let ti = 0; ti < d.tool_calls.length; ti++) feedToolCall(state, ci, ti, d.tool_calls[ti]);
+  const delta = objectField(choice, "delta");
+  if (delta === undefined) return;
+  if (Array.isArray(delta.tool_calls)) {
+    for (let ti = 0; ti < delta.tool_calls.length; ti += 1) feedToolCall(state, ci, ti, delta.tool_calls[ti]);
   }
-  if (d.function_call && typeof d.function_call === "object") {
-    appendFragment(state, `${ci}:fc`, (d.function_call as Record<string, unknown>).arguments);
-  }
+  feedLegacyFunctionCall(state, ci, delta);
 }
 
 /** arguments 协议为 string 且流式分片只对 string 有意义；对象形态直发由逐帧单元覆盖（非字符串不归并）。
  *  累积按 UTF-8 字节封顶 256 KiB（AC-V2a-14 同口径）：越顶即停，防止无界内存与越顶后的重扫。 */
-function appendFragment(state: MergerState, key: string, args: unknown): void {
-  if (typeof args !== "string" || args.length === 0 || state.overflowed) return;
+/**
+ * 记入一段增量字节；超限时把 state 标记为 overflowed 并返回 false。
+ *
+ * 与 `appendFragment` 拆开是因为两件事：**能不能再收**（容量判定）与
+ * **收到哪里去**（按 key 累积）。合在一起时 CCN 6，且溢出这条早退路径
+ * 在测试里很难被单独瞄准。
+ */
+function accountBytes(state: MergerState, args: string): boolean {
+  if (state.overflowed) return false;
   const add = Buffer.byteLength(args, "utf8");
   if (exceedsWindowOverflowLimit(state.bytes, add)) {
     state.overflowed = true;
-    return;
+    return false;
   }
   state.bytes += add;
+  return true;
+}
+
+function appendFragment(state: MergerState, key: string, args: unknown): void {
+  if (typeof args !== "string" || args.length === 0) return;
+  if (!accountBytes(state, args)) return;
   const prev = state.acc.get(key);
   state.acc.set(key, prev === undefined ? args : prev + args);
 }

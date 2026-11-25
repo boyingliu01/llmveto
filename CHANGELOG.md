@@ -4,6 +4,39 @@ All notable changes to this project are documented in this file. The format is a
 take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.4] - 2026-11-25
+
+### Changed
+
+Continued the complexity work along the readability axis rather than a flat
+number. The sweep reported 88 functions over CCN 5; investigation showed 45 of
+them at CCN 6-7, and sampling those found linear guard chains — `jsonAtPath` is
+13 lines, one loop and two guards at CCN 6, with nothing wrong with it. Splitting
+those costs a hop for every caller and the extracted halves land near the
+threshold themselves (measured: `objectField` came out at 6 and needed a second
+pass).
+
+So the target is CCN >= 8, where the branching is genuinely hard to follow.
+
+Refactored this round:
+
+| function | before | after |
+|---|---|---|
+| `writeDispatchFailureEvidence` | 11 | under 5 |
+| `writeEvidence` | 10 | under 5 |
+| `pickTopReasonWinner` | 10 | under 5 |
+| `walk` (decoded-form scan) | 10 | under 5 |
+| `resolveUpstream` | 9 | 7 |
+| `appendFragment`, `feedChoiceDelta`, `collectToolCallParts`, `collectChoiceBox`, `collectChoiceParts`, `pushContentParts` | 6-9 | under 5 |
+
+Two techniques did most of the work, and both are about naming rather than
+size: fallback tables instead of chained `??` (`failureIdentity` went 8 → under
+5 by making the defaults a lookup), and shape-specific recursion helpers instead
+of one function with a string/array/object switch (`walk` 10 → three flat
+functions).
+
+78 remain over 5, 32 at 8 or above. 844 tests pass; lint clean.
+
 ## [0.7.3] - 2026-11-25
 
 ### Changed

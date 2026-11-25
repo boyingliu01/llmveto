@@ -68,36 +68,51 @@ function gatewayReasonRank(reason: string): number {
   return idx >= 0 ? idx : GATEWAY_REASON_PRIORITY.length;
 }
 
+/**
+ * 取排序键最小的元素；并列时**保持先见**（稳定）。
+ *
+ * 两段选优（gateway 词表排序、checker 双层排序）原本各写一遍循环，
+ * 复合起来 CCN 10。排序键是调用方给的元组，比较逻辑在这一处，
+ * 顺序语义就不会在两段之间漂移。
+ */
+function minBy<T>(items: readonly T[], key: (item: T) => readonly number[]): T {
+  const [first, ...rest] = items;
+  if (first === undefined) throw new Error("minBy: empty input");
+  let best: T = first;
+  let bestKey = key(best);
+  for (const item of rest) {
+    const k = key(item);
+    if (compareKeys(k, bestKey) < 0) {
+      best = item;
+      bestKey = k;
+    }
+  }
+  return best;
+}
+
+/** 元组逐位比较；长度不等时短的一方在前（不会发生，仅作类型完备）。 */
+function compareKeys(a: readonly number[], b: readonly number[]): number {
+  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+    const diff = (a[i] ?? 0) - (b[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
 export function pickTopReasonWinner(params: PickTopReasonParams): ReasonWinner | undefined {
   const gateway = params.gatewayReasons ?? [];
   if (gateway.length > 0) {
     // gateway 值无条件胜出（R2 修正：gateway 描述符比任何 checker error 都更"上游"）；
     // 多值并存按 GATEWAY_REASON_PRIORITY 内部排序取最前，词表外值并列取先见。
-    let bestIdx = gateway[0]!;
-    let bestRank = gatewayReasonRank(bestIdx);
-    for (const g of gateway.slice(1)) {
-      const r = gatewayReasonRank(g);
-      if (r < bestRank) {
-        bestIdx = g;
-        bestRank = r;
-      }
-    }
-    return { source: "gateway", reason: bestIdx, checker: undefined };
+    const best = minBy(gateway, (g) => [gatewayReasonRank(g)]);
+    return { source: "gateway", reason: best, checker: undefined };
   }
   if (params.checkerErrors.length === 0) return undefined;
-  let best: ReasonCandidate = params.checkerErrors[0]!;
-  let bestRank = checkerReasonRank(best.reason);
-  let bestDecl = declarationRank(best.checker, params.checkerDeclarationOrder);
-  for (const c of params.checkerErrors.slice(1)) {
-    const r = checkerReasonRank(c.reason);
-    const d = declarationRank(c.checker, params.checkerDeclarationOrder);
-    if (r < bestRank || (r === bestRank && d < bestDecl)) {
-      best = c;
-      bestRank = r;
-      bestDecl = d;
-    }
-    // r === bestRank && d === bestDecl → 保持先见（稳定）
-  }
+  // 双层排序：先比 reason 优先级，再比声明顺序；都相同则先见胜。
+  const best = minBy(params.checkerErrors, (c) => [
+    checkerReasonRank(c.reason),
+    declarationRank(c.checker, params.checkerDeclarationOrder),
+  ]);
   return { source: "checker", reason: best.reason, checker: best.checker };
 }
 

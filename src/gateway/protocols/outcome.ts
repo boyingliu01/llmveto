@@ -164,32 +164,58 @@ function unseenSecret(body: Record<string, unknown>, rawText: string, scannedTex
  * 为什么不能用 `JSON.stringify(body)`：那会把换行再转义回去，等于回到①。
  * 这里直接按解码后的字面值拼接，得到的就是上游解析后真正看到的内容。
  */
+/**
+ * 把 body 里**所有**字符串按"键值同行"收集进 `out`。
+ *
+ * 规则在 `walkInto` 三处分支上成对出现：字符串直收；数组平铺；对象按 key 收，
+ * 且认证头跳过、键值同行。
+ *
+ * 认证头的值按 AC-VETO-002-06 设计上不进扫描单元，这里同样不收——收了它就会
+ * 在解码坐标系里成为"未被看过"的命中，把正常请求打成 502。
+ */
+function walkInto(value: unknown, out: string[], parentKey: string | undefined): void {
+  if (typeof value === "string") {
+    out.push(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    walkArray(value, out);
+    return;
+  }
+  if (value !== null && typeof value === "object") {
+    walkObject(value as Record<string, unknown>, out, parentKey);
+  }
+}
+
+/** 数组：逐项平铺。子项没有父键，认证头豁免不继承下去。 */
+function walkArray(items: readonly unknown[], out: string[]): void {
+  for (const item of items) walkInto(item, out, undefined);
+}
+
+/** 对象：按 key 收集，跳过认证头，键值同行。 */
+function walkObject(
+  value: Record<string, unknown>,
+  out: string[],
+  parentKey: string | undefined,
+): void {
+  for (const [key, item] of Object.entries(value)) {
+    if (parentKey === "extra_headers" && isAuthHeader(key)) continue;
+    // 键值**同行**：`deployment_token: "ghp_..."` 这类同行规则才命中得到。
+    if (typeof item === "string") {
+      out.push(`${key}: ${item}`);
+      continue;
+    }
+    out.push(key);
+    walkInto(item, out, key);
+  }
+}
+
 function decodeVariants(body: Record<string, unknown>): string {
   const out: string[] = [];
-  const walk = (v: unknown, parentKey?: string): void => {
-    if (typeof v === "string") {
-      out.push(v);
-      return;
-    }
-    if (Array.isArray(v)) {
-      for (const item of v) walk(item);
-      return;
-    }
-    if (v && typeof v === "object") {
-      for (const [k, item] of Object.entries(v as Record<string, unknown>)) {
-        // 认证头的**值**按 AC-VETO-002-06 设计上不进扫描单元，这里同样不收：
-        // 收了它就会在解码坐标系里成为"未被看过"的命中，把正常请求打成 502。
-        if (parentKey === "extra_headers" && isAuthHeader(k)) continue;
-        // 键值**同行**：`deployment_token: "ghp_..."` 这类同行规则才命中得到。
-        if (typeof item === "string") out.push(`${k}: ${item}`);
-        else {
-          out.push(k);
-          walk(item, k);
-        }
-      }
-    }
-  };
-  walk(body);
+  // 递归而不是内联闭包：`walk` 是自引用函数，写成闭包时对象分支、数组分支与
+  // 键值同行规则三层嵌在一处（CCN 10）；提成模块级函数后每层各自平坦。
+  walkInto(body, out, undefined);
+
   // 用 `key: value` 行式拼接而不是 join("\n")（GLM 席 M2）：
   // 纯换行拼接会把键名和值拆到相邻两行，键值同行的规则（如 `token: "..."`）随之失配。
   // 同时值里的真实换行（PEM）仍保留，多行规则照样命中。

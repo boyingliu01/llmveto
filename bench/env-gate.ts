@@ -43,6 +43,14 @@ function isVerbatimMarker(value: unknown): boolean {
  * 基准环境标记 vs 当前环境可否比较。
  * 标记缺失/畸形（schema < 3 的旧基准）同样判不可比：无法验证同构就不能判定回退。
  */
+/** os/arch 必须是字面量（不加空白、不改大小写），ci 必须是布尔。 */
+function hasVerbatimMarkers(b: Record<string, unknown>): boolean {
+  return isVerbatimMarker(b.os) && isVerbatimMarker(b.arch) && typeof b.ci === "boolean";
+}
+
+/** 参与可比性判定的环境维度。加字段时只改这里，判定分支不再随之增长。 */
+const ENV_FIELDS = Object.freeze(["os", "arch", "ci"] as const);
+
 export function environmentMatches(baselineEnv: unknown, current: BenchEnvironment): EnvGateResult {
   if (baselineEnv === null || typeof baselineEnv !== "object" || Array.isArray(baselineEnv)) {
     return { comparable: false, reason: "baseline has no _environment marker (schema < 3) — re-record required" };
@@ -50,11 +58,12 @@ export function environmentMatches(baselineEnv: unknown, current: BenchEnvironme
   const b = baselineEnv as Record<string, unknown>;
   // R10R1-A-N1/B-2/C-m4：与 samplingMatches 施加同一套畸形判据（R6-C2 的分类口径此前只覆盖 _estimator，
   // os/arch 却把 `" linux "` 当成一种环境报 mismatch，同一提交内两套标准）。
-  if (!isVerbatimMarker(b.os) || !isVerbatimMarker(b.arch) || typeof b.ci !== "boolean") {
+  if (!hasVerbatimMarkers(b)) {
     return { comparable: false, reason: "baseline _environment marker is missing or malformed — re-record required" };
   }
   const base = { os: b.os, arch: b.arch, ci: b.ci };
-  if (base.os !== current.os || base.arch !== current.arch || base.ci !== current.ci) {
+  const diffs = ENV_FIELDS.filter((k) => base[k] !== current[k]);
+  if (diffs.length > 0) {
     return { comparable: false, reason: `environment mismatch: baseline=${describe(base)} current=${describe(current)}` };
   }
   return { comparable: true, reason: "" };

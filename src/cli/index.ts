@@ -245,21 +245,42 @@ async function cmdStartDaemon(ctx: CliCtx, env: Readonly<Record<string, string |
   return { exitCode: 0, stdout: `gateway listening at ${gw.url}\n`, stderr: "" };
 }
 
+/**
+ * 读 pid 文件。
+ *
+ * 返回值区分"读到了"与"读不动"，因为两者的处置不同：读不动要清状态文件后
+ * 按未运行报告，而不是把 IO 异常抛成栈（用户看到栈不知道该怎么办）。
+ */
+function readPidFile(path: string): { readonly pid: number } | { readonly error: string } {
+  try {
+    return { pid: Number(readFileSync(path, "utf8").trim()) };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** 向 pid 发终止信号；进程已不在或无权时返回 false（陈旧 pid 文件是清理对象，不是错误）。 */
+function signalIfRunning(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function cmdStop(ctx: CliCtx): Promise<CliResult> {
   const pidPath = pidFile(ctx);
   if (!existsSync(pidPath)) return { exitCode: 1, stdout: "", stderr: "stop: gateway not running (no pid file)\n" };
-  let pid: number;
-  try {
-    pid = Number(readFileSync(pidPath, "utf8").trim());
-  } catch (err) {
+  const readPid = readPidFile(pidPath);
+  if ("error" in readPid) {
     // 状态文件读不动等同于状态不可用：清掉后按"未运行"报告，不把 IO 异常抛成栈。
     clearStateFiles(ctx);
-    return { exitCode: 1, stdout: "", stderr: `stop: pid file unreadable (${err instanceof Error ? err.message : String(err)}); removed\n` };
+    return { exitCode: 1, stdout: "", stderr: `stop: pid file unreadable (${readPid.error}); removed\n` };
   }
-  let signaled = false;
-  if (Number.isInteger(pid) && pid > 0) {
-    try { process.kill(pid); signaled = true; } catch { /* stale pid or permission: fall through to cleanup */ }
-  }
+  const pid = readPid.pid;
+  const signaled = signalIfRunning(pid);
   clearStateFiles(ctx);
   return signaled
     ? { exitCode: 0, stdout: "stop: signal sent\n", stderr: "" }

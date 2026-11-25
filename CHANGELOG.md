@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file. The format is a
 take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.8] - 2026-11-25
+
+### Changed
+
+Fifth round. `environmentMatches` (10), `cmdStop`, `promptfoo.detectDrift` and
+two provider-probe helpers.
+
+Two of these are worth naming for the reason the branch existed at all:
+
+- `environmentMatches` compared three fields with three `!==` joins. The field
+  list is now `ENV_FIELDS`, so adding a dimension later does not add a branch to
+  the decision. The malformed-marker check got the same treatment, because the
+  three conditions there answer one question ("are the markers verbatim?").
+- `promptfoo.detectDrift` had two different reasons for *not* counting a provider
+  as drifted sitting in the same loop: not an openai-compatible provider at all,
+  versus using `apiHost` as a substitute endpoint. Those are different facts and
+  are now two named reasons in `isDriftedProvider`.
+
+69 remain over 5, 12 at 8 or above. 844 tests, lint clean.
+
 ## [0.7.7] - 2026-11-25
 
 ### Changed

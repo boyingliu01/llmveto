@@ -117,6 +117,26 @@ export interface PromptfooAdapter extends Adapter {
   unmanagedReason(current: Record<string, unknown>): string | undefined;
 }
 
+/**
+ * 该 provider 的受管端点是否漂移。
+ *
+ * 两个**不**计漂移的理由各不相同，所以拆开写：
+ *   - 非 openai 兼容 provider：不受本适配器管；
+ *   - 用 `apiHost` 指定端点：这是替代手段，由 `unmanagedReason` 单独报告。
+ *     `apiHost` 只拼 `https://<host>/v1`，本来也无法指向本地网关，报漂移会让用户
+ *     去改一个改不成的东西。
+ */
+function isDriftedProvider(p: ProviderEntry, wanted: string): boolean {
+  if (!isManagedProvider(p)) return false;
+  if (p.apiHost !== undefined) return false;
+  return p.apiBaseUrl !== wanted;
+}
+
+/** 漂移项的用户可见描述。 */
+function driftOf(p: ProviderEntry): ConfigId {
+  return { id: managedIdOf(p.id), description: `promptfoo provider ${p.id} 的 apiBaseUrl` };
+}
+
 export const promptfooAdapter: PromptfooAdapter = {
   name: "promptfoo",
   MANAGED_CONFIG_IDS,
@@ -147,17 +167,12 @@ export const promptfooAdapter: PromptfooAdapter = {
   detectDrift(current: Record<string, unknown>, gatewayBaseUrl: string): readonly ConfigId[] {
     // 没有任何 provider = 这个项目还没用 promptfoo（或没配 provider），属"未配置"而不是"漂移"。
     // 会在每个项目里都报漂移的适配器，等于把告警变成噪音。
-    if (asConfig(current).length === 0) return [];
+    const providers = asConfig(current);
+    if (providers.length === 0) return [];
     const wanted = expectedBaseUrl(gatewayBaseUrl);
-    const drifted: ConfigId[] = [];
-    for (const p of asConfig(current)) {
-      if (!isManagedProvider(p)) continue;
-      // 用替代手段指定端点（apiHost）：由 unmanagedReason 报，不计漂移
-      if (p.apiHost !== undefined) continue;
-      if (p.apiBaseUrl !== wanted) drifted.push({ id: managedIdOf(p.id), description: `promptfoo provider ${p.id} 的 apiBaseUrl` });
-    }
-    // 一个 openai 兼容 provider 都没有 → 该客户端根本没在使用本网关
-    if (drifted.length === 0 && !asConfig(current).some(isManagedProvider)) return MANAGED_CONFIG_IDS;
+    const drifted = providers.filter((p) => isDriftedProvider(p, wanted)).map(driftOf);
+    // 一个 openai 兼容 provider 都没有 → 该客户端根本没在使用本网关（按全量漂移报）
+    if (drifted.length === 0 && !providers.some(isManagedProvider)) return MANAGED_CONFIG_IDS;
     return drifted;
   },
   unmanagedReason(current: Record<string, unknown>): string | undefined {

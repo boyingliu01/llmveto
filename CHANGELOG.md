@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file. The format is a
 take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.9] - 2026-11-25
+
+### Changed
+
+Sixth round. `scanProviders` (8 -> 6), `runRunner`, `sessionInfo`,
+`firstOptionId`, `cmdStop` and `promptfoo.detectDrift`.
+
+`scanProviders` is a small YAML state machine that reads exactly two fields off
+each provider entry — `apiBaseUrl` and `apiHost` — because pulling in a full YAML
+parser to read two keys would be a dependency for a shape the adapter does not
+otherwise need. The three states it tracks (inside the `providers:` block,
+current entry, line content) are now separated, so the flush points are
+visible.
+
+67 remain over 5, 8 at 8 or above. 844 tests, lint clean.
+
 ## [0.7.8] - 2026-11-25
 
 ### Changed

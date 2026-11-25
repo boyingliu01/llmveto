@@ -70,17 +70,41 @@ interface ProviderEntry {
  * 刻意不引入 YAML 库：受管面只有"一个标量值"，而引入库就要承担它的解析/序列化行为
  * （注释与排版全部重写，和 Codex 的 TOML 是同一个问题）。定位用行扫描，替换用行级编辑。
  */
+/** 去掉 YAML 字符串两端的引号。 */
+function unquote(s: string): string {
+  return s.replace(/^["']|["']$/g, "");
+}
+
+/** 把一行 `apiBaseUrl:` / `apiHost:` 写进当前 provider；认不出的行忽略。 */
+function applyEntryKey(current: { apiBaseUrl?: string; apiHost?: string }, line: string): void {
+  const kv = /^\s+(apiBaseUrl|apiHost):\s*(.+?)\s*$/.exec(line);
+  if (kv === null) return;
+  const value = unquote(kv[2]!);
+  if (kv[1] === "apiBaseUrl") current.apiBaseUrl = value;
+  else current.apiHost = value;
+}
+
+/**
+ * 从 promptfoo 的 YAML 里扫出 provider 条目。
+ *
+ * 只认 `providers:` 之后的 `- id: ...` 与其下的 apiBaseUrl/apiHost 两行——
+ * 这是本适配器要管的全部，完整 YAML 解析会引入一个依赖去读两类字段。
+ * 状态机三个状态（是否在 providers 段内、当前条目、行内容）分开表达。
+ */
 function scanProviders(text: string): ProviderEntry[] {
   const lines = text.split(/\r?\n/);
   const out: ProviderEntry[] = [];
   let inProviders = false;
   let current: { id: string; apiBaseUrl?: string; apiHost?: string; line: number } | null = null;
-  const flush = () => {
+
+  const flush = (): void => {
     if (current !== null) out.push(current);
     current = null;
   };
+
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i]!;
+    // 顶层键：离开 providers 段就要收尾，否则后续段的 `- id:` 会被误认成 provider
     if (/^[A-Za-z_]+:/.test(line)) {
       flush();
       inProviders = line.startsWith("providers:");
@@ -90,21 +114,14 @@ function scanProviders(text: string): ProviderEntry[] {
     const idMatch = /^\s*-\s+(?:id:\s*)?(\S+)\s*$/.exec(line);
     if (idMatch !== null) {
       flush();
-      current = { id: idMatch[1]!.replace(/^["']|["']$/g, ""), line: i };
+      current = { id: unquote(idMatch[1]!), line: i };
       continue;
     }
-    if (current === null) continue;
-    const kv = /^\s+(apiBaseUrl|apiHost):\s*(.+?)\s*$/.exec(line);
-    if (kv !== null) {
-      const value = kv[2]!.replace(/^["']|["']$/g, "");
-      if (kv[1] === "apiBaseUrl") current.apiBaseUrl = value;
-      else current.apiHost = value;
-    }
+    if (current !== null) applyEntryKey(current, line);
   }
   flush();
   return out;
 }
-
 function asConfig(current: Record<string, unknown>): readonly ProviderEntry[] {
   const providers = current.providers;
   return Array.isArray(providers) ? (providers as ProviderEntry[]) : [];

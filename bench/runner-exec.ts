@@ -10,15 +10,29 @@ import { spawnSync } from "node:child_process";
  *
  * 使用 spawnSync + argv 数组而非 shell 字符串，避免任何 shell 元字符解析面。
  */
-export function runRunner(file: string, opts: { readonly echo?: boolean } = {}): string {
-  let res: ReturnType<typeof spawnSync>;
+/**
+ * 启动 runner。
+ *
+ * "起不来"与"跑挂了"是两件事：前者是环境问题（bun 不在 PATH），后者是被测代码问题。
+ * 分开抛不同措辞的错，排障时才知道该往哪看。
+ */
+function spawnRunner(file: string): ReturnType<typeof spawnSync> {
   try {
-    res = spawnSync("bun", ["run", file], { encoding: "utf8" });
+    return spawnSync("bun", ["run", file], { encoding: "utf8" });
   } catch (err) {
     throw new Error(`runner ${file} could not be started: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
   }
+}
+
+/** 结果非零或 spawn 失败时抛错；否则返回 stdout。 */
+function checkedOutput(file: string, res: ReturnType<typeof spawnSync>): string {
   if (res.error !== undefined) throw new Error(`runner ${file} failed to spawn: ${res.error.message}`, { cause: res.error });
   if (res.status !== 0) throw new Error(`runner ${file} exited ${res.status}: ${res.stderr ?? ""}`);
-  if (opts.echo === true) process.stdout.write(res.stdout);
   return res.stdout;
+}
+
+export function runRunner(file: string, opts: { readonly echo?: boolean } = {}): string {
+  const out = checkedOutput(file, spawnRunner(file));
+  if (opts.echo === true) process.stdout.write(out);
+  return out;
 }

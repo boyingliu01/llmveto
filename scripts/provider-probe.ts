@@ -324,12 +324,7 @@ class AcpClient {
     if (params === null || typeof params !== "object") return undefined;
     const options = (params as Record<string, unknown>)["options"];
     if (!Array.isArray(options)) return undefined;
-    for (const o of options) {
-      if (o === null || typeof o !== "object") continue;
-      const optionId = (o as Record<string, unknown>)["optionId"];
-      if (typeof optionId === "string") return optionId;
-    }
-    return undefined;
+    return options.map(optionIdOf).find((id) => id !== undefined);
   }
 
   /** 应答 `session/request_permission`：能选就选第一个，否则明确取消（不静默卡住）。 */
@@ -422,14 +417,32 @@ class AcpClient {
   close(): void { this.child.kill("SIGKILL"); }
 }
 
+/** 选项的 `optionId`；不是字符串时为 undefined。 */
+function optionIdOf(o: unknown): string | undefined {
+  if (o === null || typeof o !== "object") return undefined;
+  const id = (o as Record<string, unknown>)["optionId"];
+  return typeof id === "string" ? id : undefined;
+}
+
+/** 该 configOption 是否描述"模型"选项（ACP 用 category 或 id 两种写法标记）。 */
+function isModelOption(o: unknown): boolean {
+  if (o === null || typeof o !== "object") return false;
+  const rec = o as Record<string, unknown>;
+  return rec["category"] === "model" || rec["id"] === "model";
+}
+
 function sessionInfo(session: unknown): { sessionId?: string; configId?: string; hasConfig: boolean } {
   if (session === null || typeof session !== "object") return { hasConfig: false };
   const s = session as Record<string, unknown>;
   const id = typeof s["sessionId"] === "string" ? s["sessionId"] : undefined;
   const opts = Array.isArray(s["configOptions"]) ? s["configOptions"] : [];
-  const modelOpt = opts.find((o) => o !== null && typeof o === "object" && ((o as Record<string, unknown>)["category"] === "model" || (o as Record<string, unknown>)["id"] === "model"));
-  const configId = modelOpt !== undefined ? (modelOpt as Record<string, unknown>)["id"] : undefined;
-  return { ...(id !== undefined ? { sessionId: id } : {}), hasConfig: modelOpt !== undefined, ...(typeof configId === "string" ? { configId } : {}) };
+  const modelOpt = opts.find(isModelOption);
+  const configId = modelOpt === undefined ? undefined : (modelOpt as Record<string, unknown>)["id"];
+  return {
+    ...optional("sessionId", id),
+    hasConfig: modelOpt !== undefined,
+    ...optional("configId", typeof configId === "string" ? configId : undefined),
+  };
 }
 
 function textOf(updates: readonly Record<string, unknown>[]): string {

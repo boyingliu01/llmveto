@@ -32,13 +32,6 @@ const CONTAINER_PATHS: ReadonlySet<string> = new Set(["input", "messages", "outp
  * 路径必须能表达"数组元素里 type === tool_use 的那一项"。把块类型当成普通的键去查会永远查不到，
  * 于是清单里声明的路径永远不算 present——覆盖判据就退化成只看顶层容器。
  */
-function splitPath(path: string): string[] {
-  return path
-    .split(".")
-    .map((seg) => seg.replace(/\[\]$/, ""))
-    .filter((seg) => seg.length > 0);
-}
-
 /** 带数组标记的结果：`messages[].content[].tool_use.input` → [
  *  {key:"messages", array:true}, {key:"content", array:true}, {key:"tool_use"}, {key:"input"} ]。
  *  `[]` 必须保留下来——否则 `content[]` 之后的段会当成在对象上找键，而不是在数组元素里找。 */

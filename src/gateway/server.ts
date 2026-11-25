@@ -84,7 +84,6 @@ export interface RouteInfo {
 // 保留段：不是客户端名，而是 API 版本前缀（兼容 legacy 客户端与现有测试）。
 const RESERVED_SEGMENTS: ReadonlySet<string> = new Set(["v1", "api"]);
 
-import { formatForPrefix } from "./protocols/registry.ts";
 import { CANARY_MANAGED_ROUTES } from "./core.ts";
 import { egressSecretScan } from "../checkers/egress-secret-scan.ts";
 

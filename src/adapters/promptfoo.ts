@@ -105,11 +105,6 @@ function scanProviders(text: string): ProviderEntry[] {
   return out;
 }
 
-/** 读到的配置对象视图（供 detectDrift / unmanagedReason 使用）。 */
-interface PromptfooConfig {
-  readonly providers: readonly ProviderEntry[];
-}
-
 function asConfig(current: Record<string, unknown>): readonly ProviderEntry[] {
   const providers = current.providers;
   return Array.isArray(providers) ? (providers as ProviderEntry[]) : [];

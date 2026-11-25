@@ -41,16 +41,6 @@ export interface ClientCoverageCheck {
   readonly message: string;
 }
 
-const STATE_FAILS: Readonly<Record<ClientState, boolean>> = Object.freeze({
-  not_installed: false,
-  not_configured: false,
-  drift: true,
-  coverage_missing: true,
-  coverage_unknown: true,
-  write_failed: true,
-  coverage_ok: false,
-});
-
 /**
  * 适配器 → 客户端名（adapters 的 name 与线格式表的 client 必须对齐）。
  * 单独抽出来是因为 adapters 的 name 是 `claude-code`，而线格式表也用同名——

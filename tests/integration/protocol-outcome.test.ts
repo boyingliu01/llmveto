@@ -29,7 +29,7 @@ async function boot(): Promise<{ url: string; records: () => Record<string, unkn
     transport: "non-stream",
     body: JSON.stringify({ model: "gpt-4o", choices: [{ message: { content: "ok" } }] }),
   });
-  let hits = 0;
+  const hits = 0;
   const upstream = mock;
   const origUrl = upstream.url;
   void origUrl;

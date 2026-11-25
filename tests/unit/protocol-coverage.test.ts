@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { parse as parseToml } from "smol-toml";
 import { CHAT_COVERAGE, chatProtocol } from "../../src/gateway/protocols/chat.ts";
 import { ANTHROPIC_COVERAGE, anthropicMessagesProtocol } from "../../src/gateway/protocols/anthropic.ts";
 import { RESPONSES_COVERAGE, responsesProtocol } from "../../src/gateway/protocols/responses.ts";

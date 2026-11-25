@@ -4,6 +4,31 @@ All notable changes to this project are documented in this file. The format is a
 take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.2] - 2026-11-25
+
+### Fixed
+
+- **Lint is clean again (7 -> 0 warnings).** Six were dead declarations removed
+  outright (`PromptfooConfig`, `STATE_FAILS`, `splitPath` and three unused
+  imports); the seventh was already auto-fixable. Removing `formatForPrefix`'s
+  import from `server.ts` also removes the last trace of the prefix-based
+  managed-route check that 0.7.0 replaced.
+
+### Added
+
+- **`testkit/evil-relay.ts` coverage: 7.5% -> 75%.** The 13-opponent opposing
+  relay is exercised only under `RELAY_MATRIX=1` (nightly), so the test tool
+  itself was untested on every PR — a broken tool would only surface in the
+  last gate before release. Six tests now cover argument validation, real
+  spawn/teardown, and two behaviours that would otherwise regress silently:
+  the `swap` opponent genuinely rewrites tool names (rather than passing
+  through), and the `cache` opponent replays its first response (proving
+  per-request state accumulates inside the child).
+- One of those tests pins a **security property**: configuration values reach
+  the child script through `JSON.stringify`. The probe passes an intercept path
+  containing `'); process.exit(1); //`, so a future switch to direct template
+  interpolation makes the child fail to start and the test goes red.
+
 ## [0.7.1] - 2026-11-25
 
 ### Fixed

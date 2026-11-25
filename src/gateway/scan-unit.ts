@@ -1,5 +1,5 @@
 import type { ScanUnit, Transport } from "../shared/types.ts";
-import type { Projection, WireFormat } from "./protocols/types.ts";
+import type { WireFormat } from "./protocols/types.ts";
 import { protocolFor } from "./protocols/table.ts";
 import { exceedsWindowOverflowLimit } from "./window-store.ts";
 

@@ -230,18 +230,21 @@ function safeJson(text: string): Record<string, unknown> | null {
   } catch { return null; }
 }
 
-function firstChoice(body: Record<string, unknown>): { message?: { content?: unknown; reasoning_content?: unknown }; finishReason?: string } | undefined {
+/** 取 choices[0] 记录；不是对象时 undefined。 */
+function firstChoiceRecord(body: Record<string, unknown>): Record<string, unknown> | undefined {
   const choices = body["choices"];
-  if (!Array.isArray(choices) || choices.length === 0) return undefined;
-  const first = choices[0];
-  if (first === null || typeof first !== "object") return undefined;
-  const rec = first as Record<string, unknown>;
+  const first = Array.isArray(choices) ? choices[0] : undefined;
+  return first !== null && typeof first === "object" ? (first as Record<string, unknown>) : undefined;
+}
+
+function firstChoice(body: Record<string, unknown>): { message?: { content?: unknown; reasoning_content?: unknown }; finishReason?: string } | undefined {
+  const rec = firstChoiceRecord(body);
+  if (rec === undefined) return undefined;
   const msg = rec["message"];
-  const finish = typeof rec["finish_reason"] === "string" ? rec["finish_reason"] : undefined;
   const message = msg !== null && typeof msg === "object" ? (msg as { content?: unknown; reasoning_content?: unknown }) : undefined;
   return {
     ...optional("message", message),
-    ...optional("finishReason", finish),
+    ...optional("finishReason", typeof rec["finish_reason"] === "string" ? rec["finish_reason"] : undefined),
   };
 }
 
@@ -368,6 +371,18 @@ class AcpClient {
   }
 
   /**
+   * 建会话并选定模型。
+   *
+   * 拆出来是因为"建会话失败"要带着明确的错误串返回而**不抛**：调用方把
+   * 失败当作该 prompt 的一次失败结果记录，而不是中断整轮探测。
+   */
+  private async openSession(): Promise<{ readonly sessionId: string; readonly info: ReturnType<typeof sessionInfo> } | { readonly error: string }> {
+    const info = sessionInfo(await this.request("session/new", { cwd: this.t.cwd ?? "/tmp", mcpServers: [] }, 60_000));
+    if (info.sessionId === undefined) return { error: "session/new returned no sessionId" };
+    return { sessionId: info.sessionId, info };
+  }
+
+  /**
    * 给会话选定模型。ACP 有两种协议形态，按服务端是否声明 config 二选一。
    *
    * 拆出来的理由：这段是两次 RPC 的二选一，混在 `promptOnce` 里时整条路径
@@ -390,14 +405,13 @@ class AcpClient {
   async promptOnce(p: PromptSpec, timeoutMs: number): Promise<ProbeResult> {
     const t0 = Date.now();
     try {
-      const session = await this.request("session/new", { cwd: this.t.cwd ?? "/tmp", mcpServers: [] }, 60_000);
-      const info = sessionInfo(session);
-      if (info.sessionId === undefined) {
-        return { target: this.t.name, prompt: p.id, ok: false, ms: Date.now() - t0, error: "session/new returned no sessionId" };
+      const opened = await this.openSession();
+      if ("error" in opened) {
+        return { target: this.t.name, prompt: p.id, ok: false, ms: Date.now() - t0, error: opened.error };
       }
-      await this.selectModel(info.sessionId, info);
+      await this.selectModel(opened.sessionId, opened.info);
       const mark = this.updates.length;
-      const r = await this.request("session/prompt", { sessionId: info.sessionId, prompt: [{ type: "text", text: expandPrompt(p) }] }, timeoutMs);
+      const r = await this.request("session/prompt", { sessionId: opened.sessionId, prompt: [{ type: "text", text: expandPrompt(p) }] }, timeoutMs);
       const text = textOf(this.updates.slice(mark));
       const stop = r !== null && typeof r === "object" ? (r as Record<string, unknown>)["stopReason"] : undefined;
       return {

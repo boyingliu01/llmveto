@@ -82,6 +82,25 @@ const posixCases = GUARD_FORM_CASES.filter((c) => c.expectPosix !== undefined);
 const inspected = (c: GuardFormCase, plat: string) =>
   inspectOutPath(c.form, c.tracked === undefined ? { plat } : { plat, tracked: c.tracked });
 
+/** 逐个形态断言其流后缀满足判据；成对比较让失败信息直接指出是哪个形态。 */
+function expectStreamSuffix(forms: readonly string[], ok: (suffix: string) => boolean): void {
+  for (const form of forms) {
+    const s = streamSuffixOf(form);
+    expect([form, s !== null && ok(s)]).toEqual([form, true]);
+  }
+}
+
+/** 形态的末段（最后一个路径分隔符之后）；无分隔符时取整个串。 */
+function tailOf(form: string): string {
+  return form.split(/[/\\]/).pop() ?? "";
+}
+
+/** "流后缀"取法（与 `hostPath` 的 lastIndexOf+slice 无共享代码，元断言要的是独立性）。 */
+function streamSuffixOf(form: string): string | null {
+  const i = tailOf(form).indexOf(":");
+  return i === -1 ? null : tailOf(form).slice(i + 1);
+}
+
 describe("期望表自身的结构元断言（共因失效面：R11R1-C-M2 / A-m6 / B-m4）", () => {
   // 单点化把"探针一份断言、CI 一份断言"换成一张表，代价是**表本身写错则两侧同绿**。下面几条
   // **不调用** hostPath / canonicalPath，只用另一套字符串表达式把"每一族该长什么样"写死，
@@ -90,7 +109,6 @@ describe("期望表自身的结构元断言（共因失效面：R11R1-C-M2 / A-m
   //   （下面「分组守恒」按 `form` 字面串去重）；**不**防"换成一条同样折到本名、且不与任何既有条目重复的
   //   等量变体"——那在字符串层与真形态无从区分，下界只挡净减（与登记处 `MIN_BACKLOG_ROWS` 的已知限界同类，
   //   `R10R3-A-m3` / `R11R3-B-m1` 成文，分类见 ADR 补遗四·影响节）。
-  const tailOf = (form: string) => form.split(/[/\\]/).pop() ?? "";
   const lexicalName = (form: string) =>
     form
       .replace(/\\/g, "/")
@@ -98,28 +116,19 @@ describe("期望表自身的结构元断言（共因失效面：R11R1-C-M2 / A-m
       .filter((seg) => seg !== "" && seg !== ".")
       .join("/")
       .toLowerCase();
-  /** 与 `hostPath` 的 `lastIndexOf` + `slice` 无共享代码的"流后缀"取法（元断言要的是独立性）。 */
-  const streamOf = (form: string): string | null => {
-    const tail = tailOf(form);
-    const i = tail.indexOf(":");
-    return i === -1 ? null : tail.slice(i + 1);
-  };
-
   // 刻意**不**钉各族的绝对条数（那会让每次合法的"加一条形态"都变成三处同步）；钉的是**下界**，
   // 与登记处的 `MIN_BACKLOG_ROWS` 同一惯例：合法裁剪必须同批下调本表并进 diff、走查可见；新增族成员
   // 不必动这里。实测判别力：删掉 ADS_FORMS 的一条 → 本条红（变异 M1）。
   const MIN_FORMS: Record<string, number> = { ADS_FORMS: 6, SYNTH_STREAMS: 6, NAME_VARIANT_FORMS: 4, LEGAL_FORMS: 5 };
 
   it("分组守恒：表长 = 四族之和、各族不少于登记下界、形态全局唯一", () => {
-    expect(GUARD_FORM_CASES.length).toBe(
-      ADS_FORMS.length + SYNTH_STREAMS.length + NAME_VARIANT_FORMS.length + LEGAL_FORMS.length,
-    );
     const sizes: Record<string, number> = {
       ADS_FORMS: ADS_FORMS.length,
       SYNTH_STREAMS: SYNTH_STREAMS.length,
       NAME_VARIANT_FORMS: NAME_VARIANT_FORMS.length,
       LEGAL_FORMS: LEGAL_FORMS.length,
     };
+    expect(GUARD_FORM_CASES.length).toBe(Object.values(sizes).reduce((a, b) => a + b, 0));
     for (const [name, min] of Object.entries(MIN_FORMS)) {
       expect([name, sizes[name] >= min]).toEqual([name, true]);
     }
@@ -145,19 +154,14 @@ describe("期望表自身的结构元断言（共因失效面：R11R1-C-M2 / A-m
   });
 
   it("预检族自洽：win32 必 throw 者的流后缀恰为「空串或含冒号」，posix 对照组与 win32 拒族同形", () => {
-    for (const form of PRECHECK_THROW_FORMS) {
-      const s = streamOf(form);
-      expect([form, s === "" || (s?.includes(":") ?? false)]).toEqual([form, true]);
-    }
-    for (const form of PRECHECK_PASS_WIN32_FORMS) {
-      const s = streamOf(form);
-      expect([form, s !== null && s !== "" && !s.includes(":")]).toEqual([form, true]);
-    }
-    // 同一批畸形形态在 posix 建模下必须**整条不生效**（下方预检用例证其放行）：这钉的是"该判据
-    // 属 win32 专有而非通用字面约束"，若有人把两组写成不相干的形态，这里先红。
-    const thrown: readonly string[] = PRECHECK_THROW_FORMS;
+    // 三组形态各自回答一个问题，但断言形状相同（[形态, 布尔] 成对比较，失败时能直接看出是哪个形态）
+    expectStreamSuffix(PRECHECK_THROW_FORMS, (s) => s === "" || s.includes(":"));
+    expectStreamSuffix(PRECHECK_PASS_WIN32_FORMS, (s) => s !== "" && !s.includes(":"));
+    // 同一批畸形形态在 posix 建模下必须**整条不生效**：这钉的是"该判据属 win32 专有而非通用
+    // 字面约束"，若有人把两组写成不相干的形态，这里先红。
+    const thrown = new Set(PRECHECK_THROW_FORMS);
     for (const form of PRECHECK_PASS_POSIX_FORMS) {
-      expect([form, thrown.includes(form)]).toEqual([form, true]);
+      expect([form, thrown.has(form)]).toEqual([form, true]);
     }
   });
 });

@@ -86,22 +86,37 @@ function verifyLineAt(line: string, index: number, prev: EvidenceRecord | null):
   return { ok: true, record: parsed };
 }
 
+/**
+ * 读 evidence 文件全文。
+ *
+ * `existsSync` 与读取之间存在窗口（文件可能刚被删），所以这里要再判一次 ENOENT：
+ * 那是 no_file；**其余**读失败是新的失败面，单列 io_error，不与"链坏了"混为一谈——
+ * 调用方据此给出"文件存在但读不了"的诊断。
+ */
+function readEvidenceText(path: string): { readonly raw: string } | { readonly failure: VerifyResult } {
+  try {
+    return { raw: readFileSync(path, "utf8") };
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return { failure: { ok: false, kind: "no_file", message: `evidence file not found: ${path}` } };
+    }
+    return {
+      failure: {
+        ok: false,
+        kind: "io_error",
+        message: `evidence file unreadable: ${path} (${err instanceof Error ? err.message : String(err)})`,
+      },
+    };
+  }
+}
+
 export function verifyEvidenceFile(path: string): VerifyResult {
   if (!existsSync(path)) {
     return { ok: false, kind: "no_file", message: `evidence file not found: ${path}` };
   }
-  let raw: string;
-  try {
-    raw = readFileSync(path, "utf8");
-  } catch (err) {
-    // existsSync 与读取之间的窗口（被删）仍按 no_file 报；其余读失败是新的失败面，单列 io_error，
-    // 不与"链坏了"混为一谈——调用方据此给出"文件存在但读不了"的诊断。
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return { ok: false, kind: "no_file", message: `evidence file not found: ${path}` };
-    }
-    return { ok: false, kind: "io_error", message: `evidence file unreadable: ${path} (${err instanceof Error ? err.message : String(err)})` };
-  }
-  const lines = raw.split("\n").filter((l) => l.length > 0);
+  const read = readEvidenceText(path);
+  if ("failure" in read) return read.failure;
+  const lines = read.raw.split("\n").filter((l) => l.length > 0);
   // 空文件/仅空白 = 链被整体清空。这不是"0 条记录的合法链"：writer 从不产出空文件，
   // 故它与尾部截断同族（AC-VETO-010-05）。
   if (lines.length === 0) {

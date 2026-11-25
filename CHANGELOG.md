@@ -4,6 +4,56 @@ All notable changes to this project are documented in this file. The format is a
 take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] - 2026-11-25
+
+### Changed
+
+**Every function in the repository is now at CCN 7 or below.** The sweep that
+started this work reported 88 functions over the CCN 5 threshold, 30 of them at
+8 or above and 17 at 10 or above. There are now zero at 8 or above; the highest
+remaining is 7, and the count over 5 is 63.
+
+The target was deliberately CCN >= 8 rather than the literal threshold. Sampling
+the 6-7 band found linear guard chains — `jsonAtPath` is thirteen lines with one
+loop and two guards — where splitting would charge every caller a hop while
+leaving both halves near the limit. The 8+ band was different: those were
+functions where the branching genuinely resisted following, and each split
+produced something a reader could hold.
+
+Six rounds, ~50 functions. The techniques that did the work, in order of how
+often they applied:
+
+- **Named extraction over inline predicates.** A condition like "this config
+  option is the model, spelled as `category: model` or `id: model`" becoming
+  `isModelOption` does not reduce any count by itself, but it gives the fact a
+  place to live and lets the callers stop repeating it.
+- **Tables over chained conditionals.** `ENV_FIELDS`, `HANDLERS`,
+  `DOWNLOAD_COMMANDS`, `WINDOWS_SHIM_ENTRY`, and `failureIdentity`'s fallback
+  lookup all turn "which fields / which commands / which defaults" into data, so
+  the decision stops growing when the schema does.
+- **Ordering made visible.** `refusalVia` and `LINE_CHECKS` were nested
+  ternaries and consecutive `if`s whose *order* was the semantics — stream alias
+  before hardlink alias before same-name; version before schema before position.
+  Flattened, the order is a list you read instead of a sequence you reconstruct.
+- **Shape dispatch.** `walkInto`, `placeCanary` and `hasPath` each switched on
+  JSON shape inline; splitting by shape put each rule next to the shape it
+  applies to.
+
+Two observations worth keeping:
+
+`assertWritableOutPath` went 11 → under 5 without losing a single branch. The
+same four preconditions run in the same order. What improved is only that the
+order became readable — which is the honest case for stopping at 8. Past that
+point the number counts preconditions, not confusion.
+
+The refactor twice introduced its own defects, both caught by existing tests:
+a placeholder record in `writer.init` made the resumed `seq` off by one (caught
+by AC-04), and a truncated slice lost four functions from `out-path-guard.ts`
+(caught by the file not parsing). Scripted text surgery on code you have not
+read end to end is how you lose the part you did not look at.
+
+844 tests pass, lint clean.
+
 ## [0.7.9] - 2026-11-25
 
 ### Changed

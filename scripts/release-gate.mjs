@@ -56,23 +56,31 @@ function tail(s, n = 30) {
   return lines.length ? lines.slice(-n).join("\n") : "(empty)";
 }
 
+/**
+ * 解析实际要 spawn 的可执行文件与参数。
+ *
+ * 无 shell 直调（semgrep spawn-shell-true / detect-child-process + Node DEP0190）：
+ * `.exe`（bun/tar）由 CreateProcess 走 PATH 解析；`.cmd` shim（npm/llmveto）在 Node ≥18.20
+ * 无 shell 直调会 EINVAL，改为 node 直调其等价入口 JS —— npm 走安装目录自带的
+ * npm-cli.js，llmveto 走全局 bin 入口（等价于 `.cmd` shim 的转发目标）。
+ *
+ * 表而不是 if/else：哪些命令需要绕 shim 是数据，加一个命令时只需加一行，
+ * 不会漏掉 `IS_WIN` 这个还埋在分支里的前提。
+ */
+const WINDOWS_SHIM_ENTRY = {
+  npm: npmCliJs,
+  llmveto: llmvetoEntry,
+};
+
+function resolveShim(cmd, args) {
+  const entry = IS_WIN ? WINDOWS_SHIM_ENTRY[cmd] : undefined;
+  if (entry === undefined) return { file: cmd, finalArgs: args };
+  return { file: process.execPath, finalArgs: [entry(), ...args] };
+}
+
 function run(cmd, args, opts = {}) {
   const { timeout = 300_000, ...rest } = opts;
-  let file = cmd;
-  let finalArgs = args;
-  if (IS_WIN) {
-    // 无 shell 直调（semgrep spawn-shell-true / detect-child-process + Node DEP0190）：
-    // .exe（bun/tar）由 CreateProcess 走 PATH 解析；.cmd shim（npm/llmveto）在 Node ≥18.20
-    // 无 shell 直调会 EINVAL，改为 node 直调其等价入口 JS——npm → 安装目录自带 npm-cli.js，
-    // llmveto → 全局安装的 bin 入口（bin.llmveto 指向的同一文件，等价于 .cmd shim 的转发目标）。
-    if (cmd === "npm") {
-      file = process.execPath;
-      finalArgs = [npmCliJs(), ...args];
-    } else if (cmd === "llmveto") {
-      file = process.execPath;
-      finalArgs = [llmvetoEntry(), ...args];
-    }
-  }
+  const { file, finalArgs } = resolveShim(cmd, args);
   // cmd 仅为本脚本内的固定调用名（bun/npm/llmveto/tar，见 steps 与 SMOKE_ROWS），无外部输入汇入。
   const r = spawnSync(file, finalArgs, { // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process
     encoding: "utf8",
@@ -232,15 +240,23 @@ async function smokeStep(ctx) {
       continue;
     }
     if (row.id === 6) writeManagedCopies(ctx);
-    const env = { ...ctx.smokeEnv, LLMVETO_STATE_DIR: ctx.stateDir, ...(row.env ? row.env(ctx) : {}) };
-    const r = run("llmveto", row.args, { env, timeout: 120_000 });
+    const r = runSmokeRow(ctx, row);
     assertSmokeRow(row, r);
-    if (row.capture === "gatewayUrl") {
-      const m = /url=(\S+)/.exec(r.stdout);
-      if (!m) fail("smoke row 4: cannot parse gateway url from status output", [tail(r.stdout, 5)]);
-      ctx.gatewayUrl = m[1];
-    }
+    if (row.capture === "gatewayUrl") ctx.gatewayUrl = parseGatewayUrl(row, r.stdout);
   }
+}
+
+/** 跑一行冒烟判据（环境 = 冒烟环境 + 状态目录 + 该行独有的覆盖）。 */
+function runSmokeRow(ctx, row) {
+  const env = { ...ctx.smokeEnv, LLMVETO_STATE_DIR: ctx.stateDir, ...(row.env ? row.env(ctx) : {}) };
+  return run("llmveto", row.args, { env, timeout: 120_000 });
+}
+
+/** 从 `status` 输出里取出网关 URL；取不到说明该行判据本身没跑出预期形态。 */
+function parseGatewayUrl(row, stdout) {
+  const m = /url=(\S+)/.exec(stdout);
+  if (m) return m[1];
+  fail(`smoke row ${row.id}: cannot parse gateway url from status output`, [tail(stdout, 5)]);
 }
 
 function packStep(ctx) {
@@ -289,15 +305,26 @@ function publishDryRunStep() {
   if (r.code !== 0) fail("publish-dry-run (npm publish --dry-run)", [tail(r.stdout), tail(r.stderr)]);
 }
 
-function teardown(ctx) {
-  if (ctx.smokeEnv && ctx.stateDir) {
-    try {
-      run("llmveto", ["stop"], { env: { ...ctx.smokeEnv, LLMVETO_STATE_DIR: ctx.stateDir }, timeout: 30_000 });
-    } catch { /* best-effort */ }
+/** 尽力而为：清理失败不改变门链结论，但也不吞成静默（调试时可把 BEST_EFFORT_VERBOSE 打开）。 */
+function bestEffort(label, fn) {
+  try {
+    fn();
+  } catch (e) {
+    if (process.env.RELEASE_GATE_VERBOSE === "1") console.error(`[teardown] ${label}: ${e?.message ?? e}`);
   }
-  try { run("npm", ["rm", "-g", "--ignore-scripts", "llmveto"], { timeout: 120_000 }); } catch { /* best-effort */ }
+}
+
+/** 清理：停 daemon、卸全局包、删临时目录。任何一步失败都不影响门链结论。 */
+function teardown(ctx) {
+  const canStop = Boolean(ctx.smokeEnv && ctx.stateDir);
+  if (canStop) {
+    bestEffort("stop daemon", () =>
+      run("llmveto", ["stop"], { env: { ...ctx.smokeEnv, LLMVETO_STATE_DIR: ctx.stateDir }, timeout: 30_000 }),
+    );
+  }
+  bestEffort("npm rm -g", () => run("npm", ["rm", "-g", "--ignore-scripts", "llmveto"], { timeout: 120_000 }));
   for (const p of [ctx.stateDir, ctx.ws]) {
-    try { if (p) rmSync(p, { recursive: true, force: true }); } catch { /* best-effort */ }
+    if (p) bestEffort(`rm ${p}`, () => rmSync(p, { recursive: true, force: true }));
   }
 }
 

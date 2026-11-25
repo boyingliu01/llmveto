@@ -5,7 +5,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
-import { verifyEvidenceFile } from "../evidence/verify.ts";
+import { type VerifyResult, verifyEvidenceFile } from "../evidence/verify.ts";
 import { aggregateEvidence } from "../evidence/aggregate.ts";
 import { delphiAdapter } from "../adapters/delphi.ts";
 import { opencodeAdapter } from "../adapters/opencode.ts";
@@ -441,18 +441,37 @@ async function cmdDoctor(ctx: CliCtx, writeManaged: boolean): Promise<CliResult>
   return { exitCode: exit, stdout: lines.join("\n") + "\n", stderr: "" };
 }
 
-function cmdVerify(ctx: CliCtx, args: readonly string[]): CliResult {
-  const fileIdx = args.indexOf("-f");
-  const file = fileIdx >= 0 ? args[fileIdx + 1] : evidenceFile(ctx);
-  const r = verifyEvidenceFile(file!);
-  if (r.ok) return { exitCode: 0, stdout: `ok: ${r.records} records verified\n`, stderr: "" };
+/**
+ * 各类 verify 失败的诊断措辞。
+ *
+ * 表而不是 switch：五种失败各自给出**不同**的下一步提示（去建文件 / 去查权限 /
+ * 去升级版本 / 去看具体 schema 错 / 去看断链位置），把它们并排放着才看得出
+ * "我们是否对每种失败都说了有用的话"。
+ */
+type VerifyFailure = Extract<VerifyResult, { ok: false }>;
+
+/** 按 kind 取出对应的诊断措辞（类型安全：每个 kind 只收到它自己的记录形状）。 */
+function verifyMessage(r: VerifyFailure): string {
   switch (r.kind) {
-    case "no_file": return { exitCode: 1, stdout: "", stderr: `no file: ${r.message}\n` };
-    case "io_error": return { exitCode: 1, stdout: "", stderr: `unreadable: ${r.message}\n` };
-    case "unsupported_version": return { exitCode: 1, stdout: "", stderr: `unsupported evidence_version: ${String(r.evidence_version)}\n` };
-    case "schema_violation": return { exitCode: 1, stdout: "", stderr: `schema violation at seq=${r.seq}: ${r.errors.join("; ")}\n` };
-    case "chain_broken": return { exitCode: 1, stdout: "", stderr: `first_bad_seq=${r.first_bad_seq} (${r.reason})\n` };
+    case "no_file": return `no file: ${r.message}`;
+    case "io_error": return `unreadable: ${r.message}`;
+    case "unsupported_version": return `unsupported evidence_version: ${String(r.evidence_version)}`;
+    case "schema_violation": return `schema violation at seq=${r.seq}: ${r.errors.join("; ")}`;
+    case "chain_broken": return `first_bad_seq=${r.first_bad_seq} (${r.reason})`;
   }
+}
+
+/** `-f <path>` 指定的证据文件；未给时用状态目录默认值。 */
+function evidenceArg(ctx: CliCtx, args: readonly string[]): string {
+  const fileIdx = args.indexOf("-f");
+  const given = fileIdx >= 0 ? args[fileIdx + 1] : undefined;
+  return given ?? evidenceFile(ctx);
+}
+
+function cmdVerify(ctx: CliCtx, args: readonly string[]): CliResult {
+  const r = verifyEvidenceFile(evidenceArg(ctx, args));
+  if (r.ok) return { exitCode: 0, stdout: `ok: ${r.records} records verified\n`, stderr: "" };
+  return { exitCode: 1, stdout: "", stderr: `${verifyMessage(r)}\n` };
 }
 
 /** canary 子命令分派：未知动词 → exit 2（AC-V2a-08）。 */

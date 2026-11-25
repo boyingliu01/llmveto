@@ -9,6 +9,10 @@ import { verifyEvidenceFile } from "../evidence/verify.ts";
 import { aggregateEvidence } from "../evidence/aggregate.ts";
 import { delphiAdapter } from "../adapters/delphi.ts";
 import { opencodeAdapter } from "../adapters/opencode.ts";
+import { claudeCodeAdapter } from "../adapters/claude-code.ts";
+import { codexAdapter } from "../adapters/codex.ts";
+import { promptfooAdapter } from "../adapters/promptfoo.ts";
+import { clientCoverageChecks } from "./client-coverage.ts";
 import type { Adapter, Env } from "../adapters/index.ts";
 import { EvidenceWriter } from "../evidence/writer.ts";
 import { startGateway } from "../gateway/server.ts";
@@ -298,7 +302,7 @@ function checkCanaryRegistry(ctx: CliCtx): DoctorCheck {
 async function cmdDoctor(ctx: CliCtx, writeManaged: boolean): Promise<CliResult> {
   // AC-VETO-008-02 检查项封闭枚举：① 受管配置漂移 ② 端口连通 ③（可选）写托管 ④ evidence 链
   const env = ctx.env ?? process.env;
-  const adapters: readonly Adapter[] = [opencodeAdapter, delphiAdapter];
+  const adapters: readonly Adapter[] = [opencodeAdapter, delphiAdapter, claudeCodeAdapter, codexAdapter, promptfooAdapter];
   const checks: DoctorCheck[] = [];
   const baseUrl = env.LLMVETO_GATEWAY_URL ?? "http://127.0.0.1:8787";
   // ③ 写托管配置（--write-managed-config）：先写盘，后续漂移检测才能反映写入后真实状态。
@@ -316,6 +320,20 @@ async function cmdDoctor(ctx: CliCtx, writeManaged: boolean): Promise<CliResult>
     ok: drift.length === 0,
     message: `drift entries: ${drift.map((d) => d.id).join(", ") || "none"} (configs: ${seen.join(", ")})`,
   });
+  // ①b 客户端覆盖六态（REQ-V2bA-09/10）：配好了 ≠ 扫得到，两者分开报。
+  const coverage = clientCoverageChecks(env, baseUrl);
+  checks.push({
+    id: "doctor.client-coverage",
+    ok: coverage.every((c) => !c.failsDoctor),
+    message: coverage.map((c) => `${c.client}=${c.state}`).join(", "),
+  });
+  for (const c of coverage) {
+    checks.push({
+      id: `doctor.client-coverage.${c.client}`,
+      ok: !c.failsDoctor,
+      message: `${c.state}: ${c.message}`,
+    });
+  }
   // ② 端口连通：对 gateway.url（或默认地址）做真实 TCP 探活
   const probe = await probeReachable(baseUrl);
   checks.push({

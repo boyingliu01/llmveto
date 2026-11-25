@@ -84,6 +84,10 @@ export interface RouteInfo {
 // 保留段：不是客户端名，而是 API 版本前缀（兼容 legacy 客户端与现有测试）。
 const RESERVED_SEGMENTS: ReadonlySet<string> = new Set(["v1", "api"]);
 
+import { formatForPrefix } from "./protocols/registry.ts";
+import { CANARY_MANAGED_ROUTES } from "./core.ts";
+import { egressSecretScan } from "../checkers/egress-secret-scan.ts";
+
 export function parseRoute(urlPath: string): RouteInfo {
   const path = urlPath.split("?")[0] ?? "/";
   const segs = path.split("/").filter((s) => s.length > 0);
@@ -162,6 +166,10 @@ async function dispatch(
   const bodyText = await readBodyText(req);
   const headers = normalizeHeaders(req.headers);
   const id = resolveIdentity(route, headers, cfg);
+  // GLM 席终审 C-1：传输层压缩体不还原 = 整段不可见。上游栈会自动解压，
+  // 网关不还原就是"扫了空气"（实测：gzip 体带凭据 → 200 且已到达上游）。
+  // 受管路由上无法还原的压缩体一律 fail-closed——不放行看不懂的字节。
+  const encodingReason = managedRouteSecretGuard(route, headers["content-encoding"]);
 
   const resolution = resolveUpstream(route, headers, cfg);
   // 查询串随路径一并转发（如受管 Delphi endpoint 的 `?stream=1`、Azure 风格 api-version）
@@ -174,11 +182,29 @@ async function dispatch(
     return;
   }
 
+  if (encodingReason !== null) {
+    await blockedBeforeForwardUrl(res, cfg, id, { bodyText, endpointHost, t0 }, encodingReason);
+    return;
+  }
+
   const transport = resolveTransport(bodyText, url, headers);
   // 判定一出即登记进每请求状态：兜底路径的 evidence 传输字段据此写，不再由交付计数反推
   // （PWR3-B-m1：`fwd.chunks > 0` 在 headers 已出而零帧转发时会把流式请求误记为非流式）。
   fwd.transport = transport;
-  const outcome = await handleChatCompletions(core, { body: bodyText, headers, upstreamUrl, ...id, endpointHost, transport });
+  // SL-05/SL-06（REQ-V2bA-04b/15）：路由前缀既是识别权威，也是 fail-closed 的作用域来源。
+  const routePrefix = route.client;
+  const managedRoute = isManagedRoute(route);
+  // GLM 席 M1：查询串是**另一条**出境通道——`?api_key=%73k%2Dant%2D…` 在 body 里
+  // 一个字面凭据字符都没有，而 HTTP 语义下资源端会 percent-decode 它。
+  // 查询串会原样拼进 upstreamUrl 转发，所以这里先解码再扫；命中即阻断。
+  // 同一条道理适用于 URL 的**所有**组成部分（GLM 席终审）：path 段与 userinfo 同样会被
+  // 上游 percent-decode，`/v1/messages/%67%68%70%5F…` 与 query 完全同构。只扫 query 是半个修复。
+  const urlSecret = managedRoute ? secretInUrl(url) : null;
+  if (urlSecret !== null) {
+    await blockedBeforeForwardUrl(res, cfg, id, { bodyText, endpointHost, t0 }, urlSecret);
+    return;
+  }
+  const outcome = await handleChatCompletions(core, { body: bodyText, headers, upstreamUrl, ...id, endpointHost, transport, routePrefix, managedRoute });
 
   await deliverOutcome(res, outcome, fwd);
   writeEvidence(cfg, { ...id, endpointHost, bodyText, respText: outcome.body, stream: transport === "stream", findings: outcome.findings,
@@ -186,6 +212,104 @@ async function dispatch(
     forwardedBody: outcome.forwardedBody, // D-04：链上 sha/bytes 记上游实收体
     ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}), // SL-07：顶层 reason 落链（key-absent）
     partial: outcome.actionTaken === "terminated_after_delivery", t0 });
+}
+
+/**
+ * SL-06（REQ-V2bA-15）：受管路由的判定域。
+ *
+ * 定义（设计 D-03，R2 评审要求写死）：
+ *   受管路由 = **适配器实际配置的** `<client>/<provider>` 路由键 ∪ `CANARY_MANAGED_ROUTES`。
+ *
+ * 为什么不是"前缀在表里就算受管"（code-walkthrough MAJOR-4）：那样 `opencode/<任意 provider>`
+ * 都会被纳入，等于把 fail-closed 无声扩大到 v1 从未承诺的路径上——而 v1 的承诺域是
+ * `MANAGED_CONFIG_IDS` 的封闭枚举。判定域必须与"适配器写了哪条 baseURL"同源，否则
+ * "受管"这个词就不再指向任何一个可枚举的集合。
+ */
+function isManagedRoute(route: RouteInfo): boolean {
+  const key = `${route.client ?? ""}/${route.providerId ?? ""}`;
+  return MANAGED_ROUTE_KEYS.has(key) || CANARY_MANAGED_ROUTES.has(key);
+}
+
+/**
+ * 适配器写入的 `<client>/<provider>` 路由键（与 src/adapters/* 的 buildPatch 同源）。
+ *
+ * 与 adapters 层的同源一致性由 `tests/unit/route-keys.test.ts` 以真实 adapter 产物推导钉死——
+ * gateway 层不 import adapters（architecture.yaml 禁），所以这里镜像一份并让测试看守。
+ */
+export const MANAGED_ROUTE_KEYS: ReadonlySet<string> = Object.freeze(
+  new Set([
+    "opencode/openai",
+    "opencode/anthropic",
+    "opencode/mock",
+    "delphi/default",
+    "claude/anthropic",
+    "codex/openai",
+    "promptfoo/openai",
+  ]),
+);
+
+/**
+ * 受管路由上的压缩体守卫。
+ *
+ * 为什么是阻断而不是解压后继续：解压要引入解码器与解压炸弹防护（zip bomb），
+ * 那是独立议题；而"看不懂的传输编码"对一个安全网关而言就是覆盖缺口，
+ * 按 fail-closed 直接拒绝，比假装扫过安全。
+ *
+ * @returns 需要阻断时返回 reason，否则 null
+ */
+function managedRouteSecretGuard(route: RouteInfo, contentEncoding: string | undefined): string | null {
+  if (!isManagedRoute(route)) return null;
+  const enc = (contentEncoding ?? "").trim().toLowerCase();
+  if (enc === "" || enc === "identity") return null;
+  return "unsupported_content_encoding";
+}
+
+/**
+ * URL 的任一部分（path / query / userinfo）里是否有凭据，percent-decode 后再扫。
+ *
+ * 为什么需要：body 之外的出境通道同样能带凭据，而形状判定只看 body。
+ * `?api_key=%73k%2Dant%2D…` 与 `/v1/messages/%67%68%70%5F…` 解码后都是完整凭据，
+ * 上游按 RFC 3986 会解码它们。**只扫 query 是半个修复**——path 与 userinfo 同构。
+ */
+function secretInUrl(url: URL): string | null {
+  const candidates = [url.pathname, url.search, `${url.username}:${url.password}`].filter((s) => s.length > 0);
+  for (const part of candidates) {
+    // 常数级预判：URL 里没有任何凭据前缀或 percent 转义时，解码后也不可能有。
+    // 这是逐请求路径（每个受管请求都会走），所以先做这一层再谈解码与正则。
+    if (!URL_SECRET_HINT.test(part)) continue;
+    const scan = egressSecretScan({ direction: "request", transport: "non-stream", text: decodeSafe(part), meta: {} });
+    if (scan.verdict === "finding") return "url_secret";
+  }
+  return null;
+}
+
+/**
+ * URL 里出现凭据的**必要条件**：要么含凭据前缀，要么含 percent 转义（`%73k-` 解码后才是 `sk-`）。
+ * 两者都没有的 URL 不可能藏凭据——这是短路，不是判据；漏判只会回落到全量扫描。
+ */
+const URL_SECRET_HINT = /sk[-_]|ghp_|gho_|ghs_|ghu_|AKIA|ASIA|xox[abps]-|-----BEGIN|AIza|glpat-|npm_|pypi-|%/;
+
+/** percent-decode；非法编码按原文返回（不因解析失败而放行）。 */
+function decodeSafe(text: string): string {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
+}
+
+/** 查询串含凭据 → 502 + evidence（与请求体阻断同形）。 */
+async function blockedBeforeForwardUrl(
+  res: ServerResponse,
+  cfg: GatewayConfig,
+  id: { requestId: string; sessionId: string; turnId: string; client: string; providerId: string },
+  p: { bodyText: string; endpointHost: string; t0: number },
+  reason: string,
+): Promise<void> {
+  const body = JSON.stringify({ error: { code: "llmveto:rejected" } });
+  finishFailureResponse(res, body);
+  writeEvidence(cfg, { ...id, endpointHost: p.endpointHost, bodyText: p.bodyText, respText: body, stream: false, findings: [],
+    actionTaken: "blocked_before_forward", deliveredChunks: 0, partial: false, reason, t0: p.t0 });
 }
 
 /** 读请求体全文（dispatch 与兜底路径的共享入口）。 */

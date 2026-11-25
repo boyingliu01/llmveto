@@ -8,7 +8,13 @@
 //   - 幂等：已经是 musl 二进制（或已打补丁）则跳过。
 //   - 保守：glibc 版本已满足（>= 2.38）时不动任何文件。
 //   - 失败不致命：只打印提示，不让 bun install 失败。
-// 注意：`bun install` / `npm ci` 会重新下载 gnu 二进制，所以本脚本挂在 postinstall 上。
+// 注意：`bun install` / `npm ci` 会重新下载 gnu 二进制，所以装完依赖后需要手动跑一次：
+//   bun run dev:patch-archlint
+//
+// **不挂在 postinstall 上**（v2b-A 修复）：postinstall 会被每一个 `npm i -g llmveto` 的使用者执行，
+// 而这个路径（node_modules/@archlinter/...）只有在**本仓库开发时**才存在。
+// 挂在 postinstall 上曾经导致 release gate 的 install-tarball 步失败：
+// 打包产物里没有 scripts/ 目录，安装后 `node scripts/patch-archlint-musl.mjs` 直接 MODULE_NOT_FOUND。
 
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, readFileSync } from "node:fs";

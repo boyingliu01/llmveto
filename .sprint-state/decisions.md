@@ -249,3 +249,90 @@
 - 验证（同场景新旧对照）：客户端硬断——旧版把中断交换记为完整（truncated=false, 455B），新版正确记 `#1 … [TRUNCATED]`(48B) 且代理存活、后续请求照常；上游断链——旧版客户端挂住且 0 落盘，新版打 `上游响应流中断: aborted` + 落 `[TRUNCATED]` + 客户端正常收到流结束；切分端对"1 截断 + 1 完整 + 1 半行"的混合输入报 `坏行剔除: 1 行`、`丢弃: 1 条（客户端中断/截断，不计入判据）`、交换数只计完整那条。测试脚本与产物（`var/_*.cjs`、`var/canary-sessions/_*`、`Temp/old-cap.ts`）已全部删除，用户的 `raw-exchanges.jsonl` 未被改写（141482B / 9-30 mtime 原样）。
 - 登记（不在本 sprint 职责内，交用户处置）：宿主机侧风险面 —— Windows `Microsoft-Windows-Kernel-WHEA/Errors` 通道 14 天内无记录（错误目前只注入 guest，未升级成宿主 BSOD），但 5 次同签名 MCE 指向 CPU/供电/内存超频/散热层面的不稳定；页面文件被设为固定 2048MB（`AutomaticManagedPagefile=False`，commit 上限 25.7GB 而此刻仅剩 2.9GB）、`.wslconfig` 给 WSL 上限 12GB，且 `dsh-wsl-keeper.vbs` 对应的 `wsl --exec sleep infinity` 保活进程此刻未运行（仅剩 wslservice.exe）。这些都不解释本次 panic（panic 正文是 MCE），但会放大整机随机硬切的后果：**未提交的工作会随 panic 丢失**。
 - 义务：① #E 录制期间每录 2-3 个会话即跑 `node var/canary-split.ts --require 10 --dry-run` 早暴露，被 panic 打断的会话重录，采集文件不放 WSL 侧路径；② 鉴于本机 panic 频发，worktree 内的未完成产物应**频繁提交**、勿长驻工作区（本条落地时 `var/canary-split.ts`、`var/capture-proxy.ts`、`.sprint-state/*` 三处文档改动仍未提交，待用户拍板）；③ 硬件侧排查（BIOS 微码 / 关 XMP / memtest / 散热）属用户机器运维，不在 v2a 范围内，已作为事实登记供后续会话引用。
+
+## Decision DR-029: v2b 只做线 A（多客户端接入），B/C 另开 sprint
+
+- 日期：2026-11-24
+- 阶段：1/6 PREP / 范围切分（延续 DR-012 / DR-012a 的"砍范围不砍深度"纪律）
+- **Question**：v2b 三件互相独立的交付线（A 多客户端接入 / B 计费对账 `report` CLI / C 指纹巡检 + provider 信任分）如何拆
+- **Options**：(a) 只做 A；(b) A+B；(c) A+B+C 全量；(d) 只做 C
+- **Choice**：**(a) 只做 A**（用户 2026-11-24 拍板）。B、C 顺延为独立 sprint。
+- **Rationale（均实测，非主观）**：
+  - A 的验收面与其他两条不相交：`MANAGED_CONFIG_IDS` 扩枚举 + doctor 漂移断言 + 真实 adapter 产物驱动的过闸探测，全部可判定且不触碰 evidence schema。
+  - B 需实装 TEST 契约 #4 的 `usage` / `cache_reported` 两个可选位（v2a §5 第二处背离），且**官价基准数据源至今空白**——"官方价 × usage"没有可信输入，对账结果无判定基准；不先定数据源就开工必然中途漂移。
+  - C 有两个未关的前置门：① `llm-fingerprint-detector` 许可**至今未核实**（`docs/licenses.md` 第 2 行；G-LIC 规则"未核实 = 不引入运行时依赖"）；② 探针要向**上游主动发已知 prompt**，与 T1a 的"最小暴露"承诺正面冲突（DR-012a 已因此把 `fingerprint-probe` 移出 v2a）。这两条属需求级取舍，不是 BUILD 能补的细节。
+- **备选与否决**：把 A+B 并作一 sprint（会重演 v2a 的评审卷宗膨胀）；只做 C（在 G-LIC 未关的前提下开工 = 违反 G-LIC 门）。
+
+## Decision DR-030: delphi 评审走 external 通道，席位由"三厂家真实可调"决定
+
+- 日期：2026-11-24
+- 阶段：1/6 PREP（DESIGN 前置，用户要求"先修好面板再进 DESIGN"）
+- **Question**：R1/R2 的三专家评审用什么通道、什么模型
+- **Options**：(a) whalecloud（`opencode.json` 的 provider，3 个 g-* 模型）；(b) CodeBuddy CLI（`--model` 可选 16 个，含 DeepSeek/智谱/月之暗面/字节等多家厂商）；(c) Qoder CLI；(d) DSH native subagent 选模型
+- **Choice**：**(b) CodeBuddy 的 `hy4std` / `hy4flash` / `space-bunny` 三席**，写入项目根 `.delphi-config.json`（gitignore 已覆盖：本文件含内部端点与个人模型选择）。
+- **实测依据（逐条本机验证，非推断）**：
+  | 候选 | 实测结果 | 结论 |
+  |---|---|---|
+  | whalecloud | `OPENCODE_WHALECLOUD_API_KEY` 在本机**任何进程环境里都不存在**（`/proc/<dsh-pid>/environ` 为 0 个 `*_API_KEY`；`~/.config/llmveto/env` 只有 `LLMVETO_*`）；实测请求返回 `HTTP 401 未提供有效的API-KEY` | ❌ 缺凭据 |
+  | Qoder CLI | `--model` 只有 `auto` 可用；`lite`/`qwen3-coder-plus`/`glm-5.2` 全部回落 `auto`（CLI 原话：`Model "…" is not available right now; using "auto" instead`） | ❌ 三席会变成同一模型 |
+  | DSH native | `list_subagent_models` 只返回**唯一 1 条**（`ailb/s-deepseek-v4.1-flash`），且 `provider/ailb` 只列 1 个模型 | ❌ 不满足"三席互异" |
+  | CodeBuddy | `hy4std`/`hy4flash`/`hy4flash-free`/`space-bunny`/`deepseek-v4.1-flash`/`glm-5.3-flash` 全部实测返回预期文本 | ✅ 可用 |
+- **为何选这三个**：`hy4std` / `hy4flash` / `space-bunny` 是 CLI 自带的默认档位名，**不是**中转站模型别名；另外两个快速席位（`deepseek-v4.1-flash` / `glm-5.3-flash`）正是本项目反复实测过的**中转站模型**——让它同时当被审对象和评审员，会把"中转站有没有偷换"这个问题带进评审结论。**实测代价如实记录**：这三个档位背后的真实厂商无法从本机证明（`model.request` 日志只写模型 ID），与 v2a 时代 `example-provider/g-*` 的做法属于同一类"自报≠证据"风险，只能靠三席结论互异做间接检验（见 `.sprint-state/review/delphi-panel-v2b.md`）。
+- **通道判据**：delphi-review skill 的允许通道只有 native `subagent` 与 external 两种，其余扇出机制一律禁止；本机两者都不合规（native 见上表，external 因 key 缺失不可用）。因此评审执行层用 **`codebuddy -p --model <seat>`** 直跑三席（等价于 external provider、每席一个不同可执行模型 ID），并把每席**实际命令行**写进评审记录作为凭据。
+- **副作用**：本机 opencode 的 `delphi-reviewer-technical` 与 `delphi-reviewer-feasibility` 两席同指 `whalecloud/g-glm-5.3-flash`（用户级配置，不在本仓库）；本轮已用上游 CLI 回避，**但那是用户机器级配置缺陷，登记不改**。
+
+## Decision DR-031: 设计批准 + 两项用户拍板改变设计
+
+- 日期：2026-11-24
+- 阶段：2/6 DESIGN（Phase 2 出口硬闸）
+- **Question**：(1) 设计文档 `docs/plans/2026-11-24-v2b-a-design.md` 是否批准；(2) 新协议线"认不出的形态"默认阻断怎么落地；(3) 验收用的凭据探针怎么造
+- **Choice**（用户 2026-11-24 拍板）：
+  1. **批准设计，进 BUILD**（13 切片）；
+  2. **直接 fail-closed**（不采用"观察模式先验证"）；
+  3. **复用仓库已有 fixture 值**作凭据探针（不新造可匹配串）。
+- **第 2 项对设计的影响（必须替换、不得保留）**：
+  设计 §5 风险 2 与需求文档 R8 的 (c) 条"fail-closed 以观察模式上线、先跑通一次真实客户端会话"**作废**。
+  该条原本是"识别器误判会直接拿真实流量试错"的唯一缓冲。作废后，风险转移到**识别器本身的正确性举证**上，
+  因此必须由 (b) 条独立承担，且强度提高：
+  - 每种格式的**每种特征形态**各一条正样本 + 一条"差一个特征键"的负样本（不是每格式一条）；
+  - "歧义即 unknown" 必须有**构造性用例**（同时含 `messages` 与 `input` 的 body）；
+  - 本机 1916 条真实语料只用于证 Chat 零误判（该结论成立，但覆盖面止于 Chat，不得外推）；
+  - **BUILD 期间不得以本 sprint 的 fail-closed 版本接管用户日常流量**；网关由 systemd 托管运行的是
+    `main` 的 dist，sprint 分支的产物只在测试进程中跑，直到 SHIP 合入。
+- **第 3 项对设计的影响**：
+  需求 §5.4 的探针**不新造** `sk-` 串，改为引用 `tests/fixtures/threats/T1b/secrets.yaml` 与
+  `tests/unit/checkers/egress-secret-scan.test.ts` 中**已存在且已登记进 `.secrets.baseline`** 的值。
+  验收断言不变（必须 `blocked_before_forward` 且上游 0 请求），只是值来源改变。
+  若现有 fixture 值不足以覆盖三种协议线的新字段路径，优先**复用同一值**放进不同字段，而不是新造值。
+- **备选与否决**：观察模式（用户否决，理由未陈述，按纪律接受）；新造探针串（用户否决：会污染对话历史，
+  2026-11-24 已有前例——见 `docs/TODO-PLAN-2026-11-23.md` §8 与 `docs/KNOWN-ISSUES.md` 的
+  "Discussing credential formats conflicts with blocking-class secret scanning"）。
+
+## Decision DR-032: 设计修订（R2 评审后）——识别改路由权威、覆盖改两轴、切片 13→15
+
+- 日期：2026-11-24
+- 阶段：2/6 DESIGN（R2 评审后修订）
+- **背景**：用户已批准的初版设计经 R2 两席评审，均判 `REQUEST_CHANGES`，两席独立命中同一 CRITICAL。
+- **修订 1（识别）**：初版用"特征键"让 `chat` 与 `anthropic-messages` 互相竞争。实测证明：
+  ```
+  Chat 标准请求      chat=true anthropic=true → 歧义 → unknown → BLOCK
+  Claude(带 system)  chat=true anthropic=true → 歧义 → unknown → BLOCK
+  Claude(无 system)  chat=true anthropic=true → 歧义 → unknown → BLOCK
+  ```
+  在 DR-031（直接 fail-closed）下这会阻断目标客户端**自己的全部流量**。根因是 Claude 的"无 system + 纯文本"
+  请求与 Chat 请求结构相同，纯内容识别必然误判。改为**路由权威 + 内容吻合**：前缀决定线格式，内容识别只在无权威前缀时使用。
+- **修订 2（覆盖）**：初版 `shape_partial_coverage` 只能由投影器自证（漏投影仍判 projected），`known_but_empty` 不可达。
+  改为**协议声明 `CoverageSpec` 权威清单**，判定分两轴：轴1 识别（known/unknown）、轴2 覆盖（full/partial/vacuous），
+  `partial = present \ handled` 由两个独立来源求得，与文本量无关。
+- **修订 3（切片）**：13 → **15**。新增 SL-07（`shared` 层客户端线格式声明，解决 adapters 不得 import gateway 的分层问题）
+  与 SL-13（四段全链 E2E）。SL-04 依赖改 SL-02+SL-03；SL-05 依赖改 SL-01+SL-02+SL-03；SL-13 必须在适配器之后
+  （REQ-00 要求"真实 adapter 产物"）。
+- **修订 4（SHIP 缓冲）**：DR-031 作废观察模式后，"BUILD 不接管流量"只是把风险推迟到 SHIP。新增
+  `LLMVETO_PROTOCOL_STRICT` 运维开关（env，非 v3 的配置面）：SHIP 后先置 0 观察一次真实会话，再置 1。
+  命名与放置位置在 Phase 5 定稿，此处只锁定"必须存在一个有回归能力的灰度入口"。
+- **用户拍板状态**：DR-031 的三项决定（批准进 BUILD / 直接 fail-closed / 复用 fixture 探针）**不变**；
+  本修订是对已批准设计的**内部一致性修正**（其中"路由权威"与"两轴"改变的是识别与覆盖判据，不改变三条拍板）。
+  §7.4 记录：用户已批准"进 BUILD"，本修订在 BUILD 前完成。
+- **落地**：`docs/plans/2026-11-24-v2b-a-design.md`（§2.3/§2.4/D-02/D-03/D-04~D-07/§4 切片/§5 风险）、
+  `specification.yaml`（REQ-03/14/15/15a 与 AC 同步）、`.sprint-state/slices-manifest.json`（15 切片、拓扑校验、21/21 REQ 覆盖）、
+  `.sprint-state/review/r1-requirements-r3draft.md`（同批同步）、`.sprint-state/review/r2-consensus.md`。

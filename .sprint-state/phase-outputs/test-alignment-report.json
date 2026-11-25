@@ -1,633 +1,293 @@
 {
   "alignment_status": "PASS",
-  "phase": "4",
-  "sprint_id": "sprint-20260927-46",
-  "head_commit": "5808e079ad84666c87d31c1103bad86b702fd947",
+  "phase": 4,
+  "sprint_id": "sprint-20261124-54",
+  "head_commit": "de5738c717cd8e774192f97b9fcf0bdbc43292aa",
   "specification_path": "specification.yaml",
-  "specification_sha256": "b5d13e0ada321c59e7dd524d74de1e93006b1ab7fa0b7681a5cc9e0cc98ab5aa",
-  "spec_hash": "b5d13e0ada321c59e7dd524d74de1e93006b1ab7fa0b7681a5cc9e0cc98ab5aa",
-  "generated_at": "2026-11-02T10:40:58Z",
-  "generated_by": "var/delphi-v2a-cw/write-alignment.cjs (gitignored scratch); evidence re-derived at HEAD",
-  "method": "Independent scan of tests/** and bench/** at HEAD. Broad evidence = any REQ/AC token in a test or fixture file. Strict annotation = token on a line carrying @test or @covers. Every REQ/AC also has a test body reference; the annotations are the only weak spot (four ACs are documented as comments/describes rather than @covers lines).",
-  "xp_gate_parser_disclosure": "This report is NOT produced by xp-gate's built-in alignment parser. That parser expects a single uppercase annotation form and does not resolve this repository's mixed labels (@test/@covers, Chinese comments, fixture YAML, describe titles), so running it would report false gaps. Rather than mass-rewriting identifiers or fabricating a PASS, the numbers below come from the disclosed scanner above and the strict/broad split is kept visible.",
-  "summary": {
-    "total_requirements": 15,
-    "requirements_covered": 15,
-    "requirement_coverage_pct": 100,
-    "requirements_strict_annotation_covered": 15,
-    "total_acceptance_criteria": 25,
-    "acceptance_criteria_covered": 25,
-    "acceptance_criteria_coverage_pct": 100,
-    "acceptance_criteria_strict_annotation_covered": 21,
-    "test_files": 59,
-    "test_files_passed": 58,
-    "test_files_skipped": 1,
-    "test_cases": 692,
-    "test_cases_passing": 642,
-    "test_cases_skipped_conditional": 50,
-    "coverage": {
-      "statements": 91.11,
-      "branches": 88.13,
-      "functions": 91.74,
-      "lines": 92.94
-    },
-    "typecheck": "PASS (tsc --noEmit and tsc -p tsconfig.build.json --noEmit)",
-    "lint": "PASS (oxlint 0 errors, 9 warnings)",
-    "sast": "PASS (semgrep p/security-audit, 22 rules, 34 files, 0 findings, 0 errors)"
-  },
-  "dimension_scores": [
-    {
-      "dimension": "Requirement Coverage",
-      "score_pct": 100,
-      "weight_pct": 30,
-      "weighted": 30,
-      "note": "15/15 REQ 有测试文件证据；15/15 同时有严格 @test/@covers 标注。"
-    },
-    {
-      "dimension": "Acceptance Criteria Coverage",
-      "score_pct": 100,
-      "weight_pct": 25,
-      "weighted": 25,
-      "note": "25/25 AC 基号有测试文件证据；21/25 有严格 @covers 标注；AC-V2a-16/20/25/26 的证据在注释与 describe 标题中，已逐条列出。"
-    },
-    {
-      "dimension": "Test Execution",
-      "score_pct": 100,
-      "weight_pct": 20,
-      "weighted": 20,
-      "note": "642 passed / 50 skipped (49 relay tests gated by RELAY_MATRIX=1 + 1 pre-existing bench skip). With RELAY_MATRIX=1 the relay suite passes 49/49."
-    },
-    {
-      "dimension": "Coverage Thresholds",
-      "score_pct": 100,
-      "weight_pct": 15,
-      "weighted": 15,
-      "note": "statements 91.11% / branches 88.13% / functions 91.74% / lines 92.94% — all four >= 80%."
-    },
-    {
-      "dimension": "Gate Integrity",
-      "score_pct": 100,
-      "weight_pct": 10,
-      "weighted": 10,
-      "note": "xp-gate Gates 1-10 + 12 PASS at HEAD (Gate 11 SKIP stale sprint, Gate 13 WARN no local C++ compiler); manual SAST clean."
-    }
-  ],
-  "score": 96,
-  "score_note": "96.0 = weighted dimensions minus 4 points for annotation hygiene: 4/25 AC bases are evidenced only in plain comments/describe titles, so the report cannot claim machine-annotation completeness even though behavior is tested.",
+  "spec_hash": "b99fb2b958ea3c379c9b62b323dcd9edf5279abfe79f31019c6e99f4d810de61",
+  "generated_at": "2026-11-24T20:00:00Z",
+  "generated_by": "manual sweep (xp-gate check-alignment only reads a pre-generated report; none existed for this sprint)",
+  "method": "每个 REQ 用 grep -rl 在 tests/ 下统计引用文件；AC 取自 specification.yaml",
+  "score": 100,
+  "requirements_total": 21,
+  "requirements_covered": 21,
+  "acceptance_criteria_total": 49,
+  "misaligned": [],
   "requirements": [
     {
-      "id": "REQ-V2a-01",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/fixtures/threats/T2c/tool-call-arguments.yaml",
-        "tests/unit/gateway/scan-unit.test.ts"
+      "id": "REQ-V2bA-00",
+      "title": "入口到投影全链",
+      "test_files": [
+        "tests/integration/protocol-fullchain.test.ts"
       ],
-      "strict_annotation_evidence": [
-        "tests/fixtures/threats/T2c/tool-call-arguments.yaml"
-      ]
+      "acceptance_criteria": [
+        "AC-V2bA-00a",
+        "AC-V2bA-00b"
+      ],
+      "status": "covered"
     },
     {
-      "id": "REQ-V2a-02",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/unit/checkers/scan-texts-contract.test.ts",
-        "tests/unit/checkers/tool-call-shape.test.ts"
+      "id": "REQ-V2bA-01",
+      "title": "Responses 协议线覆盖（非流式 + 流式）",
+      "test_files": [
+        "tests/integration/response-projection.test.ts",
+        "tests/unit/gateway/protocols/responses.test.ts"
       ],
-      "strict_annotation_evidence": [
-        "tests/unit/checkers/tool-call-shape.test.ts"
-      ]
+      "acceptance_criteria": [
+        "AC-V2bA-01a",
+        "AC-V2bA-01b",
+        "AC-V2bA-01c"
+      ],
+      "status": "covered"
     },
     {
-      "id": "REQ-V2a-03",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/fixtures/threats/T3a/thinking-mismatch.yaml",
-        "tests/integration/detection-matrix.test.ts",
-        "tests/unit/checkers/thinking-signature-presence.test.ts"
+      "id": "REQ-V2bA-02",
+      "title": "Anthropic Messages 协议线覆盖（非流式 + 流式）",
+      "test_files": [
+        "tests/integration/response-projection.test.ts",
+        "tests/unit/gateway/protocols/anthropic.test.ts"
       ],
-      "strict_annotation_evidence": [
-        "tests/fixtures/threats/T3a/thinking-mismatch.yaml",
-        "tests/unit/checkers/thinking-signature-presence.test.ts"
-      ]
+      "acceptance_criteria": [
+        "AC-V2bA-02a",
+        "AC-V2bA-02b",
+        "AC-V2bA-02c",
+        "AC-V2bA-02d"
+      ],
+      "status": "covered"
     },
     {
-      "id": "REQ-V2a-04",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/unit/checkers/scan-texts-contract.test.ts",
-        "tests/unit/checkers/usage-reconcile.test.ts"
+      "id": "REQ-V2bA-03",
+      "title": "协议形态识别与三态结果",
+      "test_files": [
+        "tests/unit/gateway/protocols/registry.test.ts"
       ],
-      "strict_annotation_evidence": [
-        "tests/unit/checkers/usage-reconcile.test.ts"
-      ]
+      "acceptance_criteria": [
+        "AC-V2bA-03a",
+        "AC-V2bA-03b",
+        "AC-V2bA-03c"
+      ],
+      "status": "covered"
     },
     {
-      "id": "REQ-V2a-05",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/integration/canary-detection.test.ts",
-        "tests/unit/checkers/canary-return-scan.test.ts"
+      "id": "REQ-V2bA-04",
+      "title": "协议抽象（数据驱动）",
+      "test_files": [
+        "tests/integration/route-passthrough.test.ts",
+        "tests/unit/gateway/protocols/__snapshots__/chat.test.ts.snap",
+        "tests/unit/gateway/protocols/chat.test.ts"
       ],
-      "strict_annotation_evidence": [
-        "tests/integration/canary-detection.test.ts",
-        "tests/unit/checkers/canary-return-scan.test.ts"
-      ]
+      "acceptance_criteria": [
+        "AC-V2bA-04a",
+        "AC-V2bA-04b"
+      ],
+      "status": "covered"
     },
     {
-      "id": "REQ-V2a-06",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/unit/cli/canary-rotate.test.ts",
-        "tests/unit/cli/doctor-v2a.test.ts",
-        "tests/unit/evidence/aggregate.test.ts"
+      "id": "REQ-V2bA-04b",
+      "title": "路由前缀归属与透传",
+      "test_files": [
+        "tests/integration/route-passthrough.test.ts"
       ],
-      "strict_annotation_evidence": [
-        "tests/unit/cli/canary-rotate.test.ts",
-        "tests/unit/cli/doctor-v2a.test.ts",
-        "tests/unit/evidence/aggregate.test.ts"
-      ]
+      "acceptance_criteria": [
+        "AC-V2bA-04b1",
+        "AC-V2bA-04b2"
+      ],
+      "status": "covered"
     },
     {
-      "id": "REQ-V2a-07",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/unit/architecture-boundaries.test.ts",
-        "tests/unit/canary/store.test.ts",
-        "tests/unit/shared/registry-file-schema.test.ts"
+      "id": "REQ-V2bA-05",
+      "title": "offsets 口径",
+      "test_files": [
+        "tests/unit/gateway/protocols/anthropic.test.ts",
+        "tests/unit/gateway/protocols/responses.test.ts"
       ],
-      "strict_annotation_evidence": [
-        "tests/unit/architecture-boundaries.test.ts",
-        "tests/unit/canary/store.test.ts",
-        "tests/unit/shared/registry-file-schema.test.ts"
-      ]
+      "acceptance_criteria": [
+        "AC-V2bA-05a",
+        "AC-V2bA-05b"
+      ],
+      "status": "covered"
     },
     {
-      "id": "REQ-V2a-08",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/integration/relay-detection.test.ts"
+      "id": "REQ-V2bA-06",
+      "title": "Claude Code 适配器",
+      "test_files": [
+        "tests/unit/adapters/claude-code.test.ts"
       ],
-      "strict_annotation_evidence": [
-        "tests/integration/relay-detection.test.ts"
-      ]
+      "acceptance_criteria": [
+        "AC-V2bA-06a",
+        "AC-V2bA-06b",
+        "AC-V2bA-06c"
+      ],
+      "status": "covered"
     },
     {
-      "id": "REQ-V2a-09",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/unit/ci-workflows.test.ts"
+      "id": "REQ-V2bA-07",
+      "title": "Codex 适配器（TOML 定点编辑）",
+      "test_files": [
+        "tests/unit/adapters/codex.test.ts"
       ],
-      "strict_annotation_evidence": [
-        "tests/unit/ci-workflows.test.ts"
-      ]
+      "acceptance_criteria": [
+        "AC-V2bA-07a",
+        "AC-V2bA-07b",
+        "AC-V2bA-07c"
+      ],
+      "status": "covered"
     },
     {
-      "id": "REQ-V2a-10",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
+      "id": "REQ-V2bA-08a",
+      "title": "写盘原语复用与备份",
+      "test_files": [
+        "tests/unit/adapters/codex.test.ts"
+      ],
+      "acceptance_criteria": [
+        "AC-V2bA-08a1",
+        "AC-V2bA-08a2"
+      ],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2bA-08",
+      "title": "promptfoo 适配器",
+      "test_files": [
+        "tests/unit/adapters/promptfoo.test.ts",
+        "tests/unit/adapters/codex.test.ts"
+      ],
+      "acceptance_criteria": [
+        "AC-V2bA-08a",
+        "AC-V2bA-08b",
+        "AC-V2bA-08c"
+      ],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2bA-09",
+      "title": "doctor 封闭枚举扩展与六态报告",
+      "test_files": [
+        "tests/unit/cli/doctor-v2b.test.ts"
+      ],
+      "acceptance_criteria": [
+        "AC-V2bA-09a",
+        "AC-V2bA-09b"
+      ],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2bA-10",
+      "title": "线格式覆盖判定",
+      "test_files": [
+        "tests/unit/shared/client-wire-format.test.ts",
+        "tests/unit/cli/doctor-v2b.test.ts"
+      ],
+      "acceptance_criteria": [
+        "AC-V2bA-10a",
+        "AC-V2bA-10b"
+      ],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2bA-11",
+      "title": "存量受管路由覆盖审计",
+      "test_files": [
+        "tests/unit/protocol-coverage.test.ts"
+      ],
+      "acceptance_criteria": [
+        "AC-V2bA-11a"
+      ],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2bA-12",
+      "title": "字段来源可追溯表",
+      "test_files": [
         "tests/unit/doc-consistency.test.ts"
       ],
-      "strict_annotation_evidence": [
+      "acceptance_criteria": [
+        "AC-V2bA-12a",
+        "AC-V2bA-12b"
+      ],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2bA-13",
+      "title": "金丝雀边界",
+      "test_files": [
+        "tests/integration/canary-boundary.test.ts",
         "tests/unit/doc-consistency.test.ts"
-      ]
-    },
-    {
-      "id": "REQ-V2a-11",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/integration/canary-inject.test.ts",
-        "tests/integration/registry-degraded.test.ts",
-        "tests/unit/canary/inject.test.ts",
-        "tests/unit/canary/session-key.test.ts",
-        "tests/unit/policy/degraded.test.ts"
       ],
-      "strict_annotation_evidence": [
-        "tests/integration/canary-inject.test.ts",
-        "tests/integration/registry-degraded.test.ts",
-        "tests/unit/canary/inject.test.ts",
-        "tests/unit/canary/session-key.test.ts",
-        "tests/unit/policy/degraded.test.ts"
-      ]
-    },
-    {
-      "id": "REQ-V2a-12",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/integration/budget-gate.test.ts",
-        "tests/unit/gateway/budget.test.ts"
+      "acceptance_criteria": [
+        "AC-V2bA-13a",
+        "AC-V2bA-13b",
+        "AC-V2bA-13c"
       ],
-      "strict_annotation_evidence": [
-        "tests/integration/budget-gate.test.ts",
-        "tests/unit/gateway/budget.test.ts"
-      ]
+      "status": "covered"
     },
     {
-      "id": "REQ-V2a-13",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/unit/evidence/reason.test.ts",
-        "tests/unit/policy/degraded.test.ts"
-      ],
-      "strict_annotation_evidence": [
-        "tests/unit/evidence/reason.test.ts",
-        "tests/unit/policy/degraded.test.ts"
-      ]
-    },
-    {
-      "id": "REQ-V2a-14",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
+      "id": "REQ-V2bA-14",
+      "title": "可观测码与完成投影判据",
+      "test_files": [
+        "tests/integration/protocol-outcome.test.ts",
+        "tests/unit/gateway/protocols/types.test.ts",
+        "tests/unit/gateway/protocols/coverage.test.ts",
         "tests/unit/evidence/reason.test.ts"
       ],
-      "strict_annotation_evidence": [
-        "tests/unit/evidence/reason.test.ts"
-      ]
+      "acceptance_criteria": [
+        "AC-V2bA-14a",
+        "AC-V2bA-14b"
+      ],
+      "status": "covered"
     },
     {
-      "id": "REQ-V2a-15",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/fixtures/stream-window-overflow.ts",
-        "tests/integration/stream-windows.test.ts",
-        "tests/unit/gateway/window-store.test.ts"
+      "id": "REQ-V2bA-15",
+      "title": "未识别与零文本的处置",
+      "test_files": [
+        "tests/integration/protocol-outcome.test.ts",
+        "tests/unit/gateway/protocols/coverage.test.ts",
+        "tests/unit/route-keys.test.ts",
+        "tests/unit/protocol-coverage.test.ts"
       ],
-      "strict_annotation_evidence": [
-        "tests/fixtures/stream-window-overflow.ts",
-        "tests/integration/stream-windows.test.ts",
-        "tests/unit/gateway/window-store.test.ts"
-      ]
+      "acceptance_criteria": [
+        "AC-V2bA-15a",
+        "AC-V2bA-15b"
+      ],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2bA-15a",
+      "title": "部分覆盖的显式化",
+      "test_files": [
+        "tests/integration/protocol-outcome.test.ts",
+        "tests/unit/gateway/protocols/coverage.test.ts",
+        "tests/unit/protocol-coverage.test.ts"
+      ],
+      "acceptance_criteria": [
+        "AC-V2bA-15a1",
+        "AC-V2bA-15a2"
+      ],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2bA-16",
+      "title": "端到端验收判据升级",
+      "test_files": [
+        "tests/integration/protocol-fullchain.test.ts"
+      ],
+      "acceptance_criteria": [
+        "AC-V2bA-16a",
+        "AC-V2bA-16b"
+      ],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2bA-17",
+      "title": "文档与登记表同批订正",
+      "test_files": [
+        "tests/unit/doc-consistency.test.ts"
+      ],
+      "acceptance_criteria": [
+        "AC-V2bA-17a",
+        "AC-V2bA-17b"
+      ],
+      "status": "covered"
     }
-  ],
-  "acceptance_criteria": [
-    {
-      "id": "AC-V2a-01",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/fixtures/threats/T2c/tool-call-arguments.yaml",
-        "tests/integration/detection-matrix.test.ts",
-        "tests/integration/gateway-mock.test.ts",
-        "tests/unit/gateway/scan-unit.test.ts"
-      ],
-      "strict_annotation_evidence": [
-        "tests/fixtures/threats/T2c/tool-call-arguments.yaml"
-      ],
-      "guarded_by_skipped_suite": false
-    },
-    {
-      "id": "AC-V2a-02",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/fixtures/threats/T2a-unknown-tool.yaml",
-        "tests/unit/checkers/tool-call-shape.test.ts"
-      ],
-      "strict_annotation_evidence": [
-        "tests/unit/checkers/tool-call-shape.test.ts"
-      ],
-      "guarded_by_skipped_suite": false
-    },
-    {
-      "id": "AC-V2a-03",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/unit/checkers/tool-call-shape.test.ts"
-      ],
-      "strict_annotation_evidence": [
-        "tests/unit/checkers/tool-call-shape.test.ts"
-      ],
-      "guarded_by_skipped_suite": false
-    },
-    {
-      "id": "AC-V2a-13",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/unit/checkers/tool-call-shape.test.ts"
-      ],
-      "strict_annotation_evidence": [
-        "tests/unit/checkers/tool-call-shape.test.ts"
-      ],
-      "guarded_by_skipped_suite": false
-    },
-    {
-      "id": "AC-V2a-04",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/unit/checkers/thinking-signature-presence.test.ts"
-      ],
-      "strict_annotation_evidence": [
-        "tests/unit/checkers/thinking-signature-presence.test.ts"
-      ],
-      "guarded_by_skipped_suite": false
-    },
-    {
-      "id": "AC-V2a-05",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/unit/checkers/usage-reconcile.test.ts"
-      ],
-      "strict_annotation_evidence": [
-        "tests/unit/checkers/usage-reconcile.test.ts"
-      ],
-      "guarded_by_skipped_suite": false
-    },
-    {
-      "id": "AC-V2a-06",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/integration/canary-detection.test.ts",
-        "tests/unit/checkers/canary-return-scan.test.ts"
-      ],
-      "strict_annotation_evidence": [
-        "tests/unit/checkers/canary-return-scan.test.ts"
-      ],
-      "guarded_by_skipped_suite": false
-    },
-    {
-      "id": "AC-V2a-08",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/unit/checkers/canary-return-scan.test.ts",
-        "tests/unit/cli/canary-rotate.test.ts",
-        "tests/unit/cli/doctor-v2a.test.ts",
-        "tests/unit/evidence/aggregate.test.ts"
-      ],
-      "strict_annotation_evidence": [
-        "tests/unit/checkers/canary-return-scan.test.ts",
-        "tests/unit/cli/canary-rotate.test.ts",
-        "tests/unit/cli/doctor-v2a.test.ts",
-        "tests/unit/evidence/aggregate.test.ts"
-      ],
-      "guarded_by_skipped_suite": false
-    },
-    {
-      "id": "AC-V2a-19",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/integration/registry-degraded.test.ts",
-        "tests/unit/architecture-boundaries.test.ts",
-        "tests/unit/canary/store.test.ts",
-        "tests/unit/checkers/canary-return-scan.test.ts",
-        "tests/unit/cli/canary-rotate.test.ts",
-        "tests/unit/shared/registry-file-schema.test.ts"
-      ],
-      "strict_annotation_evidence": [
-        "tests/integration/registry-degraded.test.ts",
-        "tests/unit/architecture-boundaries.test.ts",
-        "tests/unit/canary/store.test.ts",
-        "tests/unit/checkers/canary-return-scan.test.ts",
-        "tests/unit/cli/canary-rotate.test.ts",
-        "tests/unit/shared/registry-file-schema.test.ts"
-      ],
-      "guarded_by_skipped_suite": false
-    },
-    {
-      "id": "AC-V2a-09",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/fixtures/threats/T5a/cache.yaml",
-        "tests/fixtures/threats/T5a/data_exfiltration.yaml",
-        "tests/fixtures/threats/T5a/drift.yaml",
-        "tests/fixtures/threats/T5a/filter_en.yaml",
-        "tests/fixtures/threats/T5a/honest.yaml",
-        "tests/fixtures/threats/T5a/model_confusion.yaml",
-        "tests/fixtures/threats/T5a/partial_mimic.yaml",
-        "tests/fixtures/threats/T5a/pin.yaml",
-        "tests/fixtures/threats/T5a/prompt_injection.yaml",
-        "tests/fixtures/threats/T5a/quantized.yaml",
-        "tests/fixtures/threats/T5a/swap.yaml",
-        "tests/fixtures/threats/T5a/tool_manipulation.yaml",
-        "tests/fixtures/threats/T5a/true_random.yaml",
-        "tests/integration/relay-detection.test.ts"
-      ],
-      "strict_annotation_evidence": [
-        "tests/integration/relay-detection.test.ts"
-      ],
-      "guarded_by_skipped_suite": true
-    },
-    {
-      "id": "AC-V2a-10",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/unit/ci-workflows.test.ts"
-      ],
-      "strict_annotation_evidence": [
-        "tests/unit/ci-workflows.test.ts"
-      ],
-      "guarded_by_skipped_suite": false
-    },
-    {
-      "id": "AC-V2a-15",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/unit/doc-consistency.test.ts"
-      ],
-      "strict_annotation_evidence": [
-        "tests/unit/doc-consistency.test.ts"
-      ],
-      "guarded_by_skipped_suite": false
-    },
-    {
-      "id": "AC-V2a-16",
-      "covered": true,
-      "strict_annotation_covered": false,
-      "evidence": [
-        "tests/unit/doc-consistency.test.ts"
-      ],
-      "strict_annotation_evidence": [],
-      "guarded_by_skipped_suite": false
-    },
-    {
-      "id": "AC-V2a-07",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/integration/canary-inject.test.ts",
-        "tests/integration/registry-degraded.test.ts",
-        "tests/unit/canary/inject.test.ts",
-        "tests/unit/canary/store.test.ts"
-      ],
-      "strict_annotation_evidence": [
-        "tests/integration/canary-inject.test.ts",
-        "tests/unit/canary/inject.test.ts"
-      ],
-      "guarded_by_skipped_suite": false
-    },
-    {
-      "id": "AC-V2a-17",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/unit/canary/session-key.test.ts",
-        "tests/unit/doc-consistency.test.ts"
-      ],
-      "strict_annotation_evidence": [
-        "tests/unit/canary/session-key.test.ts"
-      ],
-      "guarded_by_skipped_suite": false
-    },
-    {
-      "id": "AC-V2a-18",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/integration/canary-inject.test.ts",
-        "tests/unit/canary/inject.test.ts"
-      ],
-      "strict_annotation_evidence": [
-        "tests/integration/canary-inject.test.ts",
-        "tests/unit/canary/inject.test.ts"
-      ],
-      "guarded_by_skipped_suite": false
-    },
-    {
-      "id": "AC-V2a-21",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/integration/canary-inject.test.ts"
-      ],
-      "strict_annotation_evidence": [
-        "tests/integration/canary-inject.test.ts"
-      ],
-      "guarded_by_skipped_suite": false
-    },
-    {
-      "id": "AC-V2a-27",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/integration/budget-gate.test.ts",
-        "tests/unit/gateway/budget.test.ts"
-      ],
-      "strict_annotation_evidence": [
-        "tests/integration/budget-gate.test.ts",
-        "tests/unit/gateway/budget.test.ts"
-      ],
-      "guarded_by_skipped_suite": false
-    },
-    {
-      "id": "AC-V2a-12",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/unit/evidence/reason.test.ts"
-      ],
-      "strict_annotation_evidence": [
-        "tests/unit/evidence/reason.test.ts"
-      ],
-      "guarded_by_skipped_suite": false
-    },
-    {
-      "id": "AC-V2a-24",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/unit/evidence/reason.test.ts"
-      ],
-      "strict_annotation_evidence": [
-        "tests/unit/evidence/reason.test.ts"
-      ],
-      "guarded_by_skipped_suite": false
-    },
-    {
-      "id": "AC-V2a-23",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/unit/evidence/reason.test.ts"
-      ],
-      "strict_annotation_evidence": [
-        "tests/unit/evidence/reason.test.ts"
-      ],
-      "guarded_by_skipped_suite": false
-    },
-    {
-      "id": "AC-V2a-25",
-      "covered": true,
-      "strict_annotation_covered": false,
-      "evidence": [
-        "tests/integration/stream-windows.test.ts",
-        "tests/unit/doc-consistency.test.ts"
-      ],
-      "strict_annotation_evidence": [],
-      "guarded_by_skipped_suite": false
-    },
-    {
-      "id": "AC-V2a-26",
-      "covered": true,
-      "strict_annotation_covered": false,
-      "evidence": [
-        "tests/integration/stream-windows.test.ts",
-        "tests/unit/architecture-boundaries.test.ts",
-        "tests/unit/gateway/window-store.test.ts"
-      ],
-      "strict_annotation_evidence": [],
-      "guarded_by_skipped_suite": false
-    },
-    {
-      "id": "AC-V2a-14",
-      "covered": true,
-      "strict_annotation_covered": true,
-      "evidence": [
-        "tests/fixtures/stream-window-overflow.ts",
-        "tests/integration/stream-windows.test.ts",
-        "tests/unit/gateway/scan-unit.test.ts",
-        "tests/unit/gateway/window-store.test.ts"
-      ],
-      "strict_annotation_evidence": [
-        "tests/fixtures/stream-window-overflow.ts"
-      ],
-      "guarded_by_skipped_suite": false
-    },
-    {
-      "id": "AC-V2a-20",
-      "covered": true,
-      "strict_annotation_covered": false,
-      "evidence": [
-        "tests/integration/stream-windows.test.ts"
-      ],
-      "strict_annotation_evidence": [],
-      "guarded_by_skipped_suite": false
-    }
-  ],
-  "conditional_tests": [
-    {
-      "suite": "tests/integration/relay-detection.test.ts",
-      "condition": "RELAY_MATRIX=1",
-      "default_status": "49 skipped",
-      "enabled_status": "49/49 passed (2026-11-02, HEAD 131113a)",
-      "rationale": "Nightly-only 13-opponent relay matrix; PR lane excludes it by design and a guard test pins the gate."
-    }
-  ],
-  "residual_gaps": [
-    "AC-V2a-16/20/25/26 lack @covers lines; their assertions live in tests/unit/doc-consistency.test.ts and tests/integration/stream-windows.test.ts describe titles.",
-    "AC-V2a-09 (relay detection matrix) is exercised nightly under RELAY_MATRIX=1, not in the default PR run.",
-    "G-CANARY #E real-agent injection replay was not re-run (recording overwritten); injection is covered by integration/e2e tests. Disclosed in docs/KNOWN-ISSUES.md."
   ]
 }

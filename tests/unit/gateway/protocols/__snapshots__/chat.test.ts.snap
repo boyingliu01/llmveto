@@ -1,0 +1,46 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`SL-01 Chat 对照基线（REQ-V2bA-04a） > 响应投影的快照（改动前后必须逐字节相同） 1`] = `
+{
+  "malformed": false,
+  "meta": {
+    "finish_reason": "tool_calls",
+    "model_requested": "gpt-4o",
+    "model_responded": "gpt-4o",
+    "usage": {
+      "total_tokens": 42,
+    },
+  },
+  "text": "RESP-PROBEshell{"cmd":"RESP-ARGS"}REASONING-PROBE",
+}
+`;
+
+exports[`SL-01 Chat 对照基线（REQ-V2bA-04a） > 请求投影的快照（改动前后必须逐字节相同） 1`] = `
+{
+  "direction": "request",
+  "malformed": false,
+  "meta": {
+    "declared_required": {
+      "shell": [
+        "cmd",
+      ],
+    },
+    "declared_tools": [
+      "shell",
+    ],
+    "model_requested": "gpt-4o",
+  },
+  "text": "SYS-PROBE
+USER-PROBE
+ok
+shell
+{"cmd":"ARGS-PROBE"}
+TOOLOUT-PROBE
+legacy
+{"a":"LEGACY-PROBE"}
+TOPLEVEL-SYSTEM-PROBE
+[{"type":"function","function":{"name":"shell","parameters":{"type":"object","required":["cmd"]}}}]
+x-custom: HDR-PROBE",
+  "transport": "stream",
+}
+`;

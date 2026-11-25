@@ -173,12 +173,15 @@ describe("SL-04 流式包裹：改写只替换 result，不吞 checker 回传窗
 // ④ 注入 map 只影响被点名 checker（真 registry checker，零 checker mock）
 // ─────────────────────────────────────────────────────────────────────────────
 describe("SL-04 GatewayConfig.checkerBudgetMs：注入只影响被点名 checker（AC-V2a-27③）", () => {
-  it("点名 egress-secret-scan：请求路径唯一 checker 被改写为 checker_timeout", () => {
+  it("点名 egress-secret-scan：请求路径上被点名者改写为 checker_timeout，未被点名者照常", () => {
     const core = coreWith(new Map([["egress-secret-scan", 0.0001]]));
     const { inputs } = core.scanRequest(benignReqBody, {}, "non-stream");
-    expect(inputs).toHaveLength(1);
-    expect(inputs[0]!.checkerId).toBe("egress-secret-scan");
-    expect(inputs[0]!.result).toEqual({ verdict: "error", evidence: [], reason: "checker_timeout" });
+    // 0.6.0：请求侧现有两个 checker（dangerous-command-scan 声明了 sides:["request","response"]）
+    expect(inputs.map((i) => i.checkerId)).toEqual(["dangerous-command-scan", "egress-secret-scan"]);
+    const egress = inputs.find((i) => i.checkerId === "egress-secret-scan")!;
+    expect(egress.result).toEqual({ verdict: "error", evidence: [], reason: "checker_timeout" });
+    const dcs = inputs.find((i) => i.checkerId === "dangerous-command-scan")!;
+    expect(dcs.result.reason).toBeUndefined();
   });
 
   it("点名未注册 id：egress 不受任何影响（clean 照常）→ 覆盖按 checkerId 键生效", () => {

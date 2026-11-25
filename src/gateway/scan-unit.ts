@@ -1,4 +1,6 @@
 import type { ScanUnit, Transport } from "../shared/types.ts";
+import type { Projection, WireFormat } from "./protocols/types.ts";
+import { protocolFor } from "./protocols/table.ts";
 import { exceedsWindowOverflowLimit } from "./window-store.ts";
 
 /**
@@ -190,22 +192,64 @@ function collectRequestBodyParts(parsed: Record<string, unknown>, meta: Record<s
   return parts;
 }
 
+/**
+ * SL-02/SL-03/SL-04（REQ-V2bA-01/02）：按协议线格式取得投影结果。
+ *
+ * 契约：`format` 缺席 → 返回 null，调用方沿用既有 Chat 投影，既有行为**逐字节不变**
+ * （由 tests/unit/gateway/protocols/chat-baseline.test.ts 的快照钉住）。
+ * 流式逐帧走 `projectFrame`（SSE 帧与整体响应形态不同，不能共用 `projectResponse`）。
+ *
+ * 返回的 `format` 非空即"本次走了协议投影器"，调用方只需据此写 meta——
+ * 这样构造器里的分支数不随协议数量增长（Gate 3 复杂度门的实测教训：
+ * 第一版把这套分派内联进两个构造器，CCN 从 5/7 涨到 9/12）。
+ */
+interface ProtocolProjection {
+  readonly text: string;
+  readonly derived: boolean;
+  readonly format: WireFormat;
+}
+
+function projectVia(direction: "request" | "response", parsed: Record<string, unknown>, format: WireFormat | undefined, transport: Transport, requestedModel: string | null): ProtocolProjection | null {
+  const proto = format === undefined ? undefined : protocolFor(format);
+  if (proto === undefined) return null;
+  const p = direction === "request" ? proto.projectRequest(parsed) : transport === "stream" ? proto.projectFrame(parsed) : proto.projectResponse(parsed, requestedModel);
+  return { text: p.parts.join("\n"), derived: p.derived, format: format as WireFormat };
+}
+
+/** 协议投影的分派结果落 meta（wire_format / derived_text）。 */
+function markProtocolMeta(meta: Record<string, unknown>, p: ProtocolProjection): void {
+  meta.wire_format = p.format;
+  if (p.derived) meta.derived_text = true;
+}
+
+/** 请求侧文本：协议投影优先；否则沿用既有 Chat 展平（含声明面收集）。 */
+function requestTextFor(parsed: Record<string, unknown>, meta: Record<string, unknown>, proto?: { readonly format: WireFormat }): string {
+  const direct = projectVia("request", parsed, proto?.format, "non-stream", null);
+  if (direct !== null) {
+    markProtocolMeta(meta, direct);
+    // 声明面（tools）仍按既有口径收集：tool-call-shape 依赖 declared_tools
+    if (Array.isArray(parsed.tools)) collectDeclaredMeta(parsed.tools, meta);
+    return direct.text;
+  }
+  // messages 展平为 text；extra_headers 里的 auth 头跳过（AC-VETO-002-06）
+  return collectRequestBodyParts(parsed, meta).join("\n");
+}
+
 /** 请求侧：把 body JSON 展平为 text 投影 + meta。 */
 export function buildRequestScanUnit(
   body: string,
   parsed: Record<string, unknown> | null,
   _headers: Readonly<Record<string, string>>,
   transport: Transport,
+  proto?: { readonly format: WireFormat },
 ): ScanUnit {
   const meta: Record<string, unknown> = {};
-  if (parsed && typeof parsed === "object") {
-    if (typeof parsed.model === "string") meta.model_requested = parsed.model;
-    // messages 展平为 text；extra_headers 里的 auth 头跳过（AC-VETO-002-06）
-    const parts = collectRequestBodyParts(parsed, meta);
-    return withDecoded({ direction: "request", transport, text: parts.join("\n"), meta });
+  if (!parsed || typeof parsed !== "object") {
+    // parsed 失败：原样 text，标记 malformed
+    return withDecoded({ direction: "request", transport, text: body, meta, malformed: true });
   }
-  // parsed 失败：原样 text，标记 malformed
-  return withDecoded({ direction: "request", transport, text: body, meta, malformed: true });
+  if (typeof parsed.model === "string") meta.model_requested = parsed.model;
+  return withDecoded({ direction: "request", transport, text: requestTextFor(parsed, meta, proto), meta });
 }
 
 interface DeclaredTool {
@@ -259,7 +303,18 @@ export function declaredToolsMeta(meta: Readonly<Record<string, unknown>>): Reco
   const out: Record<string, unknown> = {};
   if (meta.declared_tools !== undefined) out.declared_tools = meta.declared_tools;
   if (meta.declared_required !== undefined) out.declared_required = meta.declared_required;
+  // v2b-A：线格式必须随声明面一路下传到响应侧。
+  // 这是第三个"逐键构造导致静默丢弃"的点（前两个见 P1-2）：请求侧识别出了格式，
+  // 若不带上这一键，响应侧就永远走既有 Chat 投影，Anthropic 的 content[] 与
+  // Responses 的 output[] 依然不可见——那正是本 sprint 要消灭的那一半缺口。
+  if (meta.wire_format !== undefined) out.wire_format = meta.wire_format;
   return out;
+}
+
+/** 从响应侧 meta 里取线格式（缺席 = 走既有 Chat 投影）。 */
+function wireFormatOfMeta(meta: Readonly<Record<string, unknown>> | undefined): { readonly format: WireFormat } | undefined {
+  const f = meta?.wire_format;
+  return typeof f === "string" ? { format: f as WireFormat } : undefined;
 }
 
 /** 响应侧：SSE data 或 body 文本 → 扫描单元；已解析 JSON 时提取 model / usage / finish_reason。 */
@@ -269,7 +324,11 @@ export function buildResponseScanUnit(
   requestedModel: string | null,
   transport: Transport,
   declaredMeta?: Readonly<Record<string, unknown>>,
+  proto?: { readonly format: WireFormat },
 ): ScanUnit {
+  // v2b-A：调用方未显式给协议时，按声明面里的 wire_format 走（这是响应侧的唯一接线点，
+  // 三个调用点都只需经过 declaredToolsMeta 就会自动带上）。
+  const effectiveProto = proto ?? wireFormatOfMeta(declaredMeta);
   // SL-01/D-12：声明面（declared_tools/declared_required）随单元下传；先展开，
   // 让下方解析出的结构性字段（model/usage/finish_reason）保持优先。
   const meta: Record<string, unknown> = { ...declaredMeta };
@@ -279,11 +338,28 @@ export function buildResponseScanUnit(
   }
   if (typeof parsed.model === "string") meta.model_responded = parsed.model;
   if (parsed.usage && typeof parsed.usage === "object") meta.usage = parsed.usage;
+  return withDecoded({ direction: "response", transport, text: responseTextFor(parsed, meta, effectiveProto, transport, requestedModel), meta });
+}
+
+/** 响应侧文本：协议投影优先；否则沿用既有 Chat 展平（choices 逐段空串拼接）。 */
+function responseTextFor(
+  parsed: Record<string, unknown>,
+  meta: Record<string, unknown>,
+  proto: { readonly format: WireFormat } | undefined,
+  transport: Transport,
+  requestedModel: string | null,
+): string {
+  const direct = projectVia("response", parsed, proto?.format, transport, requestedModel);
+  if (direct !== null) {
+    markProtocolMeta(meta, direct);
+    if (typeof parsed.stop_reason === "string") meta.finish_reason = parsed.stop_reason;
+    return direct.text;
+  }
   // 提取内容文本（choices[*].delta/message.content + **tool_calls/function_call.arguments**）
   const parts: string[] = [];
   const choiceMeta = collectChoiceParts(parsed, parts);
   if (choiceMeta.finish_reason !== undefined) meta.finish_reason = choiceMeta.finish_reason;
-  return withDecoded({ direction: "response", transport, text: parts.join(""), meta });
+  return parts.join("");
 }
 
 // ── SL-01（AC-V2a-01）：流式 tool-call arguments 跨 chunk 归并 ─────────────────

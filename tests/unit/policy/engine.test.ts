@@ -4,7 +4,7 @@ import {
   pickScenario,
   type PolicyInput,
 } from "../../../src/policy/engine.ts";
-import { mapBySpec, mapVerdictToAction, V1_MAPPING } from "../../../src/policy/mapping.ts";
+import { mapBySpec, mapBySpecWithRules, mapVerdictToAction, V1_MAPPING } from "../../../src/policy/mapping.ts";
 import type { CheckerResult } from "../../../src/shared/types.ts";
 
 // @test REQ-VETO-006
@@ -74,5 +74,47 @@ describe("SL-05 policy engine (REQ-VETO-006)", () => {
     expect(pickScenario({ side: "response", transport: "stream", deliveredChunks: 0 })).toBe("3");
     expect(pickScenario({ side: "response", transport: "stream", deliveredChunks: 1 })).toBe("4");
     expect(pickScenario({ side: "response", transport: "stream", deliveredChunks: 41 })).toBe("4");
+  });
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 0.6.0：dangerous-command-scan 规则级分级
+// ─────────────────────────────────────────────────────────────────────────────
+describe("0.6.0 规则级分级：只有语义封闭的规则能升级为 block", () => {
+  const findingInput = (rules: readonly string[]): PolicyInput => ({
+    checkerId: "dangerous-command-scan",
+    safetyClass: false,
+    threat: "T2a",
+    result: {
+      verdict: "finding",
+      evidence: rules.map((r) => ({ checker: "dangerous-command-scan", threat: "T2a", verdict: "finding" as const, rule_id: r })),
+    },
+  });
+
+  it("教程/测试里会合法出现的规则 → 仍只告警（不得阻断正常开发会话）", () => {
+    for (const rule of ["remote-pipe-exec", "raw-ip-download", "powershell-download-exec", "reverse-shell"]) {
+      expect(decide([findingInput([rule])]).action, rule).toBe("warn");
+    }
+  });
+
+  it("凭据文件读取（语义封闭）→ block", () => {
+    expect(decide([findingInput(["credential-file-read"])]).action).toBe("block");
+  });
+
+  it("混合命中：只要含可阻断规则即 block（不被同批观测命中稀释）", () => {
+    expect(decide([findingInput(["remote-pipe-exec", "credential-file-read", "raw-ip-download"])]).action).toBe("block");
+  });
+
+  it("无命中 → allow；checker 级映射未被改写（V1_MAPPING 仍是 warn）", () => {
+    expect(decide([{ checkerId: "dangerous-command-scan", safetyClass: false, threat: "T2a", result: cr("clean") }]).action).toBe("allow");
+    expect(V1_MAPPING["dangerous-command-scan"]!.finding).toBe("warn");
+  });
+
+  it("mapBySpecWithRules：非 finding / 已是 block 的输入不受 evidence 影响", () => {
+    const spec = { id: "dangerous-command-scan", safetyClass: false };
+    expect(mapBySpecWithRules(spec, "clean", [{ rule_id: "credential-file-read" }], new Set(["credential-file-read"]))).toBe("allow");
+    const egress = { id: "egress-secret-scan", safetyClass: true };
+    expect(mapBySpecWithRules(egress, "finding", [], new Set(["credential-file-read"]))).toBe("block");
   });
 });

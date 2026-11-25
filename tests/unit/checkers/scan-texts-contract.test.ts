@@ -59,6 +59,13 @@ const ALLOWLIST: readonly Exemption[] = [
     reason: "metering 口径（字符/token 比估算），非安全扫描（SL-11/REQ-V2a-04）",
   },
   {
+    file: "dangerous-command-scan.ts",
+    // `m[0]` 是匹配结果上的 text，不是扫描单元字段。扫描文本一律经 scanTexts(unit) 取得，
+    // 双投影（原文 + 转义还原）两遍都扫（见 scanTextsWithText / primaryProjection）。
+    pattern: /^(?:m|hit)\.text$/, 
+    reason: "命中原文用于去重键与 finding 归并，非扫描输入（scanTexts 双投影已覆盖）",
+  },
+  {
     file: "tool-call-shape.ts",
     // `chunk.text.length` in stream checker —— window overflow 累积字节计数，
     // `chunk.text` 用于流式文本累积（非安全判定）；实际 tool call 提取与三子规则

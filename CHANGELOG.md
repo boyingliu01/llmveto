@@ -4,6 +4,157 @@ All notable changes to this project are documented in this file. The format is a
 take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] - 2026-11-24
+
+### Added
+
+- **Claude Code, Codex and promptfoo onboarding (v2b-A).** All three enter the managed-config
+  enumeration, so `doctor` writes and drift-checks their endpoint and evidence records carry a
+  proper `client`. The far larger half of this release is *why* that alone would not have helped:
+  the three clients speak three different wire formats and the scan unit only understood one.
+- **Anthropic Messages and OpenAI Responses projection**, non-streaming and streaming. Measured
+  before the change, a credential in `system` blocks, `tool_use.input`, `tool_result`,
+  `instructions`, `input[].content` or `function_call_output` travelled to the upstream with
+  HTTP 200 and `action_taken=warned`; Responses responses projected to the empty string, as did
+  every Responses and Anthropic SSE frame. Probe matrix went from 11/22 to 22/22, and the
+  end-to-end test now asserts `blocked_before_forward` with zero upstream requests for each.
+- **Two-axis shape decision.** Recognition (`known`/`unknown`) and coverage
+  (`full`/`partial`/`vacuous`) are separate, and coverage compares payload paths present in the raw
+  body against those the projector reports handling. A projector that forgets a field is therefore
+  detectable, which self-reporting cannot achieve. New evidence reasons: `shape_unrecognized`,
+  `shape_known_empty`, `shape_partial_coverage`.
+- **`doctor` reports a closed state per client** (`not_installed`, `not_configured`, `drift`,
+  `coverage_missing`, `coverage_unknown`, `write_failed`, `coverage_ok`) instead of one aggregate
+  drift line, because "configured" and "scannable" fail differently. Unknown carries its own exit
+  code rather than being folded into a definite answer.
+- **`scripts/ccn-report.cjs` and `.ccn-baseline.json`** — Gate 3 refuses to produce a complexity
+  verdict without the verifier, and the repository never had one, so pre-existing debt was graded
+  as brand-new code. Complexity now has one authority (lizard); the verifier only re-cuts bodies
+  that lost brace balance and hands them back to lizard.
+
+### Changed
+
+- Client wire format is declared as data in `src/shared/client-wire-format.ts`, because adapters
+  may not import the gateway and the gateway may not import adapters; `doctor` joins the two.
+- Canary injection is bounded to the chat wire format. The two new routes sit inside the injection
+  domain so they record `inject_skipped` rather than being skipped as unmanaged — "not in the
+  domain" and "in the domain but not injected" are different facts, and only the second is observable.
+
+### Security
+
+- **This release closes a live gap rather than adding a feature.** With Anthropic Messages and
+  OpenAI Responses traffic, the gateway previously reported successful vetting while scanning almost
+  nothing: `opencode/anthropic` had been declared managed since v1 on that basis. The end-to-end
+  tests assert zero upstream requests for the credential probes, and reverse probes (removing the
+  projection branches) turn those assertions red — a test that cannot fail is not evidence.
+
+### Known limitations
+
+- Canary injection is chat-only, so T1a's positive retention evidence is unavailable on the two new
+  routes. `docs/protocol-capability-matrix.md` states exactly what is lost.
+- Unknown wire shapes fail closed only on managed routes; a user-created prefix is recorded but not
+  blocked. Legal empty requests (`messages: []`, a body with only `model`) keep passing, because
+  canary injection's own branch 4 has that shape.
+- None of the three clients is installed on the development machine, so adapters are derived from
+  each vendor's published documentation (`docs/protocol-field-provenance.md`) and verified against
+  real adapter artifacts plus a mock upstream, not a live client binary.
+
+### Deferred
+
+- v2b-B billing reconciliation (`report` CLI) — the official price basis data source is still empty.
+- v2b-C fingerprint patrol with provider trust score — upstream license unverified, and active
+  probing conflicts with the minimal-exposure promise.
+
+## [0.6.1] - 2026-11-24
+
+### Fixed
+
+- **`pem-private-key` blocked every discussion of PEM format.** The rule matched the header
+  (`-----BEGIN … PRIVATE KEY-----`) and nothing else, so this repository's own fixture — present
+  since 2026-09-15 — made the gateway refuse the sessions that work on it (measured: a request
+  containing only that line returned 502). A PEM hit now requires a block shape: header and `END`
+  on different lines. Real bodies are line-laid-out; fixtures and format discussions write them
+  inline. Three other criteria (body length, "has content", multi-line block) were measured and
+  rejected — each flipped either the fixture or the frozen `AC-VETO-003-01` sample.
+
+### Added
+
+- **`scripts/canary-replay.mjs` — the G-CANARY replay is back (P1-1).** The v2a recording was
+  overwritten by probe traffic and the item sat as an accepted residual. The script rebuilds the
+  corpus from this machine's 11 DSH session recordings (66 exchanges, gitignored under
+  `var/canary-replay/`) and replays three criteria: finish_reason no migration 66/66,
+  provider-reject delta 0, append-only 66/66 → PASS. A patched inject that rewrites existing bytes
+  turns the verdict FAIL, so the harness is not a rubber stamp. It drives a loopback mock upstream,
+  so it measures the body the gateway forwards, not the provider's own refusal rate.
+
+## [0.6.1] - 2026-11-24
+
+### Fixed
+
+- **`pem-private-key` blocked every discussion of PEM format.** The rule matched the header
+  (`-----BEGIN … PRIVATE KEY-----`) and nothing else, so this repository's own fixture — present
+  since 2026-09-15 — made the gateway refuse the sessions that work on it (measured: a request
+  containing only that line returned 502). A PEM hit now requires a **block shape**: header and
+  `END` on different lines. Real bodies are line-laid-out; fixtures and format discussions write
+  them inline. Three other criteria were measured and rejected — body length (the truncated sample
+  `MIIEow...` has 6 legal characters, indistinguishable from the fixture), "has any content" (the
+  fixture's `payload` counts as content), and multi-line block (it flips the frozen
+  `AC-VETO-003-01` sample to clean).
+- The T1b corpus entry that expressed the shell form now carries `expected: clean` and is excluded
+  from the "detection rate = 100%" denominator; a dedicated block-form case covers the positive
+  path instead. Encoding a newline inside a YAML-subset scalar is not possible, so the fixture
+  states the semantics rather than contorting the format.
+
+### Added
+
+- **`scripts/canary-replay.mjs` — the G-CANARY replay is back (P1-1).** The v2a recording was
+  overwritten by probe traffic and the item sat as an accepted residual. The script rebuilds the
+  corpus from this machine's 11 DSH session recordings (66 exchanges, gitignored under
+  `var/canary-replay/`) and replays three criteria: finish_reason no migration 66/66,
+  provider-reject delta 0, append-only 66/66 → PASS. `tests/unit/canary-replay.test.ts` pins both
+  directions: a patched `inject` that rewrites existing bytes turns the verdict FAIL, so the
+  harness is not a rubber stamp. It drives a loopback mock upstream, so it measures the body the
+  gateway forwards, not the provider's own refusal rate.
+
+## [0.6.0] - 2026-11-24
+
+### Added
+
+- **`dangerous-command-scan` covers the request side** (`sides: ["request", "response"]`). Measured
+  on real DSL sessions on 2026-11-24, every credential read travelled the request path — an upstream
+  told the agent to call a `read` tool with `path: ~/.ssh/id_ed25519` — and the response-only
+  checker never saw it. New optional `CheckerSpec.sides`; `side` stays the primary side.
+- **Three rules** for shapes the old set could not express: `credential-file-read` (reading
+  `~/.ssh/*`, `.env`, `~/.aws/credentials`, `.npmrc`, … through a tool argument or `cat`),
+  `download-then-execute` (`curl -o x … && chmod +x x && ./x`, matched in two bounded passes so the
+  regex cannot backtrack catastrophically), and `reverse-shell-pipe` (`cat secret | nc host port`).
+  `raw-ip-download` now captures the whole URL so its offsets point at the real text.
+- **Rule-level action grading** (`mapBySpecWithRules` + exported `BLOCKING_RULE_IDS`):
+  `credential-file-read` maps to `block`; every other rule stays observational. Per-rule finding cap
+  `MAX_FINDINGS_PER_RULE = 5`.
+- **Cross-unit dedup** for the checker: one dedup state per exchange, shared between the request and
+  response paths, so a response echoing a command already seen in the request is not reported twice.
+
+### Fixed
+
+- **A regex loop that could exhaust the heap.** `scanOne` advanced its cursor with
+  `if (m.index === re.lastIndex) re.lastIndex++`, which is never true after a successful `exec`
+  (the engine has already advanced it), and any branch that skipped the push left `lastIndex` at 0
+  while still matching. A 22-byte input was enough to spin forever and OOM the worker. Replaced with
+  `String.prototype.matchAll`, which owns its cursor. `dangerous-command-scan` previously emitted a
+  single finding per rule per unit; it now reports each distinct hit (bounded by the per-rule cap).
+- **Duplicate findings amplified by long sessions.** A DSL request resends its full tool-result
+  history, so one rule produced up to 40 findings for the same exchange.
+
+### Security
+
+- **Regression of the 2026-11-24 incident.** Enabling the checker on the request side without
+  change its action semantics blocked this project's own development session six times
+  (`blocked_before_forward`, 502, a 645 KB request). The trigger was ordinary work: the conversation
+  was about security, so its history quoted `curl … | bash`, `IEX`, and the repository's fixtures.
+  Tests pinned both directions afterwards: a tutorial command reaches the upstream (`warned`), a
+  credential read does not (`blocked_before_forward`, upstream receives zero requests).
+
 ## [0.4.0] - 2026-11-19
 
 ### Added

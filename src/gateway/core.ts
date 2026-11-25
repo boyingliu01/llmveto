@@ -16,9 +16,13 @@ import {
   declaredToolsMeta,
 } from "./scan-unit.ts";
 import { encodeVetoEvent, parseSseFrames, tryParseJson, type SseFrame } from "./sse-tee.ts";
+import type { WireFormat } from "./protocols/types.ts";
+import { protocolFor } from "./protocols/table.ts";
+import { shapeVerdict } from "./protocols/outcome.ts";
 import { decide, pickScenario, pickTopReasonFromErrorFindings, type BehaviorScenario } from "../policy/engine.ts";
 import type { PolicyInput } from "../policy/engine.ts";
 import { resolveActionTaken } from "../policy/mapping.ts";
+import { directionsOf } from "../shared/types.ts";
 import type {
   CheckerResult,
   CheckerSpec,
@@ -36,6 +40,7 @@ import type { ActionTaken } from "../shared/types.ts";
 import { CanaryStore } from "../canary/store.ts";
 import { deriveSessionKey } from "../canary/session-key.ts";
 import { inject } from "../canary/inject.ts";
+import { checkDangerousCommandWithDedup, createDangerousCommandDedup } from "../checkers/dangerous-command-scan.ts";
 
 /**
  * @test REQ-VETO-002
@@ -96,7 +101,12 @@ export const REPROJECTION_META_KEY = "llmveto_reprojected" as const;
  * `dsh/cliproxy` 条目），故注入/串流检出按该单一路由键生效。集成测试断言
  * CANARY_MANAGED_ROUTES = adapter 推导集合 ∪ 本集合，adapter 侧漂移仍会被抓到。
  */
-export const MANUAL_CANARY_MANAGED_ROUTES: ReadonlySet<string> = Object.freeze(new Set(["dsh/cliproxy"]));
+export const MANUAL_CANARY_MANAGED_ROUTES: ReadonlySet<string> = Object.freeze(
+  // v2b-A（REQ-V2bA-13）：两条新路由**在注入判定域内**，但对应的线格式不支持注入——
+  // 所以它们会以 inject_skipped 被记账，而不是被当成"非受管路径"静默跳过。
+  // "不在域内"与"在域内但不注入"是两件不同的事：前者无声，后者可观测。
+  new Set(["dsh/cliproxy", "claude/anthropic", "codex/openai"]),
+);
 
 /** REQ-V2a-11/D-05 注入判定域（路由键 client/provider）：gateway 层镜像常量——architecture.yaml 禁 import adapters，与 adapters 层 MANAGED_CONFIG_IDS 的同源一致性由集成测试以真实 adapter 产物推导钉死（canary-inject 防漂移断言）。 */
 export const CANARY_MANAGED_ROUTES: ReadonlySet<string> = Object.freeze(new Set([
@@ -120,6 +130,9 @@ function createCanaryStore(cfg: GatewayConfig): CanaryStore | null {
   return cfg.canaryRegistryPath !== undefined ? new CanaryStore(cfg.canaryRegistryPath) : null;
 }
 
+/** 0.6.0：需要在一次请求内跨单元去重的 checker（同一命令被 DSH 全历史重放 20 次是常态）。 */
+const DEDUP_CHECKER_IDS: ReadonlySet<string> = Object.freeze(new Set(["dangerous-command-scan"]));
+
 export class GatewayCore {
   /** canary：D-02 单写者 store（null = 未配置，判定域外）；计数面恒在（进程内，durable 聚合属 SL-12），未配置全零。 */
   readonly canary: CanaryStore | null;
@@ -133,7 +146,7 @@ export class GatewayCore {
   private checkersIncludingInjected(side: Direction): readonly CheckerSpec[] {
     const extra = this.cfg.extraCheckers;
     if (extra === undefined || extra.length === 0) return checkersFor(side);
-    return [...checkersFor(side), ...extra.filter((c) => c.side === side)];
+    return [...checkersFor(side), ...extra.filter((c) => directionsOf(c).includes(side))];
   }
 
   /**
@@ -146,22 +159,40 @@ export class GatewayCore {
   }
 
   /** 请求侧扫描 + policy → action；返回 action 与 evidence findings。 */
-  scanRequest(bodyText: string, headers: Readonly<Record<string, string>>, transport: "stream" | "non-stream"): {
+  scanRequest(
+    bodyText: string,
+    headers: Readonly<Record<string, string>>,
+    transport: "stream" | "non-stream",
+    cmdDedup: ReturnType<typeof createDangerousCommandDedup> = createDangerousCommandDedup(),
+    shape?: { readonly format: WireFormat } | undefined,
+    preParsed?: Record<string, unknown> | null,
+  ): {
     inputs: PolicyInput[];
     scanUnit: ScanUnit;
   } {
-    const parsed = tryParseJson(bodyText);
-    const scanUnit = buildRequestScanUnit(bodyText, parsed, headers, transport);
+    // 调用方已解析过就复用——同一份 body 不解析两遍（G2 512KB 档的实测教训）。
+    const parsed = preParsed === undefined ? tryParseJson(bodyText) : preParsed;
+    const scanUnit = buildRequestScanUnit(bodyText, parsed, headers, transport, shape);
     // D-09 默认接线（AC-V2a-27①）：请求体路径按 body 字节数走 G3 分档。
     const defaultBudget = g3BudgetForBodyBytes(Buffer.byteLength(bodyText, "utf8"));
     const inputs: PolicyInput[] = [];
     for (const spec of this.checkersIncludingInjected("request")) {
       const fn = spec.runNonStream as NonStreamChecker | undefined;
       if (!fn) continue;
-      const r = safeRun(fn, scanUnit, this.budgetFor(spec.id, defaultBudget));
+      const r = DEDUP_CHECKER_IDS.has(spec.id)
+        ? safeRun((u: ScanUnit) => checkDangerousCommandWithDedup(u, cmdDedup), scanUnit, this.budgetFor(spec.id, defaultBudget))
+        : safeRun(fn, scanUnit, this.budgetFor(spec.id, defaultBudget));
       inputs.push({ checkerId: spec.id, safetyClass: spec.safetyClass, threat: spec.threat, result: r });
     }
     return { inputs, scanUnit };
+  }
+
+  /** 危险命令去重入口（0.6.0）：请求侧与响应侧共用一份状态；其它 checker 不受影响。 */
+  scanWithDangerousCommandDedup(unit: ScanUnit, dedup: ReturnType<typeof createDangerousCommandDedup>): PolicyInput[] {
+    const spec = this.checkersIncludingInjected(unit.direction).find((c) => c.id === "dangerous-command-scan");
+    if (spec === undefined) return [];
+    const result = safeRun((u: ScanUnit) => checkDangerousCommandWithDedup(u, dedup), unit, this.budgetFor(spec.id, G1_PER_CHUNK));
+    return [{ checkerId: spec.id, safetyClass: spec.safetyClass, threat: spec.threat, result }];
   }
 
   /** 响应侧非流式扫描 + policy。 */
@@ -302,10 +333,19 @@ function reasonOf(findings: readonly EvidenceFinding[], gatewayReasons?: readonl
 interface CanaryStep { readonly forwardedBody: string; readonly meta: CanaryRequestMeta | null; readonly gatewayReason?: "registry_unavailable" | "inject_skipped"; }
 
 /** canary 注入编排（D-04，§4.4 时序 deriveSessionKey → assign → snapshot → inject）：前置 = 受管路径且未 block（调用点保证）。registry 不可用 → 不注入不匹配 + reason + 计数（fail-open 可观测，§4.3 不得静默）。 */
-function orchestrateCanary(core: GatewayCore, req: { body: string; headers: Record<string, string>; client: string; providerId: string }): CanaryStep {
+function orchestrateCanary(
+  core: GatewayCore,
+  req: { body: string; headers: Record<string, string>; client: string; providerId: string; wireFormat?: WireFormat },
+): CanaryStep {
   const store = core.canary;
   if (store === null || !CANARY_MANAGED_ROUTES.has(`${req.client}/${req.providerId}`)) {
     return { forwardedBody: req.body, meta: null }; // 判定域外：未配置或非受管路径（≠ inject_skipped，零计数零字段）
+  }
+  // SL-12（REQ-V2bA-13 / D4）：注入只对 chat 线格式生效。
+  // 两种新协议上**显式不注入并记账**——"没注入"必须是可观测事实，不能是沉默的缺口。
+  if (req.wireFormat !== undefined && !supportsCanaryInjection(req.wireFormat)) {
+    core.canaryMetrics.inject_skipped += 1;
+    return { forwardedBody: req.body, meta: { canary_injected: false }, gatewayReason: "inject_skipped" };
   }
   if (store.loadStatus.status !== "ok") {
     core.canaryMetrics.registry_unavailable += 1;
@@ -345,16 +385,41 @@ export interface ChatOutcome {
 }
 
 /** 请求侧 block 早退：canary 编排尚未执行 ⇒ 无 gateway reason 可携带（恒空）。 */
-function blockedBeforeForward(reqFindings: EvidenceFinding[], degraded: boolean, body: string): ChatOutcome {
+/**
+ * 网关侧 reason 清单。
+ *
+ * 形状降级（受管路由上已阻断，走到这说明是非受管路径）与 canary 原因可能同时存在；
+ * 两者都是"网关没能覆盖这段流量"的事实，都要可查。
+ */
+function gatewayReasonsOf(canaryReason: string | undefined, shapeReason: string | undefined): readonly string[] | undefined {
+  const out = [shapeReason, canaryReason].filter((r): r is string => r !== undefined);
+  return out.length === 0 ? undefined : out;
+}
+
+/** 非受管路由的形状判定占位（不识别、不记 reason、不阻断）。 */
+const NOTHING_SHAPE = Object.freeze({ format: null, reason: null, block: false }) as {
+  readonly format: null;
+  readonly reason: null;
+  readonly block: false;
+};
+
+/** 阻断的 action 序列（block 恒胜；degraded 仅作附加事实）。 */
+function blockActions(degraded: boolean): readonly ("blocked_before_forward" | "degraded_observational")[] {
+  return degraded ? ["blocked_before_forward", "degraded_observational"] : ["blocked_before_forward"];
+}
+
+/**
+ * 请求侧阻断。
+ * @param overrideReason 覆盖顶层 reason（SL-05 的形状判定用：形状阻断没有 finding，
+ *   若沿用 `reasonOf(findings)` 就会写出空 reason——"阻断了但说不出为什么"正是本项目要避免的形态）
+ */
+function blockedBeforeForward(reqFindings: EvidenceFinding[], degraded: boolean, body: string, overrideReason?: string): ChatOutcome {
   return {
     status: 502,
     body: JSON.stringify({ error: { code: "llmveto:rejected" } }),
-    actionTaken: resolveActionTaken([
-      "blocked_before_forward",
-      ...(degraded ? (["degraded_observational"] as const) : []),
-    ]),
+    actionTaken: resolveActionTaken(blockActions(degraded)),
     findings: reqFindings,
-    reason: reasonOf(reqFindings),
+    reason: overrideReason ?? reasonOf(reqFindings),
     forwardedBody: body, canaryMeta: null, // block 前置：编排不进入，链上 sha = 客户端原体
     deliveredChunks: 0,
     scenario: "1",
@@ -403,6 +468,21 @@ function responseMetaFor(canaryMeta: CanaryRequestMeta | null, declaredMeta: Rec
 }
 
 /**
+ * 0.6.0：把「共享去重」的第二遍扫描结果与常规响应侧结果合并——只替换
+ * dangerous-command-scan 这一项（其它 checker 结果原样）。若注入的 checker 集合里
+ * 没有该 checker（登记域外），则保留常规结果不动。
+ */
+function withDedupScan(
+  _meta: Record<string, unknown>,
+  regular: readonly PolicyInput[],
+  dedup: readonly PolicyInput[],
+): readonly PolicyInput[] {
+  if (dedup.length === 0) return regular;
+  const id = dedup[0]!.checkerId;
+  return [...regular.filter((i) => i.checkerId !== id), ...dedup];
+}
+
+/**
  * 流式扫描的上下文解析（D-09）：advance 缺省为 true；只有 advance 且 windows 本身是
  * WindowStore 时才启用窗口账本；归并重投影（advance=false）给单元打 reprojected 标记，
  * 让 checker 知道这段文本是"已消费内容的重放"。
@@ -428,13 +508,40 @@ interface NonStreamResponseParams {
   readonly forwardedBody: string;
   readonly canaryMeta: CanaryRequestMeta | null;
   readonly gwReasons: readonly string[] | undefined;
+  readonly cmdDedup: ReturnType<typeof createDangerousCommandDedup>;
+  /** 该请求是否走在受管路由上（响应侧闸门据此决定阻断还是只记录）。 */
+  readonly managedRoute: boolean;
+}
+
+/**
+ * 响应侧的两轴判定（REQ-V2bA-14「响应侧同样跑两轴」，code-walkthrough R2 MAJOR-1）。
+ *
+ * 响应侧此前只接了投影、没有覆盖闸门：受管路由上若投影片段为空、或内容落在未投影字段，
+ * 既无 `shape_*` reason 也不 fail-closed。响应同样是"上游写给 agent 的东西"，
+ * 它没有理由比请求侧更宽。非受管路由按既有分权只记录不阻断。
+ */
+function responseShapeReason(p: NonStreamResponseParams): string | undefined {
+  const fmt = p.responseMeta.wire_format;
+  // 只对**新协议**启用响应侧闸门：Chat 响应的既有语义（上游可能带各种字段）
+  // 不在本 sprint 的改动面内，贸然收紧会误伤存量流量。两种新协议没有这样的历史包袱。
+  if (fmt !== "anthropic-messages" && fmt !== "openai-responses") return undefined;
+  // 受管标志必须与请求侧同源（R3：此前硬编码 true，使任何新协议响应都 502，
+  // 与非受管"只记录不阻断"的分权直接矛盾）。
+  return shapeVerdict("response", tryParseJson(p.text), null, p.managedRoute === true).reason ?? undefined;
 }
 
 function handleNonStreamResponse(p: NonStreamResponseParams): ChatOutcome {
   const respInputs = p.core.scanResponseNonStream(p.text, p.requestedModel, p.responseMeta);
-  const respDecision = decide([...p.requestInputs, ...respInputs]);
-  const allFindings = [...p.reqFindings, ...flattenFindings(respInputs)];
-  if (respDecision.action === "block") {
+  // 0.6.0：与请求侧共享去重的第二遍（响应复述请求里的同一命令不再二次告警）。
+  const dedupInputs = p.core.scanWithDangerousCommandDedup(
+    buildResponseScanUnit(p.text, tryParseJson(p.text), p.requestedModel, "non-stream", p.responseMeta),
+    p.cmdDedup,
+  );
+  const combinedResp = withDedupScan(p.responseMeta, respInputs, dedupInputs);
+  const shapeReason = responseShapeReason(p);
+  const respDecision = decide([...p.requestInputs, ...combinedResp]);
+  const allFindings = [...p.reqFindings, ...flattenFindings(combinedResp)];
+  if (respDecision.action === "block" || shapeReason !== undefined) {
     return {
       status: 502,
       body: "",
@@ -443,7 +550,7 @@ function handleNonStreamResponse(p: NonStreamResponseParams): ChatOutcome {
         ...(respDecision.degraded ? (["degraded_observational"] as const) : []),
       ]),
       findings: allFindings,
-      reason: reasonOf(allFindings, p.gwReasons),
+      reason: reasonOf(allFindings, gatewayReasonsOf(shapeReason, p.gwReasons?.[0])),
       forwardedBody: p.forwardedBody, canaryMeta: p.canaryMeta,
       deliveredChunks: 0,
       scenario: "2",
@@ -480,12 +587,34 @@ async function postToUpstream(url: string, forwardedBody: string, authorization:
  */
 export async function handleChatCompletions(
   core: GatewayCore,
-  req: { body: string; headers: Record<string, string>; upstreamUrl: string; requestId: string; sessionId: string; turnId: string; client: string; providerId: string; endpointHost: string; transport: "stream" | "non-stream" },
+  req: { body: string; headers: Record<string, string>; upstreamUrl: string; requestId: string; sessionId: string; turnId: string; client: string; providerId: string; endpointHost: string; transport: "stream" | "non-stream"; routePrefix?: string | null; managedRoute?: boolean },
 ): Promise<ChatOutcome> {
   // transport 由 server 层判定后下传（单一真相源）：本层不再自行从 headers/body 重判。
   const { transport } = req;
   const stream = transport === "stream";
-  const reqScan = core.scanRequest(req.body, req.headers, transport);
+  const cmdDedup = createDangerousCommandDedup();
+  // SL-05（REQ-V2bA-14/15）：先判形状——认不出的形态在这里就阻断，
+  // 不让它走到"扫了但什么都没扫到、然后判 clean"那条路。
+  // 形状判定两条路都必须做（非受管也要记 reason，REQ-15），但**解析只做一次**：
+  // 解析结果直接交给 scanRequest 复用，避免同一份 body 被 JSON.parse 两遍。
+  // CI 的 G2 512KB 档实测：多解析一次就是 0.44ms，足以把这一档推过门槛。
+  const reqParsed = tryParseJson(req.body);
+  // 形状判定只在**受管路由**上做（用户的决定，取舍写在 KNOWN-ISSUES）。
+  //
+  // 为什么：非受管路由上它的唯一产物是"记录不阻断的 reason"，成本却随 body 线性增长
+  // （CI 实测 512KB 档 p50 从 1.8ms 涨到 4.5ms，超相对门）。受管路由的完整保护不变。
+  // 代价如实登记：非受管路径不再产出 shape_* 的覆盖降级 reason。
+  const shape = req.managedRoute === true
+    ? shapeVerdict("request", reqParsed, req.routePrefix ?? null, true, req.body)
+    : NOTHING_SHAPE;
+  let degradedReason: string | undefined;
+  // 受管路由上覆盖降级 = 阻断；非受管路由上只记录（REQ-15 的分权），由 shape.block 表达。
+  if (shape.block && shape.reason !== null) return blockedBeforeForward([], false, req.body, shape.reason);
+  if (shape.reason !== null) {
+    // 非受管路径的覆盖降级：不阻断，但必须可查——把它挂到 outcome.reason 上落链。
+    degradedReason = shape.reason;
+  }
+  const reqScan = core.scanRequest(req.body, req.headers, transport, cmdDedup, shapeFormat(shape), reqParsed);
   // SL-01/D-12：请求体 tools 声明面（declared_tools/declared_required）提取自请求扫描
   // 单元 meta，下传给响应侧全部扫描单元（非流式 / 流式逐帧 / 归并单元）。
   const declaredMeta = declaredToolsMeta(reqScan.scanUnit.meta);
@@ -496,7 +625,7 @@ export async function handleChatCompletions(
     return blockedBeforeForward(reqFindings, reqDecision.degraded, req.body);
   }
   // canary 注入编排（D-04）：先于 fetch，注入后体作为转发体；请求侧扫描仍以客户端原体为准。
-  const canaryStep = orchestrateCanary(core, req);
+  const canaryStep = orchestrateCanary(core, { ...req, ...(shape.format === null ? {} : { wireFormat: shape.format }) });
   // 转发到 upstream（体 = 注入编排产出：受管路径为注入后体，其余为原体）
   const upstream = await postToUpstream(req.upstreamUrl, canaryStep.forwardedBody, req.headers.authorization);
   return deliverUpstream({
@@ -507,12 +636,24 @@ export async function handleChatCompletions(
     // canary meta 随声明面并入全部响应侧扫描单元（SL-08 return-scan 判定面）；判定域外保持 declaredMeta 原样。
     responseMeta: responseMetaFor(canaryStep.meta, declaredMeta),
     requestInputs: reqScan.inputs,
+    cmdDedup,
     degraded: reqDecision.degraded,
     reqFindings,
     forwardedBody: canaryStep.forwardedBody,
     canaryMeta: canaryStep.meta,
-    gwReasons: canaryStep.gatewayReason !== undefined ? [canaryStep.gatewayReason] : undefined,
+    gwReasons: gatewayReasonsOf(canaryStep.gatewayReason, degradedReason),
+    managedRoute: req.managedRoute === true,
   });
+}
+
+/** 该线格式是否支持 canary 注入（协议表是唯一权威：chat 为 true，其余为 false）。 */
+function supportsCanaryInjection(format: WireFormat): boolean {
+  return protocolFor(format)?.canaryInjection === true;
+}
+
+/** 形状判定给出的线格式 → scanRequest 的协议参数（未识别时 undefined，走既有 Chat 投影）。 */
+function shapeFormat(shape: { readonly format: WireFormat | null }): { readonly format: WireFormat } | undefined {
+  return shape.format === null ? undefined : { format: shape.format };
 }
 
 /** 请求扫描单元里声明的 response model（缺声明即 null）。 */
@@ -533,6 +674,10 @@ interface UpstreamDelivery {
   readonly forwardedBody: string;
   readonly canaryMeta: CanaryRequestMeta | null;
   readonly gwReasons: readonly string[] | undefined;
+  /** 该请求是否走在受管路由上（响应侧闸门据此决定阻断还是只记录）。 */
+  readonly managedRoute: boolean;
+  /** 危险命令去重状态（请求侧已消费），透传给响应侧各路径。 */
+  readonly cmdDedup: ReturnType<typeof createDangerousCommandDedup>;
 }
 
 async function deliverUpstream(d: UpstreamDelivery): Promise<ChatOutcome> {
@@ -558,6 +703,8 @@ async function deliverUpstream(d: UpstreamDelivery): Promise<ChatOutcome> {
       forwardedBody: d.forwardedBody,
       canaryMeta: d.canaryMeta,
       gwReasons: d.gwReasons,
+      cmdDedup: d.cmdDedup,
+      managedRoute: d.managedRoute,
     });
   }
   // 流式：tee（逐帧交付逻辑独立成 handleStreaming，主 handler 只保留分支骨架）
@@ -572,6 +719,7 @@ async function deliverUpstream(d: UpstreamDelivery): Promise<ChatOutcome> {
     forwardedBody: d.forwardedBody,
     canaryMeta: d.canaryMeta,
     gwReasons: d.gwReasons,
+    cmdDedup: d.cmdDedup,
   });
 }
 
@@ -587,6 +735,7 @@ interface StreamParams {
   readonly forwardedBody: string;
   readonly canaryMeta: CanaryRequestMeta | null;
   readonly gwReasons: readonly string[] | undefined;
+  readonly cmdDedup: ReturnType<typeof createDangerousCommandDedup>;
 }
 
 /** 流式交付的跨帧可变状态：扫描窗口、归并桶与交付计数同住一处，收束时由 getter 读真值。 */
@@ -597,6 +746,8 @@ interface StreamState {
   readonly responseMeta: Record<string, unknown>;
   readonly requestInputs: readonly PolicyInput[];
   readonly argsMerger: ReturnType<typeof createToolCallArgsMerger>;
+  /** 危险命令去重（0.6.0）：与请求侧共持一份，响应里复述请求中的同一命令不再二次告警。 */
+  readonly cmdDedup: ReturnType<typeof createDangerousCommandDedup>;
   readonly allFindings: EvidenceFinding[];
   pending: string;
   deliveredChunks: number;
@@ -609,8 +760,11 @@ interface StreamState {
 function scanDelivered(st: StreamState, text: string): boolean {
   const scan = st.core.scanResponseStreamChunk(st.windows, text, st.requested, st.responseMeta);
   st.argsMerger.feed(scan.parsed); // 帧内 delta 片段进归并桶（归并后统一扫描，不逐 chunk 扫碎片）
-  st.allFindings.push(...flattenFindings(scan.inputs));
-  const d = decide([...st.requestInputs, ...scan.inputs]);
+  // 0.6.0 去重只覆盖非流式与归并单元：逐帧窗口才承载跨帧命令拼接（dangerous-command-scan 的
+  // 流式语义），用逐帧原文另做一遍去重扫描会丢跨帧命中（2026-11-24 实测回归）。
+  const inputs = scan.inputs;
+  st.allFindings.push(...flattenFindings(inputs));
+  const d = decide([...st.requestInputs, ...inputs]);
   if (d.degraded) st.degradedSeen = true;
   return d.action === "block";
 }
@@ -647,9 +801,12 @@ function scanMergedArgs(st: StreamState): boolean {
   }
   const merged = st.argsMerger.mergedText();
   if (merged === "") return false;
-  const scan = st.core.scanResponseStreamUnit(st.windows, buildMergedToolCallScanUnit(merged, st.responseMeta), { advance: false });
-  st.allFindings.push(...flattenFindings(scan.inputs));
-  const d = decide([...st.requestInputs, ...scan.inputs]);
+  const mergedUnit = buildMergedToolCallScanUnit(merged, st.responseMeta);
+  const scan = st.core.scanResponseStreamUnit(st.windows, mergedUnit, { advance: false });
+  const dedupInputs = st.core.scanWithDangerousCommandDedup(mergedUnit, st.cmdDedup);
+  const inputs = withDedupScan(st.responseMeta, scan.inputs, dedupInputs);
+  st.allFindings.push(...flattenFindings(inputs));
+  const d = decide([...st.requestInputs, ...inputs]);
   if (d.degraded) st.degradedSeen = true;
   return d.action === "block";
 }
@@ -771,6 +928,7 @@ function handleStreaming(p: StreamParams): ChatOutcome {
   const st: StreamState = {
     core, windows: createWindowStore(), requested, responseMeta, requestInputs,
     argsMerger: createToolCallArgsMerger(),
+    cmdDedup: p.cmdDedup,
     allFindings: [...reqFindings],
     pending: "",
     deliveredChunks: 0,

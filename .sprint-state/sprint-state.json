@@ -1,105 +1,85 @@
 {
   "_schema_version": 1,
   "evidence_schema_version": 2,
-  "id": "sprint-20260927-46",
-  "task_description": "llmveto v2a detection core (roadmap v2 slice 1/2): evidence schema canary-field versioning decision + 4 new checkers (thinking-signature-presence, tool-call-shape, usage-reconcile, fingerprint-probe) + canary engine with 'canary rotate' CLI + evil-relay simulator with dual-matrix CI. Deferred to v2b: periodic fingerprint patrol with provider trust score, billing reconciliation with 'report' CLI, Claude Code/Codex/promptfoo adapters",
-  "phase": 6,
-  "status": "completed",
-  "started_at": "2026-09-27T09:45:00.552Z",
+  "id": "sprint-20261124-54",
+  "task_description": "llmveto v2b slice A: multi-client onboarding (Claude Code / Codex / promptfoo) into MANAGED_CONFIG_IDS with doctor drift assertions and end-to-end vetting probes. Deferred: fingerprint patrol with trust score (v2b-C), billing reconciliation report CLI (v2b-B)",
+  "phase": 4,
+  "status": "in_progress",
+  "started_at": "2026-11-24T01:13:46.716Z",
   "phase_history": [
     {
       "phase": 1,
       "name": "PREP",
       "status": "completed",
-      "started_at": "2026-09-27T09:45:00.552Z",
-      "completed_at": "2026-09-27T09:46:07.988Z",
-      "duration_seconds": 67
+      "started_at": "2026-11-24T01:13:46.716Z",
+      "completed_at": "2026-11-24T01:14:37.718Z",
+      "duration_seconds": 51
     },
     {
       "phase": 2,
       "phase_name": "DESIGN",
       "status": "completed",
-      "started_at": "2026-09-27T09:46:22.747Z",
-      "completed_at": "2026-09-29T03:40:29.038Z",
-      "duration_seconds": 150846
+      "started_at": "2026-11-24T03:47:45.941Z",
+      "completed_at": "2026-11-24T03:47:45.941Z",
+      "duration_seconds": 0
     },
     {
       "phase": 3,
       "phase_name": "BUILD",
       "status": "completed",
-      "started_at": "2026-10-14T15:49:11.126Z",
-      "completed_at": "2026-11-02T10:31:48.854Z",
-      "duration_seconds": 1622558
+      "started_at": "2026-11-24T11:54:45.118Z",
+      "completed_at": "2026-11-24T11:54:45.118Z",
+      "duration_seconds": 0
     },
     {
       "phase": 4,
       "phase_name": "VERIFY",
       "status": "completed",
-      "started_at": "2026-11-02T10:32:12.960Z",
-      "completed_at": "2026-11-02T10:32:12.961Z",
-      "duration_seconds": 0
-    },
-    {
-      "phase": 5,
-      "phase_name": "SHIP",
-      "status": "completed",
-      "started_at": "2026-11-02T10:32:20.051Z",
-      "completed_at": "2026-11-02T13:08:01.822Z",
-      "duration_seconds": 9342
-    },
-    {
-      "phase": 6,
-      "phase_name": "CLOSE",
-      "status": "completed",
-      "started_at": "2026-11-02T15:49:13.452Z",
-      "completed_at": "2026-11-02T15:49:13.453Z",
+      "started_at": "2026-11-24T12:09:33.860Z",
+      "completed_at": "2026-11-24T12:09:33.860Z",
       "duration_seconds": 0
     }
   ],
   "isolation": {
-    "worktree_path": "D:\\projects\\llmveto\\.worktrees\\sprint\\sprint-2026-09-27-01",
-    "branch": "sprint/2026-09-27-01"
+    "worktree_path": "/home/bull/projects/llmveto/.worktrees/sprint/sprint-2026-11-24-01",
+    "branch": "sprint/2026-11-24-01"
   },
   "outputs": {
-    "worktree": "removed .worktrees/v2a-build (clean); branch sprint/v2a-build kept",
-    "branch": "sprint/2026-09-27-01",
-    "created_from": "main@d5b9be8",
-    "baseline_tests": "277 passed / 3 skipped / 34 files",
+    "worktree": ".worktrees/sprint/sprint-2026-11-24-01",
+    "branch": "sprint/2026-11-24-01",
+    "created_from": "main@38c3a1a",
+    "baseline_tests": "706 passed / 52 skipped (after bun run build)",
+    "baseline_gates": "xp-gate check --all 10 passed / 9 skipped",
     "auto_estimate": "complex",
-    "scope": "v2a detection core (4 checkers + canary + evil-relay dual-matrix CI + evidence schema decision)",
-    "deferred": "v2b ops (fingerprint patrol, billing report CLI, Claude Code/Codex/promptfoo)",
+    "scope": "v2b-A multi-client onboarding",
+    "deferred": "v2b-B report CLI, v2b-C fingerprint patrol",
     "decisions": [
-      "DR-011",
-      "DR-012"
+      "DR-029",
+      "DR-030",
+      "DR-031",
+      "DR-032"
     ],
     "risks_for_phase2": [
-      "R-PRE-1 evidence schema canary field frozen by TEST contract #4",
-      "R-PRE-2 CI gap: only bench.yml",
-      "R-PRE-3 knowledge base stale (claims src empty)",
-      "R-PRE-4 delphi walkthrough non-convergence precedent"
+      "R-PRE-1 no local client installs",
+      "R-PRE-2 Codex TOML I/O",
+      "R-PRE-3 Responses protocol vs scan unit",
+      "R-PRE-4 no real-client E2E",
+      "R-PRE-5 reviewer seats unprovable"
     ],
-    "slices_completed": "15/15 (SL-01..SL-15)",
-    "tests": "642 passed / 50 conditional skips (RELAY_MATRIX nightly)",
-    "coverage": "91.11/88.13/91.74/92.94",
-    "landing_commit": "e873693",
-    "build_gates": "G-CANARY closed; G-WINDOW hard bound PASS; G-PERF PASS (G2 64KB local tail, CI authoritative)",
-    "walkthrough": "3/3 APPROVED at 60c3733 (deepseek-v4.1-flash / qwen3.8-flash / glm-5.3-flashx)",
-    "alignment": "PASS 15/15 REQ, 25/25 AC, score 96.0",
-    "gates": "xp-gate check --all exit 0 (10 passed / 7 skipped); release:gate 10/10; README parity PASS",
-    "residuals": "G-CANARY replay accepted; nightly budgets unmeasured",
-    "pr": "#14 merged (d4e1632)",
-    "release": "v0.3.1",
-    "release_url": "https://github.com/boyingliu01/llmveto/releases/tag/v0.3.1",
-    "npm_publish": "blocked: NPM_TOKEN not configured",
-    "main_ci": "Tests success; bench success after rerun of a noise-only relative gate",
-    "uat": "passed 2026-11-02 (0 emergent issues)",
-    "main": "d4e1632",
-    "backup": ".sprint-history/sprint-20260927-46/"
+    "specification": "specification.yaml (SPEC-V2BA-001, 21 REQ / 49 AC)",
+    "design": "docs/plans/2026-11-24-v2b-a-design.md",
+    "slices": "15/15",
+    "review": "R1 two rounds (5 seats) + R2 one round (2 seats), all REQUEST_CHANGES, all Critical/Major absorbed",
+    "delphi_gate": "NOT met (0% APPROVED); user approved via DR-031",
+    "new_dependency": "smol-toml@1.9.1 (BSD-3-Clause, zero deps)",
+    "tests": "817 passed / 52 skipped",
+    "coverage_gate": "release-gate 10/10 PASS",
+    "design_docs": "protocol-capability-matrix / protocol-coverage-audit / protocol-field-provenance",
+    "known_defects_fixed_during_build": "postinstall module-not-found on install; smoke adapter isolation; promptfoo installed detection; PathSegment array resolution",
+    "release_gate": "10/10 PASS",
+    "walkthrough": "1 valid seat REQUEST_CHANGES; 1 CRITICAL + 3 MAJOR fixed with regression tests",
+    "gate3": "ratchet PASS, zero regressions",
+    "alignment": "PASS 21/21 REQ, 49 AC, score 100"
   },
-  "metrics": {
-    "merge_base_sha": "d5b9be87e2366f4046d08f120033741955d2d4a7",
-    "total_sprint_commits": 83,
-    "completed_at": "2026-11-02T15:49:24Z",
-    "rework_rate": 0
-  }
+  "metrics": {}
 }

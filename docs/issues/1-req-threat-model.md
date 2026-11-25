@@ -140,6 +140,17 @@ GitHub 同类项目两极分化（2026-09 调研，详见 [REUSE] issue）：
 | T3b/T3c 量化降级/路由波动 | 未缓解 | **未变** | 仍缺指纹巡检与跨请求观测 |
 | T2b 响应注入 | 未缓解 | **未变** | 仍排 v3 |
 
+### 当前状态追记（2026-11-24，v2b-A）
+
+> 本节只记录 v2b-A 带来的变化，不改动上面的冻结件。
+
+| 威胁 | 变化 | 说明 |
+|---|---|---|
+| T1b 凭据出境 | **覆盖面扩大** | Claude Code（Anthropic Messages）与 Codex（OpenAI Responses）接入后，这两种线格式的请求/响应载荷进入扫描单元。改动前的实测：同一份 `sk-` 探针放在 `system` 块 / `tool_use.input` / `tool_result` / `instructions` / `input[].content` 里都会得到 HTTP 200 + `action_taken=warned`（凭据实际出境）。 |
+| T2c 隐形字符 | 同上 | 两种新格式的载荷现经同一投影进入检测。 |
+| T1a 外泄检测 | **部分（仅 Chat 线格式）** | 金丝雀仍只在 Chat 形态注入；两条新路由上 `inject_skipped` 可观测，但**没有**阳性检测能力。详见 `docs/protocol-capability-matrix.md`。 |
+| T3a/T3b/T3c | 未变 | 仍缺指纹巡检（v2b-C）。 |
+
 **新增的两个 checker**（上表未列，因它们不在 v1 威胁模型内）：
 - `dangerous-command-scan`（T2a 内容侧，**观测类 `warn`**）：`curl … | bash`、`base64 -d | sh`、PowerShell `IEX`、反向 shell、公网裸 IP 下载。**规则命中不代表恶意**——安装教程含同样字符串。
 - `thinking-signature-presence`（T3a 辅助，`warn`）：思维链签名缺失提示。

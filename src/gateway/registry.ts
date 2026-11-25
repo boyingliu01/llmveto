@@ -1,4 +1,4 @@
-import type { CheckerSpec } from "../shared/types.ts";
+import { directionsOf, type CheckerSpec } from "../shared/types.ts";
 import { CANARY_RETURN_SCAN_SPEC } from "../checkers/canary-return-scan.ts";
 import { DANGEROUS_COMMAND_SCAN_SPEC } from "../checkers/dangerous-command-scan.ts";
 import { EGRESS_SECRET_SCAN_SPEC } from "../checkers/egress-secret-scan.ts";
@@ -26,7 +26,7 @@ export const REGISTRY: readonly CheckerSpec[] = Object.freeze([
 ]);
 
 export function checkersFor(side: "request" | "response"): readonly CheckerSpec[] {
-  return REGISTRY.filter((c) => c.side === side);
+  return REGISTRY.filter((c) => directionsOf(c).includes(side));
 }
 
 /** §4.5 威胁表：单一来源 = 各 CheckerSpec.threat（不得在 policy/evidence 侧另设字面表）。 */

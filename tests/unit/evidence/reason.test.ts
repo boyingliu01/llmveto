@@ -31,7 +31,7 @@ import type {
 
 // @test REQ-V2a-13（D-10 error 双层落链 + 顶层 reason 单值规则）/ REQ-V2a-14（§4.5 reason 词表）
 // @intent ① evidence schema：AppendInput/EvidenceRecord 的 reason 可选位 —— 无异常时键整体缺席
-//         （§14.4-4：不落 null），validateEvidence 校验 §4.5 六值词表；v1 无 reason 旧记录 verify 仍过。
+//         （§14.4-4：不落 null），validateEvidence 校验 §4.5 九值词表；v1 无 reason 旧记录 verify 仍过。
 //         ② D-10 单值选择：gateway 值（registry_unavailable > inject_skipped）> checker error 固定序
 //         （window_overflow > checker_timeout > scanner_error > input_malformed，同级按注册表声明序，
 //         全同取先见）；顶层 checker reason 由 findings[] error 条目重放（R3 T-M1）选出。
@@ -53,7 +53,7 @@ type ReasonIsOptional = undefined extends EvidenceRecord["reason"] ? true : fals
 const REASON_OPTIONAL_GUARD: ReasonIsOptional = true;
 void REASON_OPTIONAL_GUARD;
 
-describe("SL-03 REASON_VOCAB：§4.5 六值词表（REQ-V2a-14）", () => {
+describe("SL-03 REASON_VOCAB：§4.5 九值词表（REQ-V2a-14）", () => {
   it("词表逐字钉死且冻结", () => {
     expect(Object.isFrozen(REASON_VOCAB)).toBe(true);
     expect([...REASON_VOCAB]).toEqual([
@@ -63,6 +63,10 @@ describe("SL-03 REASON_VOCAB：§4.5 六值词表（REQ-V2a-14）", () => {
       "checker_timeout",
       "scanner_error",
       "input_malformed",
+      // v2b-A（SPEC-V2BA-001 REQ-V2bA-14）：协议线格式两轴判定结果
+      "shape_unrecognized",
+      "shape_known_empty",
+      "shape_partial_coverage",
     ]);
   });
 
@@ -151,7 +155,14 @@ describe("SL-03 D-10：顶层 reason 单值选择（GATEWAY_REASON_PRIORITY / CH
 
   it("两个固定序常量冻结且逐位钉死", () => {
     expect(Object.isFrozen(GATEWAY_REASON_PRIORITY)).toBe(true);
-    expect([...GATEWAY_REASON_PRIORITY]).toEqual(["registry_unavailable", "inject_skipped"]);
+    expect([...GATEWAY_REASON_PRIORITY]).toEqual([
+      "registry_unavailable",
+      "inject_skipped",
+      // v2b-A（REQ-V2bA-14）：协议线格式两轴判定；排在 canary 之后，因为形状判定更早、更能解释"为什么没扫"
+      "shape_unrecognized",
+      "shape_known_empty",
+      "shape_partial_coverage",
+    ]);
     expect(Object.isFrozen(CHECKER_ERROR_REASON_ORDER)).toBe(true);
     expect([...CHECKER_ERROR_REASON_ORDER]).toEqual([
       "window_overflow",
@@ -306,7 +317,9 @@ describe("SL-03 REGISTRY 声明序（tie-break 单一真相源）", () => {
   });
 
   it("checkersFor 分派序与注册表声明序一致（请求侧 / 响应侧）", () => {
-    expect(checkersFor("request").map((c) => c.id)).toEqual(["egress-secret-scan"]);
+    // 0.6.0：dangerous-command-scan 声明 sides:["request","response"]（凭据出境/投毒口令
+    // 的落点在请求里的 file_path/command），故请求侧分派为两项，顺序仍跟注册表声明序。
+    expect(checkersFor("request").map((c) => c.id)).toEqual(["dangerous-command-scan", "egress-secret-scan"]);
     expect(checkersFor("response").map((c) => c.id)).toEqual([
       "canary-return-scan",
       "dangerous-command-scan",

@@ -1,77 +1,103 @@
-# R1 需求评审 — Round 1 共识报告
+# R1 需求评审 — Round 1 共识
 
-- **Sprint**: sprint-20260914-49 / Phase 2 DESIGN / delphi-review R1（需求评审）
-- **评审对象**: `docs/issues/{1,2,3,4,5}-*.md` + `architecture.yaml` + `README.md`
-- **评审范围**: v1 MVP 是否可冻结
-- **专家团**: A=架构视角(g-deepseek-flash) / B=技术视角(g-glm-5.3-flash) / C=可行性视角(g-qwen3.8-flash)
-- **Round 1 裁决**: A `REQUEST_CHANGES`(conf 8) / B `REQUEST_CHANGES`(conf 9) / C `REQUEST_CHANGES`(conf 8) → **一致 REQUEST_CHANGES**
-- **原始报告**: `r1-expert-A.md`(154L) `r1-expert-B.md`(73L) `r1-expert-C.md`(83L)
+- 日期：2026-11-24
+- 评审对象：`.sprint-state/review/r1-requirements-draft.md`（v2b-A 需求陈述初稿）
+- 面板：`.delphi-config.json` / `active_profile = codebuddy-v2b`（见 `delphi-panel-v2b.md`）
 
-## 1. 共识矩阵
+## 席位与实际凭据
 
-命中数 = 三位专家中提出该问题的位数。**3/3 与 2/3 问题按最高级别归并后全部纳入零容忍处理清单**（delphi-review 纪律：Critical/Major 不可跳过、不可降级）。
+| 席位 | 配置模型 | 实际命令行 | 结果 |
+|---|---|---|---|
+| A architecture | `hy4std` | `codebuddy -p --model hy4std`（读文件式 prompt） | ✅ 11599 B |
+| B technical | `hy4flash` | `codebuddy -p --model hy4flash`（正文内联式 prompt） | ✅ 7807 B |
+| C feasibility | `space-bunny` | `codebuddy -p --model space-bunny` | ❌ **两次执行无输出**（600s / 420s 均超时且输出 0 字节） |
+| C′ 补位 | `hy4flash-free` | `codebuddy -p --model hy4flash-free` | ✅ 7568 B |
 
-| ID | 级别 | 命中 | 问题 | 提出者 |
-|---|---|---|---|---|
-| P-01 | Critical | 3/3 | 流式 `block`/`redact` 语义未定义，与"零缓冲立即转发"物理冲突；已转发字节不可收回 → fail-closed 在流式下无可满足定义 | A-C1 B-C1 C-C1 |
-| P-02 | Critical | 3/3 | DESIGN"超预算→降级异步、绝不阻塞流"对安全类 checker 等价 fail-open，直接违反 REQ 目标#3；出站扫描与 TTFT 共用预算但请求侧口径为空白 | A-M3 B-C2 C-C2 |
-| P-03 | Critical | 3/3 | "doctor 可证明 OpenCode 全部 provider 流量过闸"是不可证伪的全称命题（"全部"无枚举、流量级观测=审计缺口检测排在 v3，循环依赖） | A-C2 B-C3 C-C4 |
-| P-04 | Critical | 3/3 | v1 硬验收依赖 v2/v3 交付物（evil-relay=v2、金丝雀=v2、per-checker 动作=v3）→ v1 验收当前不可执行 | A-C3 B-M3 C-C3 |
-| P-05 | Critical | 3/3 | v1 残余风险登记表缺失：T2a(RCE)/T2b/T2d/T4a-d/P1/P2 全程零缓解；T1a 因金丝雀排 v2 而无任何检测 | A-C4+M2 B-M2 C-C5 |
-| P-06 | Critical | 2/3 | `verdict` 与 `action` 两层术语在 TEST 契约#2/#3、DESIGN、architecture.yaml、ROADMAP 四处混用；fixture `expected.verdict: block` 破坏"checker 不做策略决策"不变量；`redact` 在流式上语义悬空 | B-M1 C-M3 (+A-M5) |
-| P-07 | Critical | 1/3 | evidence store 在 v1 验收四条中零条目；哈希链安全属性被夸大（本机同权限对手可整链重写）；v1 无校验提供者 | B-C4 (+A-M4 C-M1) |
-| P-08 | Major | 3/3 | evidence schema 字段清单未定义，却被声明为对外唯一消费接口（Gate LS） | A-m1 C-M5 (+B-M6) |
-| P-09 | Major | 3/3 | checker 输入未定义（原始字节 / SSE 事件 data / 解析后 JSON），影响三个内容型 checker 正确性与 fixture 可复现性 | C-M6 (+C-M4 跨 chunk) |
-| P-10 | Major | 1/3 | `invisible-unicode-scan` 跨 chunk 漏检：U+200B = `E2 80 8B` 可被 SSE chunk 边界切开，逐 chunk 独立扫描系统性漏检（与可测试性契约#2 冲突） | C-M4 |
-| P-11 | Major | 2/3 | 检出率/误报率无量化门槛，"可用"与"回退阻断合并"均不可判定 | B-M4 C-M2 |
-| P-12 | Major | 1/3 | `model-field-consistency` 只覆盖 T3a 的 label-mismatch 子集；REQ 自述实证"响应 model 字段无回写校验"恰说明真替换不改字段 → "v1 覆盖 T3a"主张不成立 | A-M2(部分) C-M5 |
-| P-13 | Major | 1/3 | Delphi 接入是 v1 交付物但 v1 验收四条零覆盖 | B-M5 |
-| P-14 | Major | 1/3 | 复用组件的许可/运行时成本未评估：gitleaks 规则"MIT"断言未核实；fpverify 引入 Python 测试运行时 | C-M7 |
-| P-15 | Major | 2/3 | REQ 顶层目标全称量词"所有流量"与 v1 仅接入 2 客户端、TLS 拦截推 v3 不自洽，无分版本覆盖集合判据 | A-M1 (+C-C4) |
-| P-16 | Minor | 3/3 | TEST 五件套/金丝雀专项/审计缺口未逐项标注版本归属 → CI 范围歧义 | A-m2 B-M3 C-m3 |
-| P-17 | Minor | 2/3 | README 架构图把 TLS 拦截画进 v1 主路径，与 ROADMAP 排 v3 冲突；CLI 命令集三处不一致 | C-m1 C-m2 A-m3 |
-| P-18 | Minor | 1/3 | v1 doctor 的"CA 信任"检查项空转（TLS 拦截属 v3） | B（doctor 职责，归并入 P-03） |
-| P-19 | Minor | 1/3 | 证据链并发/崩溃/fsync 语义未声明 | A-m4 |
-| P-20 | Minor | 1/3 | benign 语料"脱敏"流程与 evidence"全量留存"的隐私张力；全量留存本身构成 T1b 本地聚集风险 | C-m4 |
-| P-21 | Minor | 1/3 | `OPENCODE_MODELS_URL` / `experimental.policies` 的配置责任方（网关 vs 用户手册）未指定 | C-m6 |
-| P-22 | Minor | 1/3 | 单二进制分发与"兼容 Node ≥ 18"表述混用，runtime 支持承诺含糊 | C-m7 |
+**缺位处置**：C 席两次执行失败，按"不得由实现方模型代答"的纪律，改用同为外部可调、且与 A/B 均不同的 `hy4flash-free` 补位，并在本文如实标注它是补位席而非原配置席。三席模型 ID 互异（`hy4std` / `hy4flash` / `hy4flash-free`）。
 
-**统计**: Critical 归并 7 条（其中 5 条 3/3 命中），Major 7 条，Minor 8 条。共识度：3 位专家裁决完全一致，问题清单重叠率高（P-01~P-05 全 3/3）→ 属"结构性缺陷一致认定"，非意见分歧。
+## 投票
 
-## 2. 三位专家一致肯定的部分（修订中必须保留）
+| 席位 | VERDICT |
+|---|---|
+| A（hy4std） | `REQUEST_CHANGES` |
+| B（hy4flash） | `REQUEST_CHANGES` |
+| C′（hy4flash-free） | `REQUEST_CHANGES` |
 
-1. 威胁编号体系（T1a…P2）在 REQ/DESIGN/TEST 三文档对齐且每条挂实证 → 可评审性基础
-2. 理论边界诚实（"上游是否记录不可证伪、MIA 不可行"）
-3. 可测试性契约前置固化（架构期锁死，不可事后补）+ `architecture.yaml` 用 import 边界把它变成机器可执行契约
-4. 分期纪律（v1 过闸 → v2 验证加深 → v3 策略闭环）方向正确
-5. "性能即安全属性"的对抗性论证（而非当普通 SLA）
+**共识：0/3 APPROVED（0%）→ 不达标（阈值 90%），进入修订轮。** 但缺乏共识的原因不是意见分歧，而是三席独立指向同一批缺口——本文的重点是逐条处置。
 
-## 3. 处置决议（本轮采纳的定案）
+## 三席独立命中同一问题（收敛信号，必须处理）
 
-| ID | 处置 | 落点 |
+| # | 问题 | A | B | C′ | 性质 |
+|---|---|---|---|---|---|
+| 1 | **流式/SSE 覆盖缺失** | ✅（列为应纳入而未纳入） | ✅ **CRITICAL-1** | ✅ **CRITICAL-1（称"全篇最大空洞"）** | 三席一致；本文已补实测证据 |
+| 2 | **端到端验收判据 = 假过闸** | ✅ **CRITICAL-1** | ✅（验收 #5 的 client/provider_id 来源不明） | ✅（同源） | 本文 §5.5 与 §0 自相矛盾 |
+| 3 | **D3 未识别形态可被武器化** | ✅ MAJOR-1 | ✅ **CRITICAL-2** | ✅ MAJOR-3 | 二席直接判为 CRITICAL |
+| 4 | **offsets 口径无定义、无验收** | ✅（MINOR/R2 无验收） | ✅ MAJOR | ✅ MAJOR-2 | 对象参数规范化后无原文 span |
+| 5 | **promptfoo 语义未定（项目级文件）** | ✅ MAJOR-5 + D2 | ✅ MAJOR（假漂移） | ✅ MAJOR-6（写库侵入） | 项目级 vs 用户级受管混合 |
+| 6 | **既有 `opencode/anthropic` 申报不符无人认领** | ✅（SCOPE-5） | ✅ MAJOR | ✅ **MAJOR-1（存量审计）** | 只修未来、未处置存量 |
+| 7 | **可追溯落点未进验收** | ✅ MAJOR-3 | ✅ MINOR | ✅ MAJOR-7 | 最大验证局限的补偿悬空 |
+| 8 | **D1 定点编辑边界未定义** | ✅（三类边界） | ✅ MAJOR | ✅ MAJOR-4 | 双目标键 / 插入 / 多处匹配 |
+| 9 | **D4 后果陈述未落地** | ✅ MAJOR | ✅（`inject_skipped` 可观测） | ✅ MAJOR-5 | 不注入 → 失去什么能力 |
+
+## 各席独有、本文采纳的修正
+
+- **A CRITICAL-2（结构性问题）**：需求把"协议线覆盖"窄化成两个投影函数，**漏掉入口/路由/原始 body 透传一层**。§1 基线绕过 HTTP 直接喂函数，证明不了网关入口能接住 `POST /v1/messages`（Anthropic Messages）与**是否存在** Responses 端点。**这是本文最严重的结构性疏漏**：投影函数改得再对，入口不认照样落空。
+- **A MAJOR-2**：`ANTHROPIC_AUTH_TOKEN` 凭据语义未定义（Gateway 需要网关侧凭据，否则 401）。
+- **A MINOR-1**：§1.1 矩阵"Chat 的 `system` 是字符串"——真实 Chat Completions 的系统提示在 `messages[].role=system`，草稿形态写错，验收正样本不得照抄。
+- **A MAJOR-5 / C MINOR-3**：§0 说"三种协议"，实际是**两种新格式**（Anthropic Messages、Responses）+ 一个复用 Chat 的 promptfoo；promptfoo 也未进 §1.1 矩阵。
+- **B CRITICAL-3**：REQ-08 若按未验证的"客户端→线格式"映射输出确定结论，比说"不知道"更危险 → 必须输出"未知"。
+- **B MINOR**：`reason` 应区分"字段不存在"与"字段存在但为空"，避免健康探针刷噪声。
+- **C MAJOR-3**：`reason` 必须是**稳定机器可读码**，不能是自由文本；须定义纯工具调用 / `input: []` 等**合法空请求**的豁免规则。
+- **C MAJOR-4**：Codex 的 `<id>` 和 `wire_api` 是否算"目标键"必须写死。
+- **B / C 对 D5 的一致意见**：做成**数据驱动的 `recognize` / `projectRequest` / `projectResponse` 三件套**，不要类继承；`recognize` 输出"已知 / 未知 / 已知但零文本"三态作为一等结果。
+
+## 与本文倾向相左的结论（需要改）
+
+| 议题 | 本文倾向 | 三席意见 | 处置 |
+|---|---|---|---|
+| D3 | (b) 覆盖降级 | B：**(a) 限定版**——受管路由上未知形态 fail-closed；C：同意 (b) **但必须硬化**（稳定码 + 豁免 + 显式风险接受） | **改为条件式 fail-closed**：受管路由上"未知形态"与"已知但零文本"分权处理，详见修订稿 §4-D3 |
+| D2 | (a) 直接写 | A/B/C 一致：项目文件默认**只报告**，写入需**显式 opt-in** | 采纳 |
+| D1 | (b) 定点编辑 | 三席一致同意 (b)，但补齐边界 | 采纳并补齐 |
+
+## 处置原则（进入修订轮）
+
+1. **A 的 CRITICAL-2（入口层）并入本文范围**——否则本 sprint 无法自证"真过闸"。
+2. **流式覆盖同步补入**，并附带本文紧跟实测到的证据（三形态 SSE 投影：Responses/Anthropic 每帧 `""`，Chat 正常）。
+3. **验收判据整体升级**：从"evidence 出现 client/provider_id"升级为"`unit.text` 非空且命中探针文本 + evidence 记录"。
+4. 存量审计、可追溯表、offsets 口径、`reason` 枚举、D1/D2 边界、`inject_skipped` 全部落成 REQ 与验收条目。
+
+## 附：本文在评审期间补出的新证据（三席评审时尚未看到）
+
+| 协议 | 流式每一帧的扫描投影 | 结论 |
 |---|---|---|
-| P-01/P-06 | 新增 **§裁决与动作语义**：`stream × non-stream × {allow,warn,redact,block}` 8 格行为矩阵；术语定案 checker 只产 `verdict ∈ {clean, finding, error}`，`action ∈ {allow,warn,redact,block}` 由策略引擎产出；`redact` 声明为 v3（流式不可执行） | REQ 新增节 + TEST 契约#2/#3 + DESIGN 组件2/3 + architecture.yaml 注释 |
-| P-02 | 降级条款限定为**观测类**；安全类强制同步、**超时=deny**；性能预算拆为 3 条独立门（响应侧 TTFT 增量 / 请求侧端到端增量按 body 分档 / 扫描超时上限）+ 测量协议（基线、payload 包络、样本量、回退公式） | DESIGN §关键决策 + TEST §5 + ROADMAP v1 验收 |
-| P-03/P-18 | "全部" → **受管配置封闭枚举**（适配器声明的清单为受版本控制契约）；验收拆为 a) 配置覆写断言 b) 探测过闸断言 c) 显式声明不覆盖旁路清单；doctor v1 仅输出 4 项确定性结论，CA 信任项标 `not-applicable@v1` | ROADMAP v1 验收 + DESIGN §验收/§防绕过 |
-| P-04/P-16 | v1 自带 **`mock-upstream`（TS 声明式脚本回放）**，E2E 载体 = mock-upstream；evil-relay 限定为"v2 全量 9 对手 + 双矩阵"；五件套逐项标 `@v1/@v2/@v3` + v1 替代物 | TEST §2/§4/§5 + ROADMAP v1/v2 |
-| P-05 | 新增 **§v1 残余风险登记表**（威胁 × v1 状态 × 缓解 × 缺口理由 × 计划期次 × 取证可得性），作为 v1 冻结件；README 增"v1 不能防什么" | REQ 新增节 + README |
-| P-07/P-08/P-19/P-20 | evidence **信任边界声明**（链=内部一致性自检，不抵抗本机同权限整链重写）+ 崩溃/并发等级（单写者 + fsync best-effort + 尾行半行容忍）+ **v1 冻结字段表**（`evidence-version: 1`）+ `llmveto verify` 提入 v1 + v1 验收补第 5 条 | DESIGN 组件4 + TEST 契约#4 + ROADMAP |
-| P-09/P-10 | 可测试性契约#2 升级为两态签名：非流式纯函数 `(unit) → {verdict, evidence}`；流式 `(window, chunk) → ({verdict, evidence}, newWindow)`，状态由 fixture 框架注入（保持可单测）；统一**解码后规范化 UTF-8 文本 + `sse_data` 字段抽取**为扫描单元，并强制跨 chunk 对抗样本进 fixture | TEST 契约#2/#3 + DESIGN 组件2 |
-| P-11 | 量化门槛入 CI：fixture 检出率 100%（硬）；benign ≥50 条，告警类 FP ≤2%，阻断类 FP = 0（白名单豁免需逐条裁决）；回退公式 `p95_pr > p95_base × 1.2` 或绝对增量 >2ms → 阻断合并 | TEST §3 + ROADMAP v1 验收 |
-| P-12 | checker 改名 `model-label-consistency`，登记能力边界=仅字段一致性（label-mismatch），真替换需 v2 指纹 | DESIGN 组件2 + REQ 登记表 + README |
-| P-13 | v1 验收补 Delphi 条目（覆写→过闸 evidence 可观测→doctor 漂移样本） | ROADMAP v1 验收 |
-| P-14 | fpverify 降级为**离线 fixture 生成器**（开发者机器跑一次，产出 YAML 入仓）→ CI 零 Python；gitleaks 许可改为 BUILD 前决策门（核实则复用规则，否则自建 top-N 高置信模式），落 `docs/licenses.md` | REUSE 表 + ROADMAP v1 前置门 |
-| P-15 | REQ 目标#1 全称量词改为"分版本声明覆盖集合"；未接入客户端显式声明为未覆盖暴露面 | REQ §目标 |
-| P-17/P-21/P-22 | README 架构图标期次；v1 CLI 冻结为 `start/stop/status/doctor/verify`（不为未实现命令留 stub）；`OPENCODE_MODELS_URL` 由适配器 `llmveto doctor --write-managed-config` 负责写入；runtime 承诺 = 代码仅用 Node stdlib API（禁 Bun-only），Bun 仅用于 compile | README + DESIGN + REQ |
+| Responses (`response.output_text.delta`) | `""` | ❌ 不可见 |
+| Anthropic (`content_block_delta.delta.text` / `input_json_delta`) | `""` | ❌ 不可见 |
+| Chat（对照 `choices[].delta.content`） | `"PROBE-CHAT-TOKEN"` | ✅ 可见 |
 
-## 4. 未纳入本轮的专家建议（附理由）
+这直接证实了 A/B/C′ 三席判定的 CRITICAL-1，且说明其严重度高于三席估计：**流式是默认形态，非流式才是特例。**
 
-| 建议 | 提出者 | 不纳入理由 |
-|---|---|---|
-| 把"导出到第三方锚定/签名时间戳"提进某个具体期次 | C-M1 | v1/v2/v3 均无外部服务依赖预算；改为在 evidence 信任边界声明中**显式写"不抵抗本机整链重写"**，避免虚假承诺。若后续需要，走新 issue 立项 |
-| 流式改为 1-chunk 缓冲窗口后再转发（换取真阻断） | A-C1 备选 | 与"零缓冲"决策的对抗性后果（用户因延迟绕过网关）冲突；本项目的威胁模型是"性能即安全"，故选"检测+终止流+不承诺撤回"而非引入缓冲。已在 P-01 矩阵中把该取舍写成明文承诺 |
-| 增加响应注入扫描（T2b）进 v1 | C-C5 备选 | 无 FP 门槛的纯文本规则会在真实 agent 会话上大面积误报，反而破坏"告警可信"。v1 只做 evidence 留痕（可取证不可阻断） |
+---
 
-## 5. Round 2 计划
+## 第二轮评审前补出的入口层实测（对 A 席 CRITICAL-2 的独立证实）
 
-按 delphi-review 纪律，Round 1 全 REQUEST_CHANGES → 修复全部 Critical + 处理全部 Major 后**从 Round 2 起步复审**（不回 Round 1）。Round 2 输入 = 修订后文档 + 本文件 §3 处置决议，要求专家对每条处置给出 `resolved / partially_resolved / unresolved` 并重新裁决，目标共识 ≥91% 且 0 Critical / 0 Major。
+A 席判定"需求漏掉入口/路由/原始 body 透传一层"。本文用真实 `startGateway` + mock 上游做了端到端探测，
+**两处各带一个 `sk-` 形态凭据**发出：
+
+```
+POST /claude/anthropic/v1/messages -> HTTP 200   evidence: {client:"claude", provider_id:"anthropic", action_taken:"warned"}
+POST /codex/openai/v1/responses    -> HTTP 200   evidence: {client:"codex",  provider_id:"openai",     action_taken:"warned"}
+```
+
+`egress-secret-scan` 是**阻断类**（命中即 `blocked_before_forward`，请求不出境）。实测却是 `warned`、
+HTTP 200、请求已转发——**因为凭据从未进入扫描单元**。
+
+这一条同时证实了三件事：
+
+1. A 席 CRITICAL-2 成立：入口层对两种形态"接得住"，但**接住不等于扫到**；只改投影函数而不做端到端断言，
+   交付后仍是假过闸。
+2. A 席 CRITICAL-1 成立：端到端判据必须是"扫描单元命中探针文本"，"evidence 有 client/provider_id" 恰恰是失效形态本身。
+3. **既有路由的暴露面比草稿 §1.2 描述更大**：不只是 Anthropic 形态的主体与响应不可见，
+   **阻断类凭据规则在两种形态上完全不生效**，且当前会以 `warned` 记录——事件看起来"被看见了"，实际没有。
+
+**由此新增的硬要求（进入修订稿）**：验收必须包含"凭据形态探针在三种协议线上都被 `blocked_before_forward`"
+（正向：Chat 现状已满足；目标：Anthropic / Responses 修好后也必须满足），并以反向探针证明该断言能变红。

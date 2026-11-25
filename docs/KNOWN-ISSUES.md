@@ -5,6 +5,80 @@
 
 ---
 
+## v2b-A（多客户端接入）能力边界
+
+### T1a: canary injection is chat-only
+
+- **What changed**: Claude Code (Anthropic Messages) and Codex (OpenAI Responses) are now onboarded
+  and fully scanned, but canary injection is deliberately not implemented for either wire format.
+- **Consequence**: on those two routes there is no positive evidence of retention and reuse
+  (T1a's cross-session spill detection). `request_body_sha256` still proves what was sent; it cannot
+  prove what the upstream kept.
+- **Observability**: every non-injection writes `reason = "inject_skipped"` to the evidence record and
+  increments the `inject_skipped` metric. Seeing that counter grow on these routes is expected, not a fault.
+- **Why not do it now**: injection points differ per format (Anthropic has `system` block arrays and
+  `tool_result`; Responses has typed `input[]` elements). Three injection point sets is a second canary
+  redesign, not an extension. The full capability matrix is in
+  [docs/protocol-capability-matrix.md](protocol-capability-matrix.md).
+
+### Unknown wire shapes fail closed on managed routes only
+
+- **What it does**: on a managed route (`claude/*`, `codex/*`, `promptfoo/*`, plus the existing
+  managed routes) a body the gateway cannot classify is blocked with `reason = "shape_unrecognized"`.
+- **Boundary**: on an **unmanaged** path the same shape is only recorded and degraded, never blocked.
+  A user-created prefix is therefore not protected against this failure mode.
+- **Legal empty requests still pass**: `messages: []`, a body with only `model`, and requests whose
+  elements carry no known payload field are treated as legal empty requests, because canary injection's
+  own branch 4 has exactly that shape and the shape check must not be stricter than injection.
+- **The cost of that exemption**: a body whose container is present but whose field *names* are all
+  unknown does not raise a distinct code. The `shape_partial_coverage` guard covers the other half —
+  known fields that were not projected — and must stay at zero.
+
+### Real HTTP headers are outside the scan surface (v1 boundary, not new)
+
+- **What the design says**: the scan unit is the *body* projection — `messages`, `tools`, `system`,
+  and a body-carried `extra_headers` field. Transport-level request headers are not scanned.
+- **Measured**: a credential in a custom header (`X-Trace-Note: sk-...`) is forwarded to the upstream
+  and the request returns 200. This behaviour predates v2b-A; it is the v1 boundary, not a regression.
+- **Why it was not changed in v2b-A**: scanning every header would fire on ordinary clients that send
+  trace ids and session tokens in headers, and the blocking class requires FP=0. The head of the
+  trade-off is that a credential placed only in a header leaves the machine unvetoed.
+- **Closing it properly**: a per-header scan with an explicit allow-list, or a header allow-list
+  enforced fail-closed on managed routes. Registered here so it is not mistaken for coverage.
+
+### Shape verdict runs on managed routes only
+
+- **Decision** (2026-11-24): the two-axis shape verdict runs on managed routes. On an unmanaged
+  path it is skipped entirely.
+- **Why**: on unmanaged routes its only product is a recorded reason with no block, while its cost
+  grows linearly with the body — measured in CI, G2's 512 KB tier went from 1.8 ms to 4.5 ms p50,
+  past the relative gate. Managed routes — every route an adapter actually writes — keep the full
+  fail-closed behaviour.
+- **Cost**: an unmanaged path no longer records `shape_*` degradation reasons. Traffic there is still
+  scanned by every checker; only the coverage-degradation signal is absent.
+- **Scope note**: REQ-V2bA-15 asked for the reason on unmanaged routes too. This is a deliberate,
+  recorded departure from that wording, chosen by the user in the trade-off between coverage
+  telemetry and the latency budget.
+
+### Transport-compressed bodies are rejected, not decompressed
+
+- **What changed in v2b-A**: on managed routes a `Content-Encoding` other than `identity` (or absent)
+  is refused with `unsupported_content_encoding`. Measured before the guard, a gzipped body carrying a
+  credential returned 200 and reached the upstream.
+- **Consequence**: a client that compresses requests will be refused on managed routes until a
+  decompression path exists. Decompressing needs four decoders plus a zip-bomb budget, which is its
+  own piece of work; refusing unreadable bytes beats claiming to have scanned them.
+
+### Clients are onboarded from documentation, not from a live install
+
+- **Measured precondition**: none of Claude Code, Codex or promptfoo is installed on the development
+  machine (`~/.claude/`, `~/.codex/`, and promptfoo configs are all absent).
+- **What that means**: adapter fields come from each vendor's published documentation, cited per field in
+  [docs/protocol-field-provenance.md](protocol-field-provenance.md). End-to-end tests drive the gateway with
+  real *adapter artifacts* plus a mock upstream, not with a real client binary.
+- **Residual**: a client release that changes its config shape would not be caught by CI. `doctor`
+  reports drift rather than silence, so the failure mode is visible on the next run.
+
 ## Security Residual Risks
 
 ### T1a: Data Exfiltration Detection (Canaries)
@@ -14,13 +88,21 @@
 - **What it does**: allocates a 27-character canary per session, appends it to the last user text
   before forwarding, and blocks (stream termination for streaming) when a response contains
   **another session's** canary
-- **Residual risk (recording replay not re-run)**: the v2a gate recorded 10 real agent sessions
-  and passed its form checks before the canary engine was built, but the raw recording was later
-  overwritten by probe traffic. The injection replay (finish-reason distribution, provider refusal
-  increment, manual review of 10 sessions) could not be re-established. Injection is covered by
-  integration tests across the six injection branches and by end-to-end managed-route tests, but
-  not by a fresh real-agent replay. Treat this as an accepted residual, not a proven zero-impact
-  change.
+- **Recording replay re-established 2026-11-24 (P1-1)**: the v2a recording was overwritten by
+  probe traffic, so this item sat as an accepted residual. It is now re-run against real traffic:
+  `scripts/canary-replay.mjs` rebuilds the corpus from this machine's 11 DSH session recordings
+  (`var/canary-replay/`, gitignored — 66 exchanges, 0 synthetic text) and replays three criteria.
+  Measured: **① finish_reason no migration 66/66** (injected-arm user text equals the baseline
+  arm once the trailing canary is removed, so both arms feed the upstream identical effective
+  input) · **② provider-reject delta 0** (all 66 injected bodies remain valid JSON with an
+  unchanged `messages` length) · **③ append-only 66/66** (every injection adds exactly one canary
+  and mutates no existing byte). Verdict PASS, written to `var/canary-replay/replay-report.json`.
+  Reverse probe: a patched `inject` that rewrites existing bytes turns ① and ③ red and the
+  overall verdict FAIL, so the harness is not a rubber stamp.
+- **What the replay does NOT prove**: it drives a loopback mock upstream, not the real provider, so
+  it cannot measure the *provider's* refusal rate — criterion ② is measured as "the forwarded body
+  stays well-formed", which is the part the gateway controls. A provider that rejects inflected
+  input for its own reasons is out of this measurement's reach.
 - **Operational note**: injection only applies to the managed routes listed above; traffic routed
   through other `client/provider` paths is scanned but never injected. For dsh, this means every
   OpenAI-compatible provider that shares the `/dsh/cliproxy` base URL is covered, but a provider
@@ -98,6 +180,64 @@
   request declares `tools`), and invalid JSON arguments (always)
 - **Not covered**: dangerous-command allowlists, semantic intent judgment, or a request that
   declares no `tools` at all (registered as a known miss in the requirements)
+
+#### `dangerous-command-scan` now covers the request side, with rule-level action grading (0.6.0)
+
+- **What changed**: the checker was declared `side: "response"` only. Measured on this machine's
+  real DSL sessions (2026-11-24), **every credential-read went through the request side**: an
+  upstream instructed the agent in a *response* to call a `read` tool whose `path` was
+  `~/.ssh/id_ed25519`, and the file content came back in a tool result. The checker never saw any of
+  it — a whole class of credential egress had zero coverage. The spec now declares
+  `sides: ["request", "response"]` (new optional field; `side` remains the primary side).
+- **Action grading is per rule, not per checker.** The checker carries both
+  "semantically closed" rules (reading `~/.ssh/*`, `.env`, `~/.aws/credentials`, `.npmrc` — a hit
+  *is* egress) and rules where benign text matches are legitimate (`curl … | bash` appears verbatim
+  in install docs, and in this repository's own README and tests). Giving them one action was the
+  root cause of the 2026-11-24 incident below. Now `credential-file-read` is marked `blocking` and
+  every other rule stays observational (`warn`). The authoritative set is
+  `BLOCKING_RULE_IDS`, derived from the rule table in `src/checkers/dangerous-command-scan.ts`.
+- **Residual**: the blocking rule matches credential *paths*, not credential *values*. Reading an
+  unlisted store (custom secrets dir, keychain export, `.config/gh/hosts.yml`) is not blocked by
+  this rule; it is still caught by `egress-secret-scan` if the value itself enters the request.
+- **Noise bound**: at most `MAX_FINDINGS_PER_RULE` (5) findings per rule per exchange. A long DSL
+  session resends its entire tool-result history, so one rule could otherwise emit 40+ findings and
+  drown the one that matters.
+
+#### Incident 2026-11-24: the request-side checker blocked normal sessions
+
+- **What happened**: right after the request-side dispatch was enabled, this session's own traffic
+  was refused six times (`blocked_before_forward`, HTTP 502, 645372-byte request). The cause is
+  instructive: the conversation *was about security*, so its history contained `curl … | bash`,
+  `eval $(curl …)`, `IEX`, and this repository's own test fixtures. Forty findings were recorded,
+  all from a checker that was declared observational and should never have blocked anything.
+- **Why the tests did not catch it**: the integration suite only ever fed the checker *benign*
+  traffic from the response side. There was no case of "a request whose history legitimately quotes
+  dangerous-looking commands", which is the normal shape of a security project's own sessions.
+- **Fix** (all three parts are load-bearing): rule-level grading (only `credential-file-read`
+  blocks), the per-rule noise bound, and regression tests that pin both directions — a tutorial
+  command must pass through to the upstream (`warned`, upstream receives the request), and a
+  credential read must not (`blocked_before_forward`, upstream receives nothing).
+- **Lesson**: enabling a checker on a new side changes its blast radius. An observational checker
+  that starts gating the request path is no longer observational.
+
+#### `pem-private-key` only flagged the header (fixed 0.6.1)
+
+- **What happened**: the rule matched `-----BEGIN … PRIVATE KEY-----` and nothing else, so any
+  *discussion* of PEM format was judged as credential egress and blocked the whole request. The
+  repository's own fixture — `tests/fixtures/threats/T1b/secrets.yaml`, present since 2026-09-15 —
+  is exactly such a shell, which means working on this project could refuse its own sessions.
+  Measured 2026-11-24: a request containing only that fixture line returned 502.
+- **Why the 0.5.2 example allowlist did not cover it**: that allowlist handles `AKIA…` and
+  `ghp_…` only; PEM was never added, and the problem is structural rather than a specific value.
+- **Fix**: a PEM hit now requires a block shape — the header and the `END` line on **different
+  lines**. Real PEM bodies are laid out line by line; fixtures and format discussions write them
+  inline. Three other criteria were tried and rejected with measurements: body length (the
+  truncated test sample `MIIEow...` has 6 legal characters, indistinguishable from the fixture),
+  "has any content" (the fixture's `payload` placeholder counts as content), and multi-line block
+  (it would flip the frozen `AC-VETO-003-01` sample to clean).
+- **Residual**: a truncated real key written on one line is not flagged; a discussion quoting a
+  genuine multi-line block is. Both are accepted — the former needs a body to leak, the latter is
+  already a leak in the text.
 
 ### T2b: Response Injection Protection
 
@@ -375,6 +515,8 @@ For security vulnerabilities, contact @boyingliu01 directly (do not post publicl
 
 | Date | Change |
 |------|--------|
+| 2026-11-24 | 0.6.1: canary recording replay re-established (P1-1); PEM false positive fixed; request-side grading incident registered |
+| 2026-11-24 | 0.6.0: `dangerous-command-scan` extended to the request side with rule-level grading; incident and residual coverage registered |
 | 2026-11-02 | v0.3.0: canary engine and four checkers shipped; corrected v2a status, budget semantics, and removed unverified bug claims |
 | 2026-10-16 | Initial compilation for internal trial |
 | 2026-09-27 | v2a sprint completed; canary/evil-relay merged but not yet released |

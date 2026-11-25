@@ -54,6 +54,12 @@ v1 先保证**受管路径流量 100% 过闸**（哪怕验证逻辑最简），v
 - 计费对账报告（usage×官价 vs 中转账单差值）+ provider 健康监测（错误率/超时趋势）+ `report` CLI
 - **evil-relay 模拟器 + 双矩阵 CI 全量落地**（v1 已由 mock-upstream 承担最小恶意上游职能）
 - 接入扩展：Claude Code / Codex / promptfoo（各自补 `MANAGED_CONFIG_IDS` + doctor 断言）
+  - **v2b-A 已交付（2026-11-24，SPEC-V2BA-001）**：三个客户端接入封闭枚举，`doctor` 报六态；
+    同时补齐 Anthropic Messages 与 OpenAI Responses 两种线格式的投影（此前这两种格式的流量
+    **几乎完全不可见**，凭据可径直出境）。能力边界见 `docs/protocol-capability-matrix.md`。
+  - **v2b-B 顺延**：计费对账 `report` CLI（阻塞项：官价基准数据源空白）。
+  - **v2b-C 顺延**：指纹巡检 + provider 信任分（阻塞项：`llm-fingerprint-detector` 许可未核实，
+    且主动探针与"最小暴露"承诺冲突）。
 - **验收**：TEST 五件套 `@v2` 项全部 CI 化；金丝雀回流告警 E2E 通过；T2a/T2b 在登记表中的状态由"未缓解"升为"部分/已缓解"（流式已转发字节的边界仍按 REQ §场景 4 承诺，不得回改）
 
 ### v2a 登记表加注（S-DOCS 同批订正：AC-V2a-15 / AC-V2a-16⑥⑦）

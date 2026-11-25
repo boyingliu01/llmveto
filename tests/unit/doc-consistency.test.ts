@@ -239,3 +239,54 @@ describe("doc-consistency（S-DOCS：AC-V2a-15/16 七处 + 拍板项同批订正
     );
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// v2b-A（SPEC-V2BA-001）文档守卫：REQ-V2bA-13(b) / REQ-V2bA-12 / REQ-V2bA-17
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("v2b-A 文档守卫（REQ-V2bA-13b / REQ-V2bA-12）", () => {
+  const read = (rel: string): string => readFileSync(fileURLToPath(new URL(`../../${rel}`, import.meta.url)), "utf8");
+
+  it("能力矩阵存在，且逐字写明两种新协议上金丝雀不注入（AC-V2bA-13b）", () => {
+    const matrix = read("docs/protocol-capability-matrix.md");
+    // 三列线格式都必须在场
+    for (const col of ["Chat Completions", "Anthropic Messages", "OpenAI Responses"]) expect(matrix).toContain(col);
+    // "失去的能力"必须逐条列，不是一句"部分支持"
+    expect(matrix).toContain("失去");
+    expect(matrix).toContain("显式不注入");
+  });
+
+  it("KNOWN-ISSUES 登记了 T1a 在两种新协议上的缺口（AC-V2bA-13c）", () => {
+    const issues = read("docs/KNOWN-ISSUES.md");
+    expect(issues).toContain("canary injection is chat-only");
+    expect(issues).toContain("inject_skipped");
+    expect(issues).toContain("protocol-capability-matrix.md");
+  });
+
+  it("KNOWN-ISSUES 登记了三条出境通道的边界（body / URL / 头 / 压缩）", () => {
+    const issues = read("docs/KNOWN-ISSUES.md");
+    expect(issues).toContain("Real HTTP headers are outside the scan surface");
+    expect(issues).toContain("Transport-compressed bodies are rejected");
+  });
+
+  it("KNOWN-ISSUES 登记了未知形态 fail-closed 的作用域边界", () => {
+    const issues = read("docs/KNOWN-ISSUES.md");
+    expect(issues).toContain("shape_unrecognized");
+    expect(issues).toContain("unmanaged");
+  });
+
+  it("可追溯表存在，且每个受管字段都有文档出处（AC-V2bA-12a）", () => {
+    const prov = read("docs/protocol-field-provenance.md");
+    for (const field of ["ANTHROPIC_BASE_URL", "model_providers", "apiBaseUrl"]) expect(prov).toContain(field);
+    // 每条必须带核对日期与原文摘录，而不是只有链接
+    expect(prov).toMatch(/\d{4}-\d{2}-\d{2}/);
+    expect(prov).toContain("原文");
+  });
+
+  it("smol-toml 的许可与版本进了台账（AC-V2bA-12b）", () => {
+    const licenses = read("docs/licenses.md");
+    expect(licenses).toContain("smol-toml");
+    expect(licenses).toContain("BSD-3-Clause");
+    expect(licenses).toContain("1.9.1");
+  });
+});

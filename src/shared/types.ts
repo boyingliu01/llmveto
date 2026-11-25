@@ -91,9 +91,24 @@ export type StreamChecker = (
 /** §4.2/ADR-0003：单次 tool-call arguments 累积硬顶 = 256 KiB（UTF-8 字节，严格大于语义）。 */
 export const STREAM_WINDOW_OVERFLOW_LIMIT = 262144 as const;
 
+/** checker 的实际作用侧集合（缺省 = {side}；见 CheckerSpec.sides）。 */
+export function directionsOf(spec: { readonly side: Direction; readonly sides?: readonly Direction[] }): readonly Direction[] {
+  return spec.sides ?? [spec.side];
+}
+
 export interface CheckerSpec {
   readonly id: string;
+  /** 主作用侧（单一来源：策略映射、文档与 evidence 归属都以它为准）。 */
   readonly side: Direction;
+  /**
+   * 额外作用侧（0.6.0）。缺省时作用域就是 `{side}`；声明后 checker 在两侧都参与分派。
+   * 为什么需要：凭据出境的真实形态是「上游要求 agent 用 read 工具读 `~/.ssh/id_rsa`」——
+   * 这条指令从**响应**下发、被读文件路径出现在**请求**里，只挂单侧的 checker 只能看见一半
+   * （2026-11-24 本机实测：本会话 32 个读工具调用无一进入判定面）。
+   * 不变量：分派集合仍是枚举（registry ∩ 请求/响应），不是"所有 checker 到处跑"；
+   * 每个 checker 用 `directionsOf(spec)` 自行确认本条侧是否适用。
+   */
+  readonly sides?: readonly Direction[];
   readonly synchronous: true;
   readonly safetyClass: boolean;
   /** §4.5 威胁表归属：error 条目落链时的 threat 唯一来源（禁止在 policy 侧另设表）。 */

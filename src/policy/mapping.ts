@@ -43,6 +43,26 @@ export function mapVerdictToAction(checkerId: string, verdict: Verdict): Action 
 }
 
 /**
+ * 按规则分级的判定（0.6.0）：对声明了 `blockingRules` 的 checker，finding 里**只要有一条**
+ * 命中属于可阻断规则即 block，否则退回该 checker 的常规映射（warn）。
+ *
+ * 为什么需要：同一条 checker 里既有「命中即危险」的规则（读 `~/.ssh/id_rsa`），
+ * 也有「教程里合法出现」的规则（`curl … | bash`）。前者不阻断等于放走凭据出境，
+ * 后者阻断等于把正常开发会话整条 502 掉——两者的正确策略相反，不能由 checker 粒度决定。
+ */
+export function mapBySpecWithRules(
+  spec: Pick<CheckerSpec, "id" | "safetyClass">,
+  verdict: Verdict,
+  evidence: readonly { readonly rule_id?: string }[],
+  blockingRuleIds: ReadonlySet<string>,
+): Action {
+  const base = mapBySpec(spec, verdict);
+  if (verdict !== "finding" || base === "block") return base;
+  const hasBlockingHit = evidence.some((e) => e.rule_id !== undefined && blockingRuleIds.has(e.rule_id));
+  return hasBlockingHit ? "block" : base;
+}
+
+/**
  * 由 CheckerSpec 提供 safetyClass 兜底：v1 内置表已含三个 checker，
  * 若未登记但 spec 声明 safetyClass=true 者 → finding=block, error=block。
  * safetyClass=false 者 → finding=warn, error=warn。

@@ -1,72 +1,61 @@
-# Phase 4/6: VERIFY — v2a Detection Core
+# Phase 4/6 VERIFY 小结 — llmveto v2b-A
 
-**Sprint**: sprint-20260927-46 (SPEC-V2A-001)
-**HEAD at VERIFY completion**: `131113a` (docs: align release notes with implemented budgets and counters)
-**Date**: 2026-11-02
-**Status**: COMPLETED
+- 日期：2026-11-24
+- 结论：**通过**，但**发现 1 个 CRITICAL 级真实缺陷并已修复**
 
----
+## 1. 验证结果
 
-## Gate 1 — Delphi Code-Walkthrough (3 seats, 5 rounds)
+| 项 | 结果 |
+|---|---|
+| 全量测试 | **817 passed / 52 skipped**（81 文件） |
+| 类型检查（源码 + 构建面） | PASS |
+| xp-gate check --all | 10 passed / 9 skipped（与基线一致） |
+| Gate 3 复杂度棘轮 | PASS（存量 0 回归，新代码全部 CCN ≤ 5） |
+| release-gate | **10/10 全过**（含 install-tarball / smoke 8 行 / publish-dry-run） |
+| README 中英对齐 | PASS（10 标题、5 张表行数相等） |
+| 需求覆盖 | 21/21 REQ 均有测试引用（补了此前缺失的 REQ-V2bA-04b） |
 
-| Round | Baseline commit | Architecture (A) | Technical (B) | Feasibility (C) | Outcome |
-|-------|-----------------|------------------|---------------|-----------------|---------|
-| 1 | e5837f0 | FAILED (no JSON) | REQUEST_CHANGES (8) | REQUEST_CHANGES (6) | 2C / 9M / 9m |
-| 2 | f454b58 | FAILED (no JSON) | REQUEST_CHANGES (7) | REQUEST_CHANGES (7) | 0C / 4M / 7m |
-| 3 | ab9992a | REQUEST_CHANGES (7) | FAILED (no JSON) | REQUEST_CHANGES (7) | 0C / 5M / 7m |
-| 4 | b8e0b1e | APPROVED (6) | REQUEST_CHANGES (8) | REQUEST_CHANGES (6) | 0C / 6M / 10m |
-| 5 | 21334de | **APPROVED (8)** | **APPROVED (9)** | **APPROVED (7)** | 100 % consensus |
+## 2. code-walkthrough 结果
 
-- **Final panel**: A = `g-deepseek-v4-flash` → `deepseek-v4.1-flash`; B = `g-qwen3.8-flash` → `qwen3.8-flash`; C = `g-glm-5.3-flashx` → `glm-5.3-flashx` (profile `example-provider-v2a2`).
-- **Final checks**: `all_experts_succeeded`, `requested_models_distinct`, `executed_models_distinct`, `executed_models_match_expected_echo` — all true.
-- **Round 1–3 discipline**: an expert that did not return a valid `delphi_expert_result` voids the round; consensus was never downgraded to a minority panel.
-- **Fix chain**: fb155f7 → ab9992a → b8e0b1e → 06e6da7 → 21334de → 131113a.
-- **Artifact**: [.sprint-state/code-walkthrough-reviewed.json](file:///D:/projects/llmveto/.sprint-state/code-walkthrough-reviewed.json) (per-round verdicts, severities, accepted residuals).
-- **Round-5 minors closed in 131113a**: G1/G3 budget drift (12 ms / 8-64-512 KiB), admin-surface invariant in architecture.yaml, `degraded` counter semantics + `doctor` output, empty-anchor disclosure, store re-export removal.
+- 席位：`hy4std`（失败）、`hy4flash`（有效，REQUEST_CHANGES）、`hy4flash-free`（拒绝：diff 不在工作区）
+- **两席在拿不到代码时拒绝编造评审**，这个行为本身是对的；据此把 diff 移到工作区内路径重跑
+- 有效评审 1 条 `REQUEST_CHANGES`，**4 条真实缺陷已修**、2 条按取舍登记、3 条经核实不成立
 
-Accepted residuals (deferred / non-blocking) are listed in the artifact; they include `orchestrateCanary` extraction, canary helper relocation, empty-anchor brand type, `flattenFindings` unreachable throw, and first-run timing of `relay-nightly.yml`.
+### 已修的真实缺陷（按严重度）
 
----
+| 级别 | 缺陷 | 影响 |
+|---|---|---|
+| CRITICAL | 响应侧投影**加了参数却没接线** | Anthropic `content[]` / Responses `output[]` 仍不可见；我的 5 个全链测试是请求侧的，抓不到 |
+| MAJOR | 非受管路由不写 `reason` | 覆盖降级在 evidence 层不可观测，违反 REQ-15 |
+| MAJOR | `isManagedRoute` 按前缀判定 | fail-closed 无声扩大到 `opencode/<任意 provider>` |
+| MAJOR | 配置解析失败 = `not_configured`（PASS） | 损坏的配置在 doctor 里是绿灯 |
 
-## Gate 2 — Test-Specification Alignment (#367 HARD-GATE)
+每条都补了回归测试，且对 CRITICAL 那条做了**反向探针**（去掉接线 → 断言变红）。
 
-- **Report**: `.sprint-state/test-alignment-report.json` and `.sprint-state/phase-outputs/test-alignment-report.json` (identical).
-- **Binding**: `head_commit = 131113a71dc4062dfe82bc4e8dcc23280984a074`, `spec_hash = b5d13e0ada321c59e7dd524d74de1e93006b1ab7fa0b7681a5cc9e0cc98ab5aa` (`sha256 specification.yaml`).
-- **Requirement coverage**: 15/15 REQ (100 %); 15/15 also carry strict `@test REQ-…` annotations.
-- **AC coverage**: 25/25 AC (100 % broad evidence); 21/25 strict `@covers` annotations — AC-V2a-16/20/25/26 are proven through doc-consistency and stream-window describe-level evidence rather than an `@covers` tag. Disclosed as a −4 annotation-hygiene deduction.
-- **Execution**: 59 test files discovered under `tests/**` + `bench/**`; 58 passed + 1 conditionally skipped (`relay-detection`, `RELAY_MATRIX=1` only) in the default matrix → **642 passed / 50 skipped / 0 failed**.
-- **Conditional relay suite**: 49/49 pass with `RELAY_MATRIX=1` locally; PR workflow explicitly excludes it, nightly runs it in a 4-way shard matrix with serial fallback (guard test `tests/unit/ci-workflows.test.ts` pins all three facts).
-- **Coverage**: statements 91.11 % / branches 88.13 % / functions 91.74 % / lines 92.94 % (all ≥ 80 %).
-- **Static checks**: `tsc --noEmit` + `tsc -p tsconfig.build.json --noEmit` PASS; oxlint 0 errors / 9 warnings; semgrep `p/security-audit` 34 files, 0 findings, 0 errors.
-- **Verdict**: **PASS**, alignment score 96.0 (threshold 80).
-- **Tooling disclosure**: the built-in xp-gate alignment parser does not handle this spec's mixed annotation/fixture-YAML/Chinese-label shape, so the report is generated by a deterministic project-side scanner (`var/delphi-v2a-cw/write-alignment.cjs`, gitignored) and the same disclosure is embedded in the report.
+## 3. 这次走查最值得记住的一句
 
----
+> 一个加了却从没被调用的参数，比没加更危险——它让代码看起来已经修好了。
 
-## Gate 3 — xp-gate check --all
+`REQ-V2bA-00` 早就写了"投影函数单测不构成满足证据"，但我的全链测试只覆盖了请求侧，
+所以 817 个测试全绿仍然带着这个洞。**验证的价值在于找错，不在于证明自己对。**
 
-`npx xp-gate check --all` → **exit 0**, `10 passed / 7 skipped / 17 total` (skipped gates are pre-commit-only or language-context-only: 0, 1, 5, 9, 11, 12, 13).
+## status
 
-| Gate | Result |
-|------|--------|
-| 2 Duplicate Code | 137 clone groups reported (TypeScript 5.82 % duplicated lines); informational, non-blocking |
-| 3 Cyclomatic Complexity | SKIPPED (no changed source files in the CLI context) |
-| 4 Clean Code + SOLID | 0 errors / 39 warnings / 93 info (`✗ FAIL` banner is the analyzer's warning-level display; exit code and gate summary are pass) |
-| 6 Architecture | 0 high/critical findings (zero-tolerance mode, 23 informational) |
-| 7 IaC Security | PASS (no IaC files) |
-| 8 Secret Scanning | PASS (gitleaks) |
-| 10 SAST | SKIPPED by the gate (no changed language files in CLI context); independently run: semgrep 0 findings / 0 errors |
-
-Commit-time gates 0/1/5/9/11/12/13 executed on every commit in the chain; the last two commits (`06e6da7`, `21334de`) both passed Gate 10 Build Integrity.
-
----
-
-## Browser verification
-
-[sprint-flow] 浏览器验证 SKIP — llmveto is a local HTTP gateway/CLI with no web UI; end-to-end behavior is covered by `tests/e2e/managed-path-probe.test.ts` and the relay matrix.
-
----
-
-## Next
-
-Phase 5 SHIP: VERSION gate (0.3.0), branch push + PR + CI + merge; Phase 6 CLOSE: UAT, state backup, release 0.3.0.
+```
+status: completed
+outputs:
+  - .sprint-state/review/cw-consensus.md
+  - tests/integration/response-projection.test.ts（含反向探针）
+  - tests/unit/route-keys.test.ts（受管域与 adapter 产物同源）
+  - tests/integration/route-passthrough.test.ts
+decisions:
+  - 响应侧线格式经 declaredToolsMeta 下传
+  - ShapeVerdict 拆出 block 字段（reason 恒记录）
+  - 受管域收窄为适配器实际写入的路由键
+residuals:
+  - 「合法空请求」豁免的剩余绕过面（设计取舍，已登记 KNOWN-ISSUES）
+  - coverage_missing 当前不可达（协议表恒有投影器）
+next_phase_context:
+  - 版本已 bump 到 0.7.0；release gate 10/10
+  - SHIP 需要：PR + 合并 + tag + Release
+```

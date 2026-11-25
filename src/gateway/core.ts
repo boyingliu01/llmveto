@@ -585,6 +585,33 @@ async function postToUpstream(url: string, forwardedBody: string, authorization:
  * 端到端 handler：接收 req（HTTP），向 upstream 转发 + 扫描 + 落 evidence。
  * 该函数是 gateway 层的"骨架"，测试通过 mock-upstream 集成。
  */
+/**
+ * 请求侧形状判定及其处置（REQ-V2bA-14/15）。
+ *
+ * 两个出口必须分开表达，因为它们的分权不同：**受管**路由上覆盖降级直接阻断；
+ * **非受管**路由上只记录 reason（不阻断，但要可查）。把两者塞进同一个 `if`
+ * 里，正是"非受管路径静默放行"那次缺陷的形态。
+ *
+ * 形状判定只在受管路由上做（用户决定，取舍见 KNOWN-ISSUES）：非受管路由上它的
+ * 唯一产物是记录用的 reason，成本却随 body 线性增长（CI 实测 512KB 档 p50
+ * 1.8ms → 4.5ms，超相对门）。
+ */
+function judgeShape(
+  req: { readonly body: string; readonly routePrefix?: string | null; readonly managedRoute?: boolean },
+  reqParsed: Record<string, unknown> | null,
+): {
+  readonly shape: ReturnType<typeof shapeVerdict>;
+  readonly blockReason?: string;
+  readonly degradedReason?: string;
+} {
+  if (req.managedRoute !== true) return { shape: NOTHING_SHAPE };
+  const shape = shapeVerdict("request", reqParsed, req.routePrefix ?? null, true, req.body);
+  if (shape.reason === null) return { shape };
+  if (shape.block) return { shape, blockReason: shape.reason };
+  // 非受管路径的覆盖降级：不阻断，但必须可查——挂到 outcome.reason 上落链。
+  return { shape, degradedReason: shape.reason };
+}
+
 export async function handleChatCompletions(
   core: GatewayCore,
   req: { body: string; headers: Record<string, string>; upstreamUrl: string; requestId: string; sessionId: string; turnId: string; client: string; providerId: string; endpointHost: string; transport: "stream" | "non-stream"; routePrefix?: string | null; managedRoute?: boolean },
@@ -599,22 +626,10 @@ export async function handleChatCompletions(
   // 解析结果直接交给 scanRequest 复用，避免同一份 body 被 JSON.parse 两遍。
   // CI 的 G2 512KB 档实测：多解析一次就是 0.44ms，足以把这一档推过门槛。
   const reqParsed = tryParseJson(req.body);
-  // 形状判定只在**受管路由**上做（用户的决定，取舍写在 KNOWN-ISSUES）。
-  //
-  // 为什么：非受管路由上它的唯一产物是"记录不阻断的 reason"，成本却随 body 线性增长
-  // （CI 实测 512KB 档 p50 从 1.8ms 涨到 4.5ms，超相对门）。受管路由的完整保护不变。
-  // 代价如实登记：非受管路径不再产出 shape_* 的覆盖降级 reason。
-  const shape = req.managedRoute === true
-    ? shapeVerdict("request", reqParsed, req.routePrefix ?? null, true, req.body)
-    : NOTHING_SHAPE;
-  let degradedReason: string | undefined;
-  // 受管路由上覆盖降级 = 阻断；非受管路由上只记录（REQ-15 的分权），由 shape.block 表达。
-  if (shape.block && shape.reason !== null) return blockedBeforeForward([], false, req.body, shape.reason);
-  if (shape.reason !== null) {
-    // 非受管路径的覆盖降级：不阻断，但必须可查——把它挂到 outcome.reason 上落链。
-    degradedReason = shape.reason;
-  }
-  const reqScan = core.scanRequest(req.body, req.headers, transport, cmdDedup, shapeFormat(shape), reqParsed);
+  const judge = judgeShape(req, reqParsed);
+  if (judge.blockReason !== undefined) return blockedBeforeForward([], false, req.body, judge.blockReason);
+  const degradedReason = judge.degradedReason;
+  const reqScan = core.scanRequest(req.body, req.headers, transport, cmdDedup, shapeFormat(judge.shape), reqParsed);
   // SL-01/D-12：请求体 tools 声明面（declared_tools/declared_required）提取自请求扫描
   // 单元 meta，下传给响应侧全部扫描单元（非流式 / 流式逐帧 / 归并单元）。
   const declaredMeta = declaredToolsMeta(reqScan.scanUnit.meta);
@@ -625,7 +640,7 @@ export async function handleChatCompletions(
     return blockedBeforeForward(reqFindings, reqDecision.degraded, req.body);
   }
   // canary 注入编排（D-04）：先于 fetch，注入后体作为转发体；请求侧扫描仍以客户端原体为准。
-  const canaryStep = orchestrateCanary(core, { ...req, ...(shape.format === null ? {} : { wireFormat: shape.format }) });
+  const canaryStep = orchestrateCanary(core, { ...req, ...(judge.shape.format === null ? {} : { wireFormat: judge.shape.format }) });
   // 转发到 upstream（体 = 注入编排产出：受管路径为注入后体，其余为原体）
   const upstream = await postToUpstream(req.upstreamUrl, canaryStep.forwardedBody, req.headers.authorization);
   return deliverUpstream({

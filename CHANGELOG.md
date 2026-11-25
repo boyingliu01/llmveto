@@ -4,6 +4,37 @@ All notable changes to this project are documented in this file. The format is a
 take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.6] - 2026-11-25
+
+### Changed
+
+Third round on CCN >= 8: the gateway request path and the adapter layer.
+
+| function | before | after |
+|---|---|---|
+| `handleChatCompletions` | 8 | under 5 |
+| `dispatch` | 8 | under 5 |
+| `hasPath` | 8 | 6 |
+| `placeCanary` | 8 | under 5 |
+| `consumeRotateSentinel` | 8 | 7 |
+| `parseChat` (`scripts/provider-probe`) | 11 | under 5 |
+| `promptOnce` | 11 | 8 |
+
+`handleChatCompletions` is the one worth reading. Its shape verdict had both
+outcomes in one `if`: blocked on managed routes, recorded-but-allowed on
+unmanaged ones. Those are deliberately different powers, and collapsing them
+into a single condition is exactly the shape of the "unmanaged routes silently
+allowed" defect from 0.7.0. `judgeShape` now returns `blockReason` and
+`degradedReason` as separate fields, so the two outcomes cannot be confused by
+whoever edits next.
+
+`hasPath` got the same treatment for the same reason: its array context and its
+`key[]` segment handling were interleaved, and that resolution was rewritten
+several times during v2b-A.
+
+844 tests pass, lint clean. 73 remain over 5; 19 at 8 or above, mostly in
+`scripts/` and `bench/`.
+
 ## [0.7.5] - 2026-11-25
 
 ### Changed

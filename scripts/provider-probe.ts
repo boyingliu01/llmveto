@@ -153,23 +153,38 @@ interface ChatParse {
   readonly modelField: string | null;
 }
 
+/** 值存在时展开成 `{ key: value }`，否则展开成空对象（可选字段的统一写法）。 */
+function optional<T>(key: string, value: T | undefined): Record<string, T> {
+  return value === undefined ? {} : { [key]: value };
+}
+
+/** 数字型 usage 字段；非数字时视为缺失。 */
+function numericUsage(usage: Record<string, unknown> | undefined, key: string): number | undefined {
+  const v = usage?.[key];
+  return typeof v === "number" ? v : undefined;
+}
+
+/** 字符串型 model 字段；缺失或非字符串时为 null。 */
+function modelFieldOf(parsed: Record<string, unknown> | null): string | null {
+  const v = parsed?.["model"];
+  return typeof v === "string" ? v : null;
+}
+
 function parseChat(raw: string, p: PromptSpec): ChatParse {
   const parsed = safeJson(raw);
   const choice = parsed === null ? undefined : firstChoice(parsed);
   const content = choice?.message?.content;
   const reasoning = choice?.message?.reasoning_content;
-  const usage = parsed === null ? undefined : (parsed["usage"] as Record<string, unknown> | undefined);
-  const modelField = parsed === null ? null : (typeof parsed["model"] === "string" ? parsed["model"] : null);
+  const usage = parsed?.["usage"] as Record<string, unknown> | undefined;
   const text = typeof content === "string" ? content : "";
-  const pass = judge(p, text);
   return {
     text,
-    ...(pass === undefined ? {} : { pass }),
-    ...(typeof usage?.["prompt_tokens"] === "number" ? { promptTokens: usage["prompt_tokens"] } : {}),
-    ...(typeof usage?.["completion_tokens"] === "number" ? { completionTokens: usage["completion_tokens"] } : {}),
-    ...(choice?.finishReason === undefined ? {} : { finishReason: choice.finishReason }),
-    ...(typeof reasoning === "string" ? { reasoningChars: reasoning.length } : {}),
-    modelField,
+    ...optional("pass", judge(p, text)),
+    ...optional("promptTokens", numericUsage(usage, "prompt_tokens")),
+    ...optional("completionTokens", numericUsage(usage, "completion_tokens")),
+    ...optional("finishReason", choice?.finishReason),
+    ...optional("reasoningChars", typeof reasoning === "string" ? reasoning.length : undefined),
+    modelField: modelFieldOf(parsed),
   };
 }
 
@@ -223,9 +238,10 @@ function firstChoice(body: Record<string, unknown>): { message?: { content?: unk
   const rec = first as Record<string, unknown>;
   const msg = rec["message"];
   const finish = typeof rec["finish_reason"] === "string" ? rec["finish_reason"] : undefined;
+  const message = msg !== null && typeof msg === "object" ? (msg as { content?: unknown; reasoning_content?: unknown }) : undefined;
   return {
-    ...(msg !== null && typeof msg === "object" ? { message: msg as { content?: unknown; reasoning_content?: unknown } } : {}),
-    ...(finish !== undefined ? { finishReason: finish } : {}),
+    ...optional("message", message),
+    ...optional("finishReason", finish),
   };
 }
 
@@ -240,6 +256,12 @@ function startProcess(t: AcpTarget): ReturnType<typeof spawn> {
   } catch (e) {
     throw new Error(`cannot start ${t.command}: ${String(e instanceof Error ? e.message : e)}`);
   }
+}
+
+/** JSON-RPC error 对象 → Error；`message` 字段优先，否则把整个对象序列化（不吞结构）。 */
+function jsonRpcError(err: unknown): Error {
+  const message = err !== null && typeof err === "object" ? (err as Record<string, unknown>)["message"] : undefined;
+  return new Error(typeof message === "string" ? message : JSON.stringify(err));
 }
 
 /** 极简 ACP 客户端：spawn 一次，逐 prompt 新建会话并选模型（避免历史污染）。 */
@@ -292,9 +314,28 @@ class AcpClient {
     this.pending.delete(id);
     clearTimeout(p.timer);
     const err = msg["error"];
-    if (err !== undefined) p.reject(new Error(err !== null && typeof err === "object" && typeof (err as Record<string, unknown>)["message"] === "string" ? String((err as Record<string, unknown>)["message"]) : JSON.stringify(err)));
-    else p.resolve(msg["result"]);
+    if (err === undefined) p.resolve(msg["result"]);
+    else p.reject(jsonRpcError(err));
     return true;
+  }
+
+  /** 从权限选项里取第一个可用的 `optionId`；没有则 undefined（应答为 cancelled）。 */
+  private static firstOptionId(params: unknown): string | undefined {
+    if (params === null || typeof params !== "object") return undefined;
+    const options = (params as Record<string, unknown>)["options"];
+    if (!Array.isArray(options)) return undefined;
+    for (const o of options) {
+      if (o === null || typeof o !== "object") continue;
+      const optionId = (o as Record<string, unknown>)["optionId"];
+      if (typeof optionId === "string") return optionId;
+    }
+    return undefined;
+  }
+
+  /** 应答 `session/request_permission`：能选就选第一个，否则明确取消（不静默卡住）。 */
+  private replyPermission(id: number, params: unknown): void {
+    const optionId = AcpClient.firstOptionId(params);
+    this.reply(id, optionId === undefined ? { outcome: { outcome: "cancelled" } } : { outcome: { outcome: "selected", optionId } });
   }
 
   private handleServerRequest(msg: Record<string, unknown>): void {
@@ -307,12 +348,7 @@ class AcpClient {
     }
     if (typeof id !== "number") return;
     if (method === "session/request_permission") {
-      const params = msg["params"];
-      const options = params !== null && typeof params === "object" ? (params as Record<string, unknown>)["options"] : undefined;
-      const list = Array.isArray(options) ? options : [];
-      const first = list.find((o) => o !== null && typeof o === "object" && typeof (o as Record<string, unknown>)["optionId"] === "string");
-      const optionId = first !== undefined ? (first as Record<string, unknown>)["optionId"] : undefined;
-      this.reply(id, typeof optionId === "string" ? { outcome: { outcome: "selected", optionId } } : { outcome: { outcome: "cancelled" } });
+      this.replyPermission(id, msg["params"]);
       return;
     }
     this.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32601, message: "not supported by probe" } }) + "\n");
@@ -336,26 +372,47 @@ class AcpClient {
     await this.request("initialize", { protocolVersion: 1, clientCapabilities: {} }, 60_000);
   }
 
+  /**
+   * 给会话选定模型。ACP 有两种协议形态，按服务端是否声明 config 二选一。
+   *
+   * 拆出来的理由：这段是两次 RPC 的二选一，混在 `promptOnce` 里时整条路径
+   * （建会话 → 选模型 → 提问 → 判分 → 组装）的失败面糊在一屏。
+   */
+  private async selectModel(sessionId: string, info: { configId?: string; hasConfig: boolean }): Promise<void> {
+    if (info.hasConfig && info.configId !== undefined) {
+      await this.request("session/set_config_option", { sessionId, configId: info.configId, value: this.t.model }, 20_000);
+      return;
+    }
+    await this.request("session/set_model", { sessionId, modelId: this.t.model }, 20_000);
+  }
+
+  /** 空应答的错误串：带上 stopReason 与 stderr 尾巴，否则排障时无从下手。 */
+  private emptyTextError(stop: unknown): string {
+    const stderr = clip(this.stderrTail.join("").replace(/\s+/g, " "), 200);
+    return `empty agent text (stopReason=${String(stop)}); stderr=${stderr}`;
+  }
+
   async promptOnce(p: PromptSpec, timeoutMs: number): Promise<ProbeResult> {
     const t0 = Date.now();
     try {
       const session = await this.request("session/new", { cwd: this.t.cwd ?? "/tmp", mcpServers: [] }, 60_000);
-      const { sessionId, configId, hasConfig } = sessionInfo(session);
-      if (sessionId === undefined) return { target: this.t.name, prompt: p.id, ok: false, ms: Date.now() - t0, error: "session/new returned no sessionId" };
-      if (hasConfig && configId !== undefined) {
-        await this.request("session/set_config_option", { sessionId, configId, value: this.t.model }, 20_000);
-      } else {
-        await this.request("session/set_model", { sessionId, modelId: this.t.model }, 20_000);
+      const info = sessionInfo(session);
+      if (info.sessionId === undefined) {
+        return { target: this.t.name, prompt: p.id, ok: false, ms: Date.now() - t0, error: "session/new returned no sessionId" };
       }
+      await this.selectModel(info.sessionId, info);
       const mark = this.updates.length;
-      const r = await this.request("session/prompt", { sessionId, prompt: [{ type: "text", text: expandPrompt(p) }] }, timeoutMs);
+      const r = await this.request("session/prompt", { sessionId: info.sessionId, prompt: [{ type: "text", text: expandPrompt(p) }] }, timeoutMs);
       const text = textOf(this.updates.slice(mark));
       const stop = r !== null && typeof r === "object" ? (r as Record<string, unknown>)["stopReason"] : undefined;
-      const pass = judge(p, text);
       return {
-        target: this.t.name, prompt: p.id, ok: text.length > 0, ms: Date.now() - t0, text: clip(text, 400),
-        ...(pass !== undefined ? { pass } : {}),
-        ...(text.length > 0 ? {} : { error: `empty agent text (stopReason=${String(stop)}); stderr=${clip(this.stderrTail.join("").replace(/\s+/g, " "), 200)}` }),
+        target: this.t.name,
+        prompt: p.id,
+        ok: text.length > 0,
+        ms: Date.now() - t0,
+        text: clip(text, 400),
+        ...optional("pass", judge(p, text)),
+        ...(text.length > 0 ? {} : { error: this.emptyTextError(stop) }),
       };
     } catch (e) {
       return { target: this.t.name, prompt: p.id, ok: false, ms: Date.now() - t0, error: String(e instanceof Error ? e.message : e) };

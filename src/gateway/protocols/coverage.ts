@@ -55,31 +55,40 @@ function splitPathSegments(path: string): PathSegment[] {
  *   ② 若下一段是**块类型**（`tool_use` 等），只有 `type` 相符的元素才算，
  *      且块类型段在本层被消费掉（否则 `tool_use` 会被当成一个普通键去查找，永远找不到）。
  */
+/**
+ * 数组上下文：当前值是数组，逐元素在**同一层**继续。
+ *
+ * 唯一例外：本段是块类型（`tool_use` 之类）——它描述数组元素的种类，
+ * 命中后**消费**该段再往下走。这条区分是整个路径解析最容易写错的地方
+ * （v2b-A 期间反复改过），所以单独成函数并在此写清。
+ */
+function hasPathInArray(items: readonly unknown[], segs: readonly PathSegment[]): boolean {
+  const head = segs[0]!;
+  if (!isBlockType(head.key)) return items.some((item) => hasPath(item, segs));
+  return items.some((item) => isBlockOfType(item, head.key) && hasPath(item, segs.slice(1)));
+}
+
+/**
+ * `key[]` 段：取到数组后，元素按**剩余段**继续。
+ *
+ * 元素若本身是块（`{type:"tool_use"}`），由下一层的块类型段处理；
+ * 若是普通对象（如 message），直接按剩余段取键。两者都在这里完成，
+ * 因为"数组之后的上下文"是这一段独有的知识。
+ */
+function hasPathThroughArray(child: unknown, rest: readonly PathSegment[]): boolean {
+  if (!Array.isArray(child)) return false;
+  const nextKey = rest[0]?.key ?? "";
+  return child.some((item) => (isBlockOfType(item, nextKey) ? hasPath(item, rest.slice(1)) : hasPath(item, rest)));
+}
+
 function hasPath(value: unknown, segs: readonly PathSegment[]): boolean {
   if (segs.length === 0) return value !== undefined;
-
-  // 数组上下文：当前值是一个数组，逐元素在**同一层**继续（不消费段）。
-  // 唯一的例外是"本段是块类型"——它描述数组元素的种类，命中后消费该段。
-  if (Array.isArray(value)) {
-    const head = segs[0]!;
-    if (isBlockType(head.key)) {
-      return value.some((item) => isBlockOfType(item, head.key) && hasPath(item, segs.slice(1)));
-    }
-    return value.some((item) => hasPath(item, segs));
-  }
-
+  if (Array.isArray(value)) return hasPathInArray(value, segs);
   if (!value || typeof value !== "object") return false;
+
   const [head, ...rest] = segs as [PathSegment, ...PathSegment[]];
   const child = (value as Record<string, unknown>)[head.key];
-
-  // `key[]`：取到数组后，数组元素按**剩余段**继续。
-  // 元素若本身是块（`{type:"tool_use",...}`），由下一层的"块类型段"分支处理；
-  // 若元素是普通对象（如 message），直接按剩余段取键——两个分支都在数组上下文里完成。
-  if (head.array) {
-    if (!Array.isArray(child)) return false;
-    return child.some((item) => (isBlockOfType(item, rest[0]?.key ?? "") ? hasPath(item, rest.slice(1)) : hasPath(item, rest)));
-  }
-  return hasPath(child, rest);
+  return head.array ? hasPathThroughArray(child, rest) : hasPath(child, rest);
 }
 
 /** Anthropic content 块的类型名集合（这些词在路径里表示"该 type 的块"，不是普通键）。 */

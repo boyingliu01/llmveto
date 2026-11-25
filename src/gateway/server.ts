@@ -171,6 +171,29 @@ interface DispatchContext {
 }
 
 /**
+ * 路由前的两条旁路：admin 控制通道与 models 快照。
+ *
+ * 返回 null 表示响应已写、`dispatch` 应直接返回。这两条都在**解析 body 之前**
+ * 决定，顺序也是契约：admin 通道必须早于路由解析，否则它会落进 catch-all
+ * 502 并污染 evidence（D-03 零旁路）。
+ */
+function prelude(
+  req: IncomingMessage,
+  res: ServerResponse,
+  url: URL,
+  core: GatewayCore,
+  cfg: GatewayConfig,
+): ReturnType<typeof parseRoute> | null {
+  if (url.pathname.startsWith("/_llmveto/")) {
+    handleAdminRoute(url.pathname, req.method ?? "GET", res, core);
+    return null;
+  }
+  const route = parseRoute(req.url ?? "/");
+  if (maybeServeModelsSnapshot(route, req.method, res, cfg)) return null;
+  return route;
+}
+
+/**
  * 解析请求并把"无上游可去"这一种 fail-closed 就地处理掉。
  *
  * 返回 `{responded: true}` 表示响应已写、`dispatch` 应直接返回；否则返回可转发上下文。
@@ -238,15 +261,8 @@ async function dispatch(
   const t0 = Date.now();
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
 
-  // D-03 admin 控制通道：/_llmveto/* 在路由解析前拦截（否则落 catch-all 502 + evidence 污染）；
-  // 不进 checker/policy、不产 evidence（零旁路）。
-  if (url.pathname.startsWith("/_llmveto/")) {
-    handleAdminRoute(url.pathname, req.method ?? "GET", res, core);
-    return;
-  }
-
-  const route = parseRoute(req.url ?? "/");
-  if (maybeServeModelsSnapshot(route, req.method, res, cfg)) return;
+  const route = prelude(req, res, url, core, cfg);
+  if (route === null) return;
 
   const prepared = await prepareDispatch(req, res, url, route, cfg, t0);
   if ("responded" in prepared) return;

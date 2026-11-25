@@ -64,30 +64,45 @@ function injectionPoint(messages: readonly unknown[]): number | null {
 }
 
 /** 在注入点 message 上就地安置 canary（只增不改，parse 树为本函数独有）；false = content 形态不可安置。 */
+/** 分支 1（非空尾部追加）／分支 4（"" 直接置为 canary）。 */
+function placeInString(msg: Record<string, unknown>, content: string, canary: string): void {
+  msg["content"] = content.length > 0 ? content + canary : canary;
+}
+
+/** 最后一个 text part 的下标；没有则为 -1。 */
+function lastTextPartIndex(content: readonly unknown[]): number {
+  for (let i = content.length - 1; i >= 0; i -= 1) {
+    if (isTextPart(content[i])) return i;
+  }
+  return -1;
+}
+
+/**
+ * 分支 2：追加到最后一个 text part 尾部；分支 3：纯图像/文件 → 末尾新增只含 canary 的 text part。
+ *
+ * 为什么追加到**最后一个** text part 而不是第一个：模型的注意力更靠近结尾，
+ * 而 canary 要观察的是"模型有没有把它复述出来"。
+ */
+function placeInBlocks(content: unknown[], canary: string): void {
+  const lastText = lastTextPartIndex(content);
+  if (lastText >= 0) {
+    (content[lastText] as { text: string }).text += canary;
+    return;
+  }
+  content.push({ type: "text", text: canary });
+}
+
 function placeCanary(msg: Record<string, unknown>, canary: string): boolean {
   const content = msg["content"];
   if (typeof content === "string") {
-    msg["content"] = content.length > 0 ? content + canary : canary; // 分支 1（非空尾部追加）／分支 4（""）
+    placeInString(msg, content, canary);
     return true;
   }
   if (Array.isArray(content)) {
-    let lastText = -1;
-    for (let i = content.length - 1; i >= 0; i -= 1) {
-      if (isTextPart(content[i])) {
-        lastText = i;
-        break;
-      }
-    }
-    if (lastText >= 0) {
-      (content[lastText] as { text: string }).text += canary; // 分支 2：追加到最后一个 text part 的 text 尾部
-    } else {
-      content.push({ type: "text", text: canary }); // 分支 3：纯图像/文件 → 末尾新增只含 canary 的 text part
-    }
+    placeInBlocks(content, canary);
     return true;
   }
-  if (content === undefined) {
-    msg["content"] = canary; // 分支 4：字段缺失 → 置为只含 canary 的文本（前置：原值确为缺失）
-    return true;
-  }
-  return false; // 表外形态（null/数字/对象等 §4.4 未定义）→ 不可安置 → 分支 6（不注入、可观测）
+  if (content !== undefined) return false;
+  msg["content"] = canary; // 分支 4：字段缺失 → 置为只含 canary 的文本（前置：原值确为缺失）
+  return true;
 }

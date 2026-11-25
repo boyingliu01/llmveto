@@ -47,19 +47,32 @@ function deleteSentinel(io: SentinelIo, sentinelPath: string): boolean {
  *  rotate 恒先于删除（删除失败不回滚已确认的轮换）。registry 不可用时既不轮换也不删除：
  *  persist() 会用空内存态覆盖损坏文件、销毁取证现场（§4.3 要求损坏必须显式暴露），
  *  标记保留到人工修复 registry 后的下一次启动重放。 */
+/**
+ * 处理零字节哨兵（有效的轮换请求）。registry 不可用时**不删哨兵**，留待修复后重放。
+ *
+ * @returns 已确定的结果；`null` 表示"轮换已完成，结果由删除是否成功决定"
+ */
+function consumeZeroByteMarker(store: CanaryStore, sentinelPath: string, io: SentinelIo): "skipped_registry_unavailable" | null {
+  if (store.loadStatus.status !== "ok") {
+    io.log(`[llmveto] canary rotate sentinel skipped: registry unavailable (${store.loadStatus.cause}); ${sentinelPath} kept for retry after repair\n`);
+    return "skipped_registry_unavailable";
+  }
+  store.rotate(); // 幂等：重放安全（rotation_count 只增）
+  return null;
+}
+
 export function consumeRotateSentinel(store: CanaryStore, sentinelPath: string, io: SentinelIo = SENTINEL_STD_IO): CanarySentinelOutcome {
   const size = sentinelSize(sentinelPath);
   if (size === null) return "absent";
-  const zero = size === 0;
-  if (zero) {
-    if (store.loadStatus.status !== "ok") {
-      io.log(`[llmveto] canary rotate sentinel skipped: registry unavailable (${store.loadStatus.cause}); ${sentinelPath} kept for retry after repair\n`);
-      return "skipped_registry_unavailable";
-    }
-    store.rotate(); // 幂等：重放安全（rotation_count 只增）
-  } else {
+
+  if (size > 0) {
     io.log(`[llmveto] canary rotate sentinel ignored: ${sentinelPath} is corrupt (expected zero-byte marker, got ${size} bytes)\n`);
+    // 非零字节 = 损坏标记：删掉它是清理，不是轮换，所以结果码要区分"忽略/删除失败"。
+    return deleteSentinel(io, sentinelPath) ? "corrupt_ignored" : "corrupt_delete_failed";
   }
-  if (deleteSentinel(io, sentinelPath)) return zero ? "rotated" : "corrupt_ignored";
-  return zero ? "rotated_delete_failed" : "corrupt_delete_failed"; // 重试耗尽：放弃（哨兵留存，下次启动重放）
+
+  const skipped = consumeZeroByteMarker(store, sentinelPath, io);
+  if (skipped !== null) return skipped;
+  // 重试耗尽：放弃（哨兵留存，下次启动重放）
+  return deleteSentinel(io, sentinelPath) ? "rotated" : "rotated_delete_failed";
 }

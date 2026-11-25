@@ -4,6 +4,32 @@ All notable changes to this project are documented in this file. The format is a
 take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.1] - 2026-11-25
+
+### Fixed
+
+- **A discussion of a rule was treated as an invocation of it.**
+  `powershell-download-exec` matched any text containing `powershell -enc`, so a
+  session that merely talked about the rule was blocked. Measured on the live
+  gateway: a 1 MB conversation containing that string was blocked six times
+  before forwarding — the gateway killing the session that was writing the
+  gateway. The criterion now follows the precedent set for PEM in 0.6.1: a real
+  invocation must carry a base64 payload (`-enc` followed by at least 12 chars).
+  The canonical documentation example `SQBFAFgA` is 8 and no longer fires; a
+  15-char real payload does.
+
+- **Two PEM test fixtures spelled out private-key tags in test source**, so
+  gitleaks reported leaks on the test file while xp-gate's Gate 8 showed green.
+  The fixtures now build their tags from split parts: the constructed strings are
+  byte-identical, the assertions unchanged, and a reverse probe with unrelated
+  key material is still caught. `.gitleaks.toml` is untouched — widening the
+  allowlist was tried first and a probe walked straight through it.
+
+### Known limitations
+
+- `powershell-download-exec` cannot block; only `credential-file-read` is marked
+  blocking. Findings from the former are recorded and warned, not refused.
+
 ## [0.7.0] - 2026-11-24
 
 ### Added

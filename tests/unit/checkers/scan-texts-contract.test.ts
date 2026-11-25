@@ -66,6 +66,14 @@ const ALLOWLIST: readonly Exemption[] = [
     reason: "命中原文用于去重键与 finding 归并，非扫描输入（scanTexts 双投影已覆盖）",
   },
   {
+    file: "dangerous-command-scan.ts",
+    // 2026-11-25：`isReportableHit` 读 `match.text` 是为了判"这是真实调用还是在讨论规则"
+    // （powershell `-enc` 之后必须跟够长的 base64 载荷）。它只在**已经命中的那一段**上
+    // 判断形态，不扩大也不缩小扫描面——扫描输入仍然是 scanTexts(unit) 的双投影。
+    pattern: /^match\.text$/,
+    reason: "命中片段内的 `-enc` 形态判定（区分讨论与执行），非扫描输入",
+  },
+  {
     file: "tool-call-shape.ts",
     // `chunk.text.length` in stream checker —— window overflow 累积字节计数，
     // `chunk.text` 用于流式文本累积（非安全判定）；实际 tool call 提取与三子规则

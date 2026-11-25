@@ -239,6 +239,54 @@ function offsetsFor(projectionIndex: number, withOffsets: boolean, offset: numbe
 }
 
 /**
+ * 命中是否只是"在讨论这条规则"，而不是真的在调用（2026-11-25）。
+ *
+ * 立节理由（实测，与本仓库 0.6.1 修 PEM 误报同源）：`powershell-download-exec`
+ * 原本只要求出现 `powershell -enc`。于是任何**讨论**这条规则的文本都被判危险并
+ * 阻断整条请求——实测一次 1MB 的会话历史里，只因其中提到了 `powershell -enc`
+ * 这个字符串，就被 `blocked_before_forward` 拦下 6 次，开发本项目的会话被自己的
+ * 网关打死。同一段话里既有规则文档、又有测试断言，全部命中。
+ *
+ * 判据：真实调用 `-enc` / `-encodedcommand` 后面必须跟一段**base64 载荷**。
+ * PowerShell 的 base64 参数是 UTF-16LE 命令编码后的结果，一条最短的可用命令
+ * （如 `iex(...)`）也在几十个字符以上。所以要求：
+ *   - 紧跟 `-enc` 之后是 base64 字符集，且**连续长度 ≥ MIN_ENC_PAYLOAD**；
+ *   - 讨论文本里出现的 `-enc SQBFAFgA` 只有 8 个字符，不达阈值。
+ *
+ * 阈值取 12：文档/测试里最常见的示例值是 `SQBFAFgA`（8 字符，解出来是 `IEX`），
+ * 必须排除；而实测 `SQBFAFgAIAAoAE4`（15 字符）是可信的最短真实形态，必须保留。
+ * 12 落在两者之间——再高会漏掉 15 字符的真实调用，再低就会放行文档示例。
+ */
+const MIN_ENC_PAYLOAD = 12;
+
+/**
+ * `-enc` / `-encodedcommand` 后是否真有一份够长的 base64 载荷。
+ *
+ * 起点取**匹配串内部** `-enc` 之后的位置，而不是整段匹配的末尾：
+ * `\b` 在 `-enc` 与空格之间不收尾，整段匹配可能吃掉一个后续字符，
+ * 用 `offset + text.length` 会切错位（实测：切片落在 `c` 上，载荷被判成 1 字符）。
+ */
+function hasEncodedPayload(text: string, match: { readonly offset: number; readonly text: string }): boolean {
+  const inMatch = /-(?:enc|encodedcommand)\b/i.exec(match.text);
+  if (inMatch === null) return false;
+  const from = match.offset + inMatch.index + inMatch[0].length;
+  const m = /^[\s"']*([A-Za-z0-9+/=_-]+)/.exec(text.slice(from));
+  return m !== null && (m[1] ?? "").length >= MIN_ENC_PAYLOAD;
+}
+
+/**
+ * 该命中是否可上报（"讨论"不算）。
+ *
+ * 只有 powershell-download-exec 需要这层判断：它的 `-enc` 分支是唯一"字符串出现
+ * ≠ 行为发生"的规则。`IEX(` 与 `DownloadString(` 是完整调用形态，照旧直报。
+ */
+function isReportableHit(rule: Rule, text: string, match: { offset: number; text: string }): boolean {
+  if (rule.id !== "powershell-download-exec") return true;
+  if (/-enc(?:odedcommand)?\b/i.test(match.text)) return hasEncodedPayload(text, match);
+  return true;
+}
+
+/**
  * 整体预筛：这段文本里**有没有任何一个**危险命令规则可能命中。
  *
  * 为什么不是逐规则 `includes`（实测教训）：单次 `includes` 在 512KB 上要 0.057ms，
@@ -281,7 +329,10 @@ function mayMatch(text: string, rule: Rule): boolean {
 /** 单条规则跨全部投影的命中。 */
 function hitsForRule(texts: readonly string[], rule: Rule, withOffsets: boolean): readonly RuleHit[] {
   return texts.flatMap((text, i) => (mayHitAnyRule(text) && mayMatch(text, rule) ?
-    scanOne(text, rule).map((m) => ({ rule, offsets: offsetsFor(i, withOffsets, m.offset), text: m.text }))
+    scanOne(text, rule)
+      // "讨论规则"不算命中：只有 powershell-download-exec 的 `-enc` 分支需要这层判断。
+      .filter((m) => isReportableHit(rule, text, m))
+      .map((m) => ({ rule, offsets: offsetsFor(i, withOffsets, m.offset), text: m.text }))
       : []),
   );
 }

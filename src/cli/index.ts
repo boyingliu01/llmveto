@@ -67,22 +67,29 @@ function clearStateFiles(ctx: CliCtx): void {
   }
 }
 
+/**
+ * 命令分发表。
+ *
+ * 用表而不是 switch：命令集合本身是**数据**（`COMMANDS` 也由它的键派生），
+ * 两处各写一遍时它们必然漂移——新增命令忘了改 `COMMANDS` 就会得到
+ * "unknown command"，而这个提示会把人引向参数解析而不是这里。
+ */
+const HANDLERS: Readonly<Record<CliCommand, (ctx: CliCtx, args: readonly string[]) => Promise<CliResult> | CliResult>> = {
+  start: (ctx) => cmdStart(ctx),
+  stop: (ctx) => cmdStop(ctx),
+  status: (ctx) => cmdStatus(ctx),
+  doctor: (ctx, args) => cmdDoctor(ctx, args.includes("--write-managed-config")),
+  verify: (ctx, args) => cmdVerify(ctx, args),
+  canary: (ctx, args) => cmdCanary(ctx, args),
+};
+
 export async function runCli(cmd: CliCommand | string, ctx: CliCtx = {}): Promise<CliResult> {
-  const args = ctx.args ?? [];
-  if (!COMMANDS.includes(cmd as CliCommand)) {
+  const handler = HANDLERS[cmd as CliCommand];
+  if (handler === undefined) {
     return { exitCode: 2, stdout: "", stderr: `unknown command: ${cmd}\nvalid: ${COMMANDS.join(", ")}\n` };
   }
   try {
-    switch (cmd) {
-      case "start":  return await cmdStart(ctx);
-      case "stop":   return await cmdStop(ctx);
-      case "status": return cmdStatus(ctx);
-      case "doctor": return await cmdDoctor(ctx, args.includes("--write-managed-config"));
-      case "verify": return cmdVerify(ctx, args);
-      case "canary": return await cmdCanary(ctx, args);
-      default:
-        return { exitCode: 2, stdout: "", stderr: `unknown command: ${cmd}\n` };
-    }
+    return await handler(ctx, ctx.args ?? []);
   } catch (e) {
     return { exitCode: 1, stdout: "", stderr: `error: ${(e as Error).message}\n` };
   }
@@ -176,42 +183,64 @@ async function waitForDaemonUrl(ctx: CliCtx, child: ChildProcess, pid: number): 
 }
 
 /** 子（daemon）：真实持有反代 HTTP server；写 pid/url；信号下优雅收尾（Linux/CI）。 */
-async function cmdStartDaemon(ctx: CliCtx, env: Readonly<Record<string, string | undefined>>): Promise<CliResult> {
-  const dir = stateDir(ctx);
-  mkdirSync(dir, { recursive: true });
-  const writer = new EvidenceWriter(evidenceFile(ctx));
-  const upstreamBaseUrl = env.LLMVETO_UPSTREAM_BASE_URL ?? "";
-  // 路径路由表：LLMVETO_UPSTREAMS='{"opencode/openai":"https://api.openai.com/v1", ...}'；解析失败 → 启动失败（fail-fast，不默默降级）
-  let upstreams: Record<string, string> | undefined;
-  const upstreamsEnv = env.LLMVETO_UPSTREAMS;
-  if (upstreamsEnv) {
-    try {
-      const parsed = JSON.parse(upstreamsEnv) as unknown;
-      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("must be a JSON object");
-      upstreams = parsed as Record<string, string>;
-    } catch (e) {
-      return { exitCode: 1, stdout: "", stderr: `invalid LLMVETO_UPSTREAMS: ${(e as Error).message}\n` };
+/**
+ * 解析 `LLMVETO_UPSTREAMS`：JSON 对象，值是 base URL。
+ *
+ * 解析失败**不降级**（fail-fast）：一个拼错的路径表如果被静默忽略，网关会
+ * 用全量兜底地址转发本应走专用上游的流量，而这在 evidence 里看不出来。
+ *
+ * @returns 解析结果；失败时返回错误消息（调用方转成 exitCode 1）
+ */
+function parseUpstreams(raw: string | undefined): { readonly upstreams?: Record<string, string> } | { readonly error: string } {
+  if (raw === undefined || raw === "") return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("must be a JSON object");
     }
+    return { upstreams: parsed as Record<string, string> };
+  } catch (e) {
+    return { error: (e as Error).message };
   }
-  const modelsSnapshotPath = env.LLMVETO_MODELS_SNAPSHOT;
-  const port = env.LLMVETO_PORT !== undefined ? Number(env.LLMVETO_PORT) : 8787;
-  // D-02：registry 与 gateway.pid 同级；缺省此路径 = canary 域整体关闭（rotate 503 / 不注入）。
-  const canaryRegistryPath = join(dir, "canary-registry.json");
-  const gw = await startGateway({ port, config: { upstreamBaseUrl, evidenceWriter: writer, canaryRegistryPath, ...(upstreams ? { upstreams } : {}), ...(modelsSnapshotPath ? { modelsSnapshotPath } : {}) } });
-  writeFileSync(pidFile(ctx), String(process.pid), "utf8");
-  writeFileSync(urlFile(ctx), gw.url, "utf8");
-  // 优雅收尾：SIGTERM/SIGINT → 关 server + 清理 pid/url（Windows 下 stop 直接删文件，不依赖此路）。
+}
+
+/** 优雅收尾：SIGTERM/SIGINT → 关 server + 清理 pid/url（Windows 下 stop 直接删文件，不走此路）。 */
+function installShutdownHandlers(ctx: CliCtx, close: () => Promise<void>): void {
   let closing = false;
   const shutdown = (): void => {
     if (closing) return;
     closing = true;
-    void gw.close().finally(() => {
+    void close().finally(() => {
       clearStateFiles(ctx);
       process.exit(0);
     });
   };
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
+}
+
+async function cmdStartDaemon(ctx: CliCtx, env: Readonly<Record<string, string | undefined>>): Promise<CliResult> {
+  const dir = stateDir(ctx);
+  mkdirSync(dir, { recursive: true });
+  const parsed = parseUpstreams(env.LLMVETO_UPSTREAMS);
+  if ("error" in parsed) {
+    return { exitCode: 1, stdout: "", stderr: `invalid LLMVETO_UPSTREAMS: ${parsed.error}\n` };
+  }
+  const port = env.LLMVETO_PORT !== undefined ? Number(env.LLMVETO_PORT) : 8787;
+  const gw = await startGateway({
+    port,
+    config: {
+      upstreamBaseUrl: env.LLMVETO_UPSTREAM_BASE_URL ?? "",
+      evidenceWriter: new EvidenceWriter(evidenceFile(ctx)),
+      // D-02：registry 与 gateway.pid 同级；缺省此路径 = canary 域整体关闭（rotate 503 / 不注入）。
+      canaryRegistryPath: join(dir, "canary-registry.json"),
+      ...(parsed.upstreams === undefined ? {} : { upstreams: parsed.upstreams }),
+      ...(env.LLMVETO_MODELS_SNAPSHOT === undefined ? {} : { modelsSnapshotPath: env.LLMVETO_MODELS_SNAPSHOT }),
+    },
+  });
+  writeFileSync(pidFile(ctx), String(process.pid), "utf8");
+  writeFileSync(urlFile(ctx), gw.url, "utf8");
+  installShutdownHandlers(ctx, () => gw.close());
   // server 持有事件循环 → 本 Promise resolve 后进程不退出（后台常驻）。
   return { exitCode: 0, stdout: `gateway listening at ${gw.url}\n`, stderr: "" };
 }

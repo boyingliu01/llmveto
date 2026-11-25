@@ -14,19 +14,31 @@ import type { EvidenceRecord } from "./schema.ts";
 
 export const GENESIS_HASH = "0".repeat(64);
 
+/** 对象分支：键排序后逐个序列化（排序是"规范"二字的全部含义）。 */
+function canonicalObject(obj: Record<string, unknown>): string {
+  const parts = Object.keys(obj)
+    .sort()
+    .map((k) => `${JSON.stringify(k)}:${canonicalJson(obj[k])}`);
+  return `{${parts.join(",")}}`;
+}
+
+/**
+ * 规范化 JSON：键排序、无空白、undefined 归 null。
+ *
+ * 标量分支用 `switch` 归并而不是并列的 `typeof` 判断——它们本来就只回答
+ * "这是哪一种标量"，写成四个 if 会让读者以为每个判断还带着别的条件。
+ */
 export function canonicalJson(value: unknown): string {
-  if (value === null || value === undefined) return "null";
-  if (typeof value === "number" || typeof value === "boolean") return JSON.stringify(value);
-  if (typeof value === "string") return JSON.stringify(value);
-  if (Array.isArray(value)) return "[" + value.map(canonicalJson).join(",") + "]";
-  if (typeof value === "object") {
-    const obj = value as Record<string, unknown>;
-    const keys = Object.keys(obj).sort();
-    const parts: string[] = [];
-    for (const k of keys) parts.push(JSON.stringify(k) + ":" + canonicalJson(obj[k]));
-    return "{" + parts.join(",") + "}";
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object") return canonicalObject(value as Record<string, unknown>);
+  switch (typeof value) {
+    case "number":
+    case "boolean":
+    case "string":
+      return JSON.stringify(value);
+    default:
+      return "null";
   }
-  return "null";
 }
 
 export function sha256Hex(bytes: Uint8Array | string): string {

@@ -20,6 +20,24 @@ export type AppendInput = Omit<
   readonly reason?: string | undefined;
 };
 
+/**
+ * 解析一行 evidence 并校验；损坏且**非**崩溃残留时抛出。
+ *
+ * @param halfWritten 该行是否可能是崩溃残留（文件末尾无换行）
+ */
+function parseRecordLine(line: string, lineNo: number, halfWritten: boolean): EvidenceRecord | null {
+  try {
+    const parsed = JSON.parse(line) as EvidenceRecord;
+    if (!validateEvidence(parsed).ok) throw new Error("schema invalid");
+    return parsed;
+  } catch (e) {
+    // AC-VETO-007-04：崩溃残留末行丢弃，不让半条记录卡住整个网关启动。
+    // 返回 null 而不是占位记录——占位记录会被当成"最后一条"写进 seq，从而差一。
+    if (halfWritten) return null;
+    throw new Error(`evidence file corrupt at line ${lineNo}: ${line.slice(0, 80)}`, { cause: e });
+  }
+}
+
 export class EvidenceWriter {
   private seq = 0;
   private lastHash: string = GENESIS_HASH;
@@ -30,36 +48,22 @@ export class EvidenceWriter {
   /** 启动时读取已有 JSONL 尾部 → 恢复 seq + last_hash；末行残半 → 丢弃。 */
   init(): void {
     if (this.initialized) return;
-    if (!existsSync(this.path)) {
-      this.initialized = true;
-      return;
-    }
-    const content = readFileSyncUtf8(this.path);
-    const lines = content.split("\n").filter((l) => l.length > 0);
-    // 半行检测：文件不以 \n 结尾且最后一行 JSON.parse 失败
-    const lastLineEnded = content.endsWith("\n");
-    const valid: EvidenceRecord[] = [];
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i]!;
-      const isLast = i === lines.length - 1;
-      try {
-        const parsed = JSON.parse(line) as EvidenceRecord;
-        const v = validateEvidence(parsed);
-        if (!v.ok) throw new Error("schema invalid");
-        valid.push(parsed);
-      } catch {
-        if (isLast && !lastLineEnded) {
-          // AC-VETO-007-04：崩溃残留末行丢弃
-          continue;
-        }
-        throw new Error(`evidence file corrupt at line ${i + 1}: ${line.slice(0, 80)}`);
-      }
-    }
-    if (valid.length > 0) {
-      this.seq = valid[valid.length - 1]!.seq + 1;
-      this.lastHash = valid[valid.length - 1]!.record_hash;
-    }
+    const content = existsSync(this.path) ? readFileSyncUtf8(this.path) : null;
+    if (content !== null) this.resumeFrom(content);
     this.initialized = true;
+  }
+
+  /** 从既有文件内容接续 seq 与 lastHash（重放全部记录以校验链）。 */
+  private resumeFrom(content: string): void {
+    const lines = content.split("\n").filter((l) => l.length > 0);
+    // 半行检测：文件不以 \n 结尾且最后一行 JSON.parse 失败 → 崩溃残留，丢弃末行
+    const lastLineEnded = content.endsWith("\n");
+    const parsed = lines.map((line, i) => parseRecordLine(line, i + 1, i === lines.length - 1 && !lastLineEnded));
+    const valid = parsed.filter((r): r is EvidenceRecord => r !== null);
+    const last = valid.at(-1);
+    if (last === undefined) return;
+    this.seq = last.seq + 1;
+    this.lastHash = last.record_hash;
   }
 
   append(input: AppendInput): EvidenceRecord {

@@ -4,6 +4,29 @@ All notable changes to this project are documented in this file. The format is a
 take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.5] - 2026-11-25
+
+### Changed
+
+Second round on the CCN >= 8 set, this time reaching the evidence layer and the
+CLI dispatcher:
+
+| function | before | after | what the split is about |
+|---|---|---|---|
+| `runCli` | 11 | under 5 | the command set is data, so `HANDLERS` is a table — `COMMANDS` derives from it instead of being maintained beside a parallel `switch` |
+| `cmdStartDaemon` | 10 | 6 | config parsing separated from start-and-install-signals |
+| `verifyLineAt` | 9 | under 5 | the four checks became a `LINE_CHECKS` array, because their order is a contract (version before schema before position) and that order should be readable, not buried in consecutive `if`s |
+| `canonicalJson` | 9 | 7 | scalars collapse into one `switch`; the shape branches stop pretending to carry extra conditions |
+| `scanDownloadThenExecute` | 9 | 6 | four chained `includes` became one `DOWNLOAD_COMMANDS.some(...)` |
+| `writer.init` | 9 | under 5 | line parsing extracted; a half-written last line now returns `null` rather than a placeholder record |
+
+That last one was a real bug in my own refactor, caught by the existing test:
+the first version returned `{ seq: -1, record_hash: "" }` for a truncated tail,
+and because that placeholder was then read as "the last record", the resumed
+`seq` came out one too low. The test for AC-04 caught it immediately.
+
+76 remain over 5; 28 at 8 or above. 844 tests pass, lint clean.
+
 ## [0.7.4] - 2026-11-25
 
 ### Changed

@@ -152,11 +152,16 @@ function executesAfter(text: string, endOfMatch: number): boolean {
   return EXEC_AFTER_DOWNLOAD.test(tail);
 }
 
+/** 下载动作的命令名。有一条在上游识别，`download-then-execute` 整条规则就不可能命中。 */
+const DOWNLOAD_COMMANDS: readonly string[] = Object.freeze(["curl", "wget", "iwr", "Invoke-WebRequest"]);
+
+/** 常数级预筛（同 Rule.prefilter 的理由）：命令名是下载动作的必要条件。 */
+function mayDownload(text: string): boolean {
+  return DOWNLOAD_COMMANDS.some((cmd) => text.includes(cmd));
+}
+
 function scanDownloadThenExecute(text: string): readonly { readonly offset: number; readonly text: string }[] {
-  // 常数级预筛（同 Rule.prefilter 的理由）：命令名是下载动作的必要条件。
-  if (!text.includes("curl") && !text.includes("wget") && !text.includes("iwr") && !text.includes("Invoke-WebRequest")) {
-    return [];
-  }
+  if (!mayDownload(text)) return [];
   const out: { offset: number; text: string }[] = [];
   for (const m of text.matchAll(DOWNLOAD_RULE.re)) {
     // 落盘目标可以是绝对路径（/tmp/p.sh）：只要不是 URL、也不是 `-`（stdout）。

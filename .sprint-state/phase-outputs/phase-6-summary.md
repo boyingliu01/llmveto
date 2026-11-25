@@ -1,59 +1,85 @@
-# Sprint Summary — llmveto v2a detection core (sprint-20260927-46)
+# Phase 6/6 CLOSE — llmveto v2b-A
 
-```yaml
-Sprint ID: sprint-20260927-46
-开始日期: 2026-09-27
-结束日期: 2026-11-02
-MVP 版本: v0.3.1 (v2a detection core)
-最终状态: completed
-```
+- 日期：2026-11-25
+- 结论：**已发布 v0.7.0**
 
-## 阶段执行统计
+## 交付
 
-| Phase | 状态 | 备注 |
-|-------|------|------|
-| 1/6 PREP | ✅ | worktree + 规模评估（complex） |
-| 2/6 DESIGN | ✅ | 设计文档 + R1 requirements Round 5（100% 共识）+ R2 design Round 3（100% 共识）+ 15 切片 |
-| 3/6 BUILD | ✅ | ralph-loop TDD，15/15 切片，666 tests，coverage ≥80% |
-| 4/6 VERIFY | ✅ | code-walkthrough 5 轮收敛（最终 3/3 APPROVED）+ 测试-规格对齐 96 分 + xp-gate 10/10 |
-| 5/6 SHIP | ✅ | PR #13（v2a→main）→ v0.3.0；PR #14（0.3.1 CLI 修复）→ v0.3.1 |
-| 6/6 CLOSE | ✅ | 人工 UAT 通过（emergent issues = 0）+ 状态备份 + worktree 清理 |
-
-## 交付物
-
-- **v2a 检测核心**：4 个新 checker（canary-return-scan / tool-call-shape 为阻断类；
-  thinking-signature-presence / usage-reconcile 为观察类）、canary 引擎与轮换、
-  流式窗口与预算、evil-relay testkit、门禁与文档。
-- **发布**：v0.3.0（v2a 主体）+ v0.3.1（Linux 已安装 bin 符号链接修复）。
-- **仓库状态**：main@d4e1632，PR #13 与 #14 均已合并，工作区干净。
-
-## 关键指标
-
-| 指标 | 值 |
+| 项 | 结果 |
 |---|---|
-| 切片 | 15/15 |
-| 测试 | 642 passed / 51 conditional skipped（59 files） |
-| 覆盖率 | statements 91.11% · branches 88.13% · functions 91.74% · lines 92.94% |
-| 对齐评分 | 96（15/15 REQ，25/25 AC） |
-| Gate MW | 3/3 APPROVED（v2a 主体 5 轮收敛；0.3.1 增量一轮 3/3） |
-| release gate | 10/10（本地 + Linux CI） |
-| main CI | Tests success；bench success（一次噪声门重跑后） |
+| PR | #2（squash 合并为 `53644d3`） |
+| Tag | `v0.7.0` |
+| Release | https://github.com/boyingliu01/llmveto/releases/tag/v0.7.0 |
+| 版本 | `VERSION` / `package.json` = 0.7.0 |
+| 测试 | 837 passed / 52 skipped |
+| release-gate | 10/10 |
+| CI bench | **全部 PASS**：G1 0.064（基线 0.252）、G2 8KB 0.28（0.39）、64KB 0.44（0.54）、512KB 1.83（1.8） |
 
-## 发布面遗留（用户触发）
+## 功能面（REQ-V2bA-01..17，21 REQ / 49 AC）
 
-1. ~~**npm publish 未完成**：仓库未配置 `NPM_TOKEN` secret，release workflow 在 publish 步
-   fail-closed（release gate 与版本一致性均已通过）。配置 token 后重跑 tag workflow 或手动
-   `npm publish` 即可；GitHub Release v0.3.1 已手工创建。~~
-   **已解决（2026-11-10）**：`npm llmveto@0.3.1` 已发布并成为 `latest`，doctor 烟测通过。
-   发布通过 tag worktree 本地执行 `release:gate` 后 `npm publish`（CI 路径当时因 tag 的
-   lockfile 钉在区域镜像而不可用，详见 `docs/release/publication-runbook.md`）。
-2. **v0.3.0 的 tag workflow 失败**：原因即 0.3.1 修复的 Linux bin 符号链接缺陷；v0.3.0
-   Release 仍存在，0.3.1 为推荐版本。
-3. **G-CANARY 判据①②③**：原始录制已被覆盖，重放登记为接受残差（见 `docs/KNOWN-ISSUES.md`）。
+- Claude Code / Codex / promptfoo 进入 `MANAGED_CONFIG_IDS` 封闭枚举，`doctor` 报六态
+- Anthropic Messages 与 OpenAI Responses 两种线格式的请求/响应投影（非流式 + SSE）
+- 两轴判定（识别 × 覆盖）+ 三通道出境扫描（body 三形态 / URL 三部分 / 传输编码）
+- 金丝雀注入边界写死为 chat-only，两条新路由记 `inject_skipped`（可观测）
 
-## 经验
+## 这次 sprint 真正修掉的东西
 
-- 安装形态（npm bin symlink）必须纳入 smoke：源码直跑与安装后运行是两条执行路径。
-- 发布 workflow 的 YAML 需要在推送前用 actionlint 校验，否则 0-job 失败会伪装成"CI 静默"。
-- 相对性能门（min-of-10, 1.2×）在共享 runner 上有噪声；PR 与 main 同代码结论不一致时应重跑，
-  并以绝对门 + 多次复跑为准，不静默放宽阈值。
+改动前实测：后两种线格式下凭据**直接出境**（HTTP 200 + `warned`），
+`opencode/anthropic` 自 v1 起就被当作受管路由。修完后端到端断言
+`blocked_before_forward` + 上游 0 请求，且反向探针能把它变红。
+
+累计修复 **15 条**真实缺陷（响应侧未接线、非受管不写 reason、受管域过宽、
+坏配置报绿灯、兜底顺序、裸键名豁免、值形态启发式、扫重建副本、认证头误伤、
+`\uXXXX` 转义盲区、键值拆行、query/path 编码凭据、gzip 压缩体、真实头边界登记）。
+
+## 过程教训（比功能更值得记）
+
+### 1. 优化必须先归因
+
+性能门红了六轮，我每次都直接改代码：形状判定 → 重复解析 → URL 扫描 → 预筛 →
+只在受管路由判定。**五次都没解决**。最后用二分定位到 `3ad3207`——一个本 sprint
+开工前就存在的提交，与我无关。
+
+违反的是 AGENTS.md 第 1 条和第 4 条：先读被测物契约、归因需多次采样。
+**没有归因的优化是在猜。**
+
+### 2. 预筛比它想跳过的更贵
+
+修 `3ad3207` 时，第一版写成"逐规则 `includes` 关键字"。实测：单次 `includes` 在
+512KB 上 0.057ms，8 规则 × 3 关键字 = **2.14ms**，比它要省的正则（1.9ms）还贵。
+
+改用单字符整体预筛（6 个字符合计 0.026ms）后，checker 从 3.03ms 降到 0.44ms。
+**优化本身要先被测量。**
+
+### 3. 覆盖性论证写错过一次
+
+整体预筛我论证"每条规则命中必然含 `| $ < ( /` 之一"——漏了
+`powershell.exe -enc SQBFAFgA`。测试抓住了它，加了 `-`。
+**凭直觉写的覆盖性论证一定要靠测试兜。**
+
+### 4. 评审模型用错了
+
+前五轮走查用的是 CodeBuddy 的 `hy4*`（混元）档位，因为我在项目根写了
+`.delphi-config.json` 覆盖了机器级配置。判断依据"whalecloud key 不存在"是错的——
+key 在 `~/.zshrc` 里（114 字符），而本机 `https_proxy` 还会劫持 `*.iwhalecloud.com`。
+
+改用正确三席后：两席 APPROVED，GLM 席每轮都找出真缺陷（5 条全部成立）。
+
+### 5. 拆提交前要看内容
+
+我误判 `38c3a1a` 为"无关提交"并拆掉，导致 `scripts/canary-replay.mjs` 消失、
+测试挂掉。它其实是 0.6.1 的发布提交。已回滚。
+
+## 遗留
+
+- 真实 HTTP 头通道属 v1 既定边界，已登记 `docs/KNOWN-ISSUES.md`
+- 压缩体在受管路由上 fail-closed（不还原），代价已登记
+- 非受管路由不做形状判定（性能取舍，已登记）
+- v2b-B（计费对账）、v2b-C（指纹巡检）顺延
+
+## status
+
+```
+status: completed
+deliverables: v0.7.0 released
+```

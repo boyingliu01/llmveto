@@ -34,26 +34,61 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 }
 
 /** 结构校验：不合法返回损坏原因（invalid_json 由调用方先行判定），合法返回规整化数据。 */
+/**
+ * 校验一个条目（session → 条目）。返回 null 表示结构不合法。
+ *
+ * 与下面三段拆开是为了让每个函数只表达**一个**判定面：条目内部、文件头、
+ * 条目集合。合在一起时 CCN 15，读的人要在同一屏里同时跟踪三种失败。
+ */
+function entryOf(value: unknown): RegistryEntry | null {
+  if (!isPlainObject(value)) return null;
+  const canary = value["canary"];
+  const lastSeen = value["last_seen"];
+  if (typeof canary !== "string") return null;
+  if (typeof lastSeen !== "number" || !Number.isFinite(lastSeen)) return null;
+  return { canary, last_seen: lastSeen };
+}
+
+/** `last_rotated_at` 合法：null，或可被 Date.parse 解析的字符串。 */
+function validRotatedAt(value: unknown): boolean {
+  if (value === null) return true;
+  return typeof value === "string" && !Number.isNaN(Date.parse(value));
+}
+
+/** 文件头的三个字段（version / rotation_count / last_rotated_at）。 */
+function validHeader(v: Record<string, unknown>): boolean {
+  if (v["version"] !== REGISTRY_VERSION) return false;
+  const rotation = v["rotation_count"];
+  if (typeof rotation !== "number" || !Number.isFinite(rotation) || rotation < 0) return false;
+  return validRotatedAt(v["last_rotated_at"]);
+}
+
+/** 全部条目；任一条目不合法返回 null。 */
+function entriesOf(raw: unknown): Record<string, RegistryEntry> | null {
+  if (!isPlainObject(raw)) return null;
+  const out: Record<string, RegistryEntry> = {};
+  for (const [session, value] of Object.entries(raw)) {
+    const entry = entryOf(value);
+    if (entry === null) return null;
+    out[session] = entry;
+  }
+  return out;
+}
+
 export function validateRegistryFile(v: unknown): RegistryFile | RegistryUnavailableCause {
   if (!isPlainObject(v)) return "malformed_structure";
+  // 版本是唯一能与"结构坏了"区分的失败：旧文件要能被识别成旧格式，
+  // 而不是被当成损坏而不给升级路径。
   if (v["version"] !== REGISTRY_VERSION) return "unknown_version";
-  const rotation = v["rotation_count"];
-  const rotatedAt = v["last_rotated_at"];
-  if (typeof rotation !== "number" || !Number.isFinite(rotation) || rotation < 0) return "malformed_structure";
-  if (rotatedAt !== null && (typeof rotatedAt !== "string" || Number.isNaN(Date.parse(rotatedAt)))) {
-    return "malformed_structure";
-  }
-  const raw = v["entries"];
-  if (!isPlainObject(raw)) return "malformed_structure";
-  const entries: Record<string, RegistryEntry> = {};
-  for (const [session, entry] of Object.entries(raw)) {
-    if (!isPlainObject(entry)) return "malformed_structure";
-    const canary = entry["canary"];
-    const lastSeen = entry["last_seen"];
-    if (typeof canary !== "string" || typeof lastSeen !== "number" || !Number.isFinite(lastSeen)) {
-      return "malformed_structure";
-    }
-    entries[session] = { canary, last_seen: lastSeen };
-  }
-  return { version: REGISTRY_VERSION, rotation_count: rotation, last_rotated_at: rotatedAt, entries };
+  if (!validHeader(v)) return "malformed_structure";
+
+  const entries = entriesOf(v["entries"]);
+  if (entries === null) return "malformed_structure";
+
+  return {
+    version: REGISTRY_VERSION,
+    rotation_count: v["rotation_count"] as number,
+    last_rotated_at: v["last_rotated_at"] as string | null,
+    entries,
+  };
 }

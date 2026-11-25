@@ -299,15 +299,13 @@ function checkCanaryRegistry(ctx: CliCtx): DoctorCheck {
   }
 }
 
-async function cmdDoctor(ctx: CliCtx, writeManaged: boolean): Promise<CliResult> {
-  // AC-VETO-008-02 检查项封闭枚举：① 受管配置漂移 ② 端口连通 ③（可选）写托管 ④ evidence 链
-  const env = ctx.env ?? process.env;
-  const adapters: readonly Adapter[] = [opencodeAdapter, delphiAdapter, claudeCodeAdapter, codexAdapter, promptfooAdapter];
-  const checks: DoctorCheck[] = [];
-  const baseUrl = env.LLMVETO_GATEWAY_URL ?? "http://127.0.0.1:8787";
-  // ③ 写托管配置（--write-managed-config）：先写盘，后续漂移检测才能反映写入后真实状态。
-  if (writeManaged) checks.push(writeManagedConfigs(env, baseUrl, adapters));
-  // ① 漂移：真实读取每个适配器的受管配置文件（缺失 / 不可解析 → 全漂移）
+/**
+ * 全部适配器的漂移检查（AC-VETO-008-02 ①）。
+ *
+ * 返回一条 check：任一适配器有漂移即失败，消息里同时列出漂移项与各自读到的
+ * 配置路径——诊断时"哪个文件漂了"和"读的是哪个文件"是两个不同的问题。
+ */
+function doctorConfigDrift(env: Env, baseUrl: string, adapters: readonly Adapter[]): DoctorCheck {
   const drift: { id: string }[] = [];
   const seen: string[] = [];
   for (const a of adapters) {
@@ -315,25 +313,66 @@ async function cmdDoctor(ctx: CliCtx, writeManaged: boolean): Promise<CliResult>
     seen.push(`${a.name}=${a.defaultConfigPath(env)}`);
     drift.push(...a.detectDrift(current, baseUrl));
   }
-  checks.push({
+  return {
     id: "doctor.config-drift",
     ok: drift.length === 0,
     message: `drift entries: ${drift.map((d) => d.id).join(", ") || "none"} (configs: ${seen.join(", ")})`,
-  });
-  // ①b 客户端覆盖六态（REQ-V2bA-09/10）：配好了 ≠ 扫得到，两者分开报。
+  };
+}
+
+/** 客户端覆盖六态（REQ-V2bA-09/10）：配好了 ≠ 扫得到，两者分开报。 */
+function doctorCoverageChecks(env: Env, baseUrl: string): DoctorCheck[] {
   const coverage = clientCoverageChecks(env, baseUrl);
-  checks.push({
+  const summary: DoctorCheck = {
     id: "doctor.client-coverage",
     ok: coverage.every((c) => !c.failsDoctor),
     message: coverage.map((c) => `${c.client}=${c.state}`).join(", "),
-  });
-  for (const c of coverage) {
-    checks.push({
-      id: `doctor.client-coverage.${c.client}`,
-      ok: !c.failsDoctor,
-      message: `${c.state}: ${c.message}`,
-    });
+  };
+  const perClient = coverage.map((c) => ({
+    id: `doctor.client-coverage.${c.client}`,
+    ok: !c.failsDoctor,
+    message: `${c.state}: ${c.message}`,
+  }));
+  return [summary, ...perClient];
+}
+
+/** evidence 链（AC-VETO-008-02 ④）：无文件视为空链 OK，损坏则失败。 */
+function doctorEvidenceChain(file: string): DoctorCheck {
+  const r = verifyEvidenceFile(file);
+  return {
+    id: "doctor.evidence-chain",
+    ok: r.ok || r.kind === "no_file",
+    message: r.ok ? `chain ok (${r.records} records)` : `chain: ${r.kind}`,
+  };
+}
+
+/** 覆盖计数（D-14 ⑥）：从 evidence 链聚合；链缺失/损坏 → [DEGRADED]。 */
+function doctorCoverageCounters(file: string): DoctorCheck {
+  const agg = aggregateEvidence(file);
+  if (agg.status !== "ok") {
+    return { id: "doctor.coverage-counters", ok: false, message: `[DEGRADED] counters unavailable: ${agg.reason}` };
   }
+  const c = agg.counts;
+  return {
+    id: "doctor.coverage-counters",
+    ok: true,
+    message: `total=${c.total} allowed=${c.allowed} blocked=${c.blocked} warned=${c.warned} terminated=${c.terminated} degraded=${c.degraded}`,
+  };
+}
+
+async function cmdDoctor(ctx: CliCtx, writeManaged: boolean): Promise<CliResult> {
+  // AC-VETO-008-02 检查项封闭枚举：① 受管配置漂移 ② 端口连通 ③（可选）写托管 ④ evidence 链
+  const env = ctx.env ?? process.env;
+  const adapters: readonly Adapter[] = [opencodeAdapter, delphiAdapter, claudeCodeAdapter, codexAdapter, promptfooAdapter];
+  const checks: DoctorCheck[] = [];
+  const baseUrl = env.LLMVETO_GATEWAY_URL ?? "http://127.0.0.1:8787";
+  const evidencePath = evidenceFile(ctx);
+
+  // ③ 写托管配置（--write-managed-config）：先写盘，后续漂移检测才能反映写入后真实状态。
+  if (writeManaged) checks.push(writeManagedConfigs(env, baseUrl, adapters));
+  // ① 漂移 + ①b 覆盖六态
+  checks.push(doctorConfigDrift(env, baseUrl, adapters));
+  checks.push(...doctorCoverageChecks(env, baseUrl));
   // ② 端口连通：对 gateway.url（或默认地址）做真实 TCP 探活
   const probe = await probeReachable(baseUrl);
   checks.push({
@@ -341,23 +380,11 @@ async function cmdDoctor(ctx: CliCtx, writeManaged: boolean): Promise<CliResult>
     ok: probe,
     message: probe ? `${baseUrl} reachable` : `${baseUrl} not reachable (gateway down?)`,
   });
-  // ④ evidence 链可跑通
-  const verifyResult = verifyEvidenceFile(evidenceFile(ctx));
-  checks.push({
-    id: "doctor.evidence-chain",
-    ok: verifyResult.ok || verifyResult.kind === "no_file", // 无文件视为空链 OK
-    message: verifyResult.ok ? `chain ok (${verifyResult.records} records)` : `chain: ${verifyResult.kind}`,
-  });
-  // ⑤ canary-registry（D-14 doctor 扩枚举 4→6）：registry 文件存在且可解析 → PASS；缺失/损坏 → [DEGRADED]
+  // ④ evidence 链 / ⑤ canary-registry / ⑥ coverage-counters（D-14：4→6）
+  checks.push(doctorEvidenceChain(evidencePath));
   checks.push(checkCanaryRegistry(ctx));
-  // ⑥ coverage-counters（D-14）：从 evidence 链聚合计数；链缺失/损坏 → [DEGRADED]
-  const agg = aggregateEvidence(evidenceFile(ctx));
-  if (agg.status === "ok") {
-    const c = agg.counts;
-    checks.push({ id: "doctor.coverage-counters", ok: true, message: `total=${c.total} allowed=${c.allowed} blocked=${c.blocked} warned=${c.warned} terminated=${c.terminated} degraded=${c.degraded}` });
-  } else {
-    checks.push({ id: "doctor.coverage-counters", ok: false, message: `[DEGRADED] counters unavailable: ${agg.reason}` });
-  }
+  checks.push(doctorCoverageCounters(evidencePath));
+
   const failing = checks.filter((c) => !c.ok);
   const exit = failing.length === 0 ? 0 : 1;
   const lines = checks.map((c) => `[${c.ok ? "PASS" : "FAIL"}] ${c.id}: ${c.message}`);

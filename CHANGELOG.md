@@ -4,6 +4,36 @@ All notable changes to this project are documented in this file. The format is a
 take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.3] - 2026-11-25
+
+### Changed
+
+- **The three highest-complexity functions in `src/` were split**, taking the
+  ratchet from 88 over-threshold functions to 87 and, more usefully, removing
+  three of the seventeen at CCN >= 10:
+
+  | function | before | after |
+  |---|---|---|
+  | `validateRegistryFile` | 15 | under 5 |
+  | `dispatch` | 14 | 8 |
+  | `cmdDoctor` | 12 | 6 |
+
+  Each split follows a domain edge rather than a line count.
+  `validateRegistryFile` separates "is this entry well-formed" from "is the
+  header well-formed" from "are the entries well-formed" — three failure faces
+  that previously had to be tracked in one screen. `dispatch` separates
+  preparation (can this be forwarded at all?), the fail-closed guards, and the
+  post-delivery evidence write; the guard order is documented as cost-ascending
+  (URL before body) because it affects real latency. `cmdDoctor` becomes one
+  function per check (1/1b/2/4/5/6), which is the same closed enumeration the
+  requirement already names.
+
+### Notes
+
+- `bench/` and `scripts/` still hold the remaining high-CCN functions
+  (`out-path-guard`, `provider-probe`, `release-gate`). They are development
+  tooling rather than request-path code, so they are queue rather than blockers.
+
 ## [0.7.2] - 2026-11-25
 
 ### Fixed

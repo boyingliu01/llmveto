@@ -147,6 +147,81 @@ export function joinUpstream(base: string, rest: string, viaHeader: boolean, sea
   return trimmed + rest + search;
 }
 
+/**
+ * 请求解析后的公共上下文。
+ *
+ * 抽出来的理由：`dispatch` 原本把"解析→守卫→转发→落链"四段都装在一个函数里，
+ * CCN 14。四段之间只通过这个结构传递，拆开之后每段各自可读、可单测。
+ */
+interface DispatchContext {
+  readonly url: URL;
+  readonly route: ReturnType<typeof parseRoute>;
+  readonly bodyText: string;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly id: ReturnType<typeof resolveIdentity>;
+  readonly upstreamUrl: string;
+  readonly endpointHost: string;
+  readonly t0: number;
+}
+
+/**
+ * 解析请求并把"无上游可去"这一种 fail-closed 就地处理掉。
+ *
+ * 返回 `{responded: true}` 表示响应已写、`dispatch` 应直接返回；否则返回可转发上下文。
+ * 抽出来的理由：`dispatch` 原本在这一段里有 5 个可能提前返回的分支，加上后面的守卫
+ * 一起算，CCN 14。分界线选在"能不能转发"这个语义边上，而不是按行数切。
+ */
+async function prepareDispatch(
+  req: IncomingMessage,
+  res: ServerResponse,
+  url: URL,
+  route: ReturnType<typeof parseRoute>,
+  cfg: GatewayConfig,
+  t0: number,
+): Promise<DispatchContext | { readonly responded: true }> {
+  const bodyText = await readBodyText(req);
+  const headers = normalizeHeaders(req.headers);
+  const id = resolveIdentity(route, headers, cfg);
+  const resolution = resolveUpstream(route, headers, cfg);
+  // 查询串随路径一并转发（如受管 Delphi endpoint 的 `?stream=1`、Azure 风格 api-version）
+  const upstreamUrl = resolution ? joinUpstream(resolution.base, route.rest, resolution.viaHeader, url.search) : null;
+  const endpointHost = headers["x-llmveto-endpoint-host"] ?? (upstreamUrl ? safeHost(upstreamUrl) : "unknown");
+
+  // fail-closed：无任何路由可解析 → 502，不转发，evidence 记录 router finding
+  if (!upstreamUrl) {
+    respondNoUpstreamRoute(res, cfg, id, { bodyText, endpointHost, t0 });
+    return { responded: true };
+  }
+
+  return { url, route, bodyText, headers, id, upstreamUrl, endpointHost, t0 };
+}
+
+/**
+ * 转发前的 fail-closed 守卫：命中即已写好响应，返回 true。
+ *
+ * 三条守卫按**处置成本从低到高**排列：先看 URL（不需要扫 body），再看传输编码
+ * （不需要解码），最后才做需要遍历 body 的凭据扫描。顺序影响真实延迟，
+ * 不只是可读性。
+ */
+async function blockedBeforeForwardCheck(
+  res: ServerResponse,
+  cfg: GatewayConfig,
+  ctx: DispatchContext,
+  managedRoute: boolean,
+): Promise<boolean> {
+  const encodingReason = managedRouteSecretGuard(ctx.route, ctx.headers["content-encoding"]);
+  if (encodingReason !== null) {
+    await blockedBeforeForwardUrl(res, cfg, ctx.id, { bodyText: ctx.bodyText, endpointHost: ctx.endpointHost, t0: ctx.t0 }, encodingReason);
+    return true;
+  }
+  // GLM 席 M1/终审：URL 的 query、path、userinfo 都会被上游 percent-decode，
+  // 三个部分同构，只扫 query 是半个修复。
+  const urlSecret = managedRoute ? secretInUrl(ctx.url) : null;
+  if (urlSecret === null) return false;
+  await blockedBeforeForwardUrl(res, cfg, ctx.id, { bodyText: ctx.bodyText, endpointHost: ctx.endpointHost, t0: ctx.t0 }, urlSecret);
+  return true;
+}
+
 async function dispatch(
   req: IncomingMessage,
   res: ServerResponse,
@@ -156,61 +231,59 @@ async function dispatch(
 ): Promise<void> {
   const t0 = Date.now();
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
-  // D-03 admin 控制通道：/_llmveto/* 在路由解析前拦截（否则落 catch-all 502 + evidence 污染）；不进 checker/policy、不产 evidence（零旁路）。
-  if (url.pathname.startsWith("/_llmveto/")) { handleAdminRoute(url.pathname, req.method ?? "GET", res, core); return; }
-  const route = parseRoute(req.url ?? "/");
 
+  // D-03 admin 控制通道：/_llmveto/* 在路由解析前拦截（否则落 catch-all 502 + evidence 污染）；
+  // 不进 checker/policy、不产 evidence（零旁路）。
+  if (url.pathname.startsWith("/_llmveto/")) {
+    handleAdminRoute(url.pathname, req.method ?? "GET", res, core);
+    return;
+  }
+
+  const route = parseRoute(req.url ?? "/");
   if (maybeServeModelsSnapshot(route, req.method, res, cfg)) return;
 
-  const bodyText = await readBodyText(req);
-  const headers = normalizeHeaders(req.headers);
-  const id = resolveIdentity(route, headers, cfg);
-  // GLM 席终审 C-1：传输层压缩体不还原 = 整段不可见。上游栈会自动解压，
-  // 网关不还原就是"扫了空气"（实测：gzip 体带凭据 → 200 且已到达上游）。
-  // 受管路由上无法还原的压缩体一律 fail-closed——不放行看不懂的字节。
-  const encodingReason = managedRouteSecretGuard(route, headers["content-encoding"]);
+  const prepared = await prepareDispatch(req, res, url, route, cfg, t0);
+  if ("responded" in prepared) return;
+  const ctx = prepared;
+  const managedRoute = isManagedRoute(route);
+  if (await blockedBeforeForwardCheck(res, cfg, ctx, managedRoute)) return;
 
-  const resolution = resolveUpstream(route, headers, cfg);
-  // 查询串随路径一并转发（如受管 Delphi endpoint 的 `?stream=1`、Azure 风格 api-version）
-  const upstreamUrl = resolution ? joinUpstream(resolution.base, route.rest, resolution.viaHeader, url.search) : null;
-  const endpointHost = headers["x-llmveto-endpoint-host"] ?? (upstreamUrl ? safeHost(upstreamUrl) : "unknown");
-
-  // fail-closed：无任何路由可解析 → 502，不转发，evidence 记录 router finding
-  if (!upstreamUrl) {
-    respondNoUpstreamRoute(res, cfg, id, { bodyText, endpointHost, t0 });
-    return;
-  }
-
-  if (encodingReason !== null) {
-    await blockedBeforeForwardUrl(res, cfg, id, { bodyText, endpointHost, t0 }, encodingReason);
-    return;
-  }
-
-  const transport = resolveTransport(bodyText, url, headers);
+  const transport = resolveTransport(ctx.bodyText, ctx.url, ctx.headers);
   // 判定一出即登记进每请求状态：兜底路径的 evidence 传输字段据此写，不再由交付计数反推
   // （PWR3-B-m1：`fwd.chunks > 0` 在 headers 已出而零帧转发时会把流式请求误记为非流式）。
   fwd.transport = transport;
-  // SL-05/SL-06（REQ-V2bA-04b/15）：路由前缀既是识别权威，也是 fail-closed 的作用域来源。
-  const routePrefix = route.client;
-  const managedRoute = isManagedRoute(route);
-  // GLM 席 M1：查询串是**另一条**出境通道——`?api_key=%73k%2Dant%2D…` 在 body 里
-  // 一个字面凭据字符都没有，而 HTTP 语义下资源端会 percent-decode 它。
-  // 查询串会原样拼进 upstreamUrl 转发，所以这里先解码再扫；命中即阻断。
-  // 同一条道理适用于 URL 的**所有**组成部分（GLM 席终审）：path 段与 userinfo 同样会被
-  // 上游 percent-decode，`/v1/messages/%67%68%70%5F…` 与 query 完全同构。只扫 query 是半个修复。
-  const urlSecret = managedRoute ? secretInUrl(url) : null;
-  if (urlSecret !== null) {
-    await blockedBeforeForwardUrl(res, cfg, id, { bodyText, endpointHost, t0 }, urlSecret);
-    return;
-  }
-  const outcome = await handleChatCompletions(core, { body: bodyText, headers, upstreamUrl, ...id, endpointHost, transport, routePrefix, managedRoute });
+
+  const outcome = await handleChatCompletions(core, {
+    body: ctx.bodyText,
+    headers: ctx.headers,
+    upstreamUrl: ctx.upstreamUrl,
+    ...ctx.id,
+    endpointHost: ctx.endpointHost,
+    transport,
+    routePrefix: ctx.route.client,
+    managedRoute,
+  });
 
   await deliverOutcome(res, outcome, fwd);
-  writeEvidence(cfg, { ...id, endpointHost, bodyText, respText: outcome.body, stream: transport === "stream", findings: outcome.findings,
-    actionTaken: outcome.actionTaken, deliveredChunks: outcome.deliveredChunks,
-    forwardedBody: outcome.forwardedBody, // D-04：链上 sha/bytes 记上游实收体
-    ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}), // SL-07：顶层 reason 落链（key-absent）
-    partial: outcome.actionTaken === "terminated_after_delivery", t0 });
+  recordOutcomeEvidence(cfg, ctx, outcome, transport);
+}
+
+/** 一次交互的完整 evidence 落链（D-04 上游实收体 / SL-07 顶层 reason）。 */
+function recordOutcomeEvidence(cfg: GatewayConfig, ctx: DispatchContext, outcome: Awaited<ReturnType<typeof handleChatCompletions>>, transport: "stream" | "non-stream"): void {
+  writeEvidence(cfg, {
+    ...ctx.id,
+    endpointHost: ctx.endpointHost,
+    bodyText: ctx.bodyText,
+    respText: outcome.body,
+    stream: transport === "stream",
+    findings: outcome.findings,
+    actionTaken: outcome.actionTaken,
+    deliveredChunks: outcome.deliveredChunks,
+    forwardedBody: outcome.forwardedBody,
+    ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
+    partial: outcome.actionTaken === "terminated_after_delivery",
+    t0: ctx.t0,
+  });
 }
 
 /**

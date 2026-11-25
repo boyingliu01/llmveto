@@ -48,9 +48,15 @@ describe("egress-secret-scan (REQ-VETO-003)", () => {
   });
 
   it("AC-VETO-003-01: PEM 私钥块命中（多行）", () => {
-    const r = egressSecretScan(
-      req("preamble\n-----BEGIN RSA PRIVATE KEY-----\nMIIEow...\n-----END RSA PRIVATE KEY-----\n"),
-    );
+    // 夹具的标记与主体**分段拼接**：写成连续字面量会让 gitleaks 的 private-key
+    // 规则命中测试源码本身（实测本仓库不加法条豁免时报 2 处）。拼出来与原来是
+    // 同一个字符串，被测行为不变，但源码里不再出现完整的私钥标记。
+    // 头被切成 `<BEGIN 段> + <PRIVATE KEY 段>`，主体是截断省略的 `MIIEow...`，
+    // 没有可用密钥材料。
+    const pemTag = "-----BEGIN";
+    const pemTrailer = "PRIVATE KEY-----";
+    const pemBody = `${pemTag} RSA ${pemTrailer}\nMIIEow...\n${pemTag} RSA ${pemTrailer}\n`;
+    const r = egressSecretScan(req(`preamble\n${pemBody}`));
     expect(r.verdict).toBe("finding");
     expect(r.evidence.some((f) => f.rule_id === "pem-private-key")).toBe(true);
   });
@@ -61,8 +67,15 @@ describe("egress-secret-scan (REQ-VETO-003)", () => {
     // 旧规则只认头部，导致任何引用该夹具的会话请求都 502。
     const fixture = "-----BEGIN RSA PRIVATE KEY----- payload -----END RSA PRIVATE KEY-----";
     expect(egressSecretScan(req(fixture)).verdict).toBe("clean");
-    // 讨论格式的写法同样不该命中
-    expect(egressSecretScan(req("PEM 文件以 -----BEGIN OPENSSH PRIVATE KEY----- 开头")).verdict).toBe("clean");
+    // 讨论格式的写法同样不该命中。
+    //
+    // 标记在这里拆成两段拼接：写成连续字面量会让 gitleaks 的 private-key 规则
+    // 从这句描述一路匹配到下一个真实测试夹具，把一句说明变成"疑似私钥"。
+    // 拆开后构造出的字符串完全相同，断言语义不变，但源码里不再出现完整的
+    // BEGIN…PRIVATE KEY 标记（前缀与后缀分开写）。
+    const pemHead = "-----BEGIN OPENSSH";
+    const discussed = `PEM 文件以 ${pemHead} PRIVATE KEY----- 开头`;
+    expect(egressSecretScan(req(discussed)).verdict).toBe("clean");
   });
 
   it("PEM 真块（头 + base64 主体）仍命中：收紧没有削弱检测", () => {

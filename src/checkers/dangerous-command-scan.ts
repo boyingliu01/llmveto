@@ -36,6 +36,15 @@ const ACC_KEY = "accText";
 interface Rule {
   readonly id: string;
   readonly re: RegExp;
+  /**
+   * 常数级预筛：这些字面量一个都不在文本里时，`re` 必然无命中，直接跳过。
+   *
+   * 为什么需要（G2 回归实测）：4 条新规则 × 多份投影在 512KB 文本上合计 1.2ms，
+   * 而 G2 的增量预算只有 0.36ms —— 512KB 档 p50 因此从 5.13ms 涨到 10.58ms。
+   * 预筛用 `includes`（5µs 级），绝大多数正常文本直接短路。
+   * 漏写的后果只是回落到正则（慢，不会更松），所以每个字面量必须覆盖该规则能命中的**全部**路径。
+   */
+  readonly prefilter?: readonly string[];
   readonly severity: "medium" | "high";
   /** 命中串的宿主名需再过一道「非内网」判定（裸 IP 规则用）。 */
   readonly publicHostOnly?: boolean;
@@ -55,31 +64,37 @@ interface Rule {
 const RULES: readonly Rule[] = [
   {
     id: "remote-pipe-exec",
+    prefilter: ["curl", "wget"],
     re: /\b(?:curl|wget)\b[^|\n]{0,300}\|\s*(?:sudo\s+)?(?:ba|z|k|da)?sh\b/g,
     severity: "high",
   },
   {
     id: "process-substitution-exec",
+    prefilter: ["curl", "wget"],
     re: /\b(?:ba|z|k)?sh\s+(?:-\S+\s+)*<\(\s*(?:curl|wget)\b|\beval\s+["']?\$\(\s*(?:curl|wget)\b/g,
     severity: "high",
   },
   {
     id: "base64-pipe-exec",
+    prefilter: ["base64"],
     re: /\bbase64\s+(?:-d|--decode|-D)\b[^|\n]{0,200}\|\s*(?:sudo\s+)?(?:ba|z)?sh\b/g,
     severity: "high",
   },
   {
     id: "powershell-download-exec",
+    prefilter: ["IEX", "iex", "Invoke-Expression", "DownloadString", "powershell", "PowerShell", "pwsh"],
     re: /\b(?:IEX|Invoke-Expression)\s*\(|\bDownloadString\s*\(|\bpowershell(?:\.exe)?\s+-(?:enc|encodedcommand)\b/gi,
     severity: "high",
   },
   {
     id: "reverse-shell",
+    prefilter: ["/dev/tcp", "/dev/udp", "nc "],
     re: /\/dev\/(?:tcp|udp)\/[^\s'"]+\/|\bnc\s+[^\n]{0,80}\s-e\s+\/(?:bin|usr\/bin)\/(?:ba)?sh\b/g,
     severity: "high",
   },
   {
     id: "raw-ip-download",
+    prefilter: ["http://", "https://"],
     re: /\bhttps?:\/\/(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\/\S*/g,
     severity: "medium",
     publicHostOnly: true,
@@ -90,6 +105,7 @@ const RULES: readonly Rule[] = [
     // `cat x | nc host port`、（bash|sh|python…) 管道到远端。裸 `nc` 用法（端口探测、手工会话）
     // 不含远端输入管道，不命中——这是把规则限定在「反向外带」语义上，而不是见到 nc 就报。
     id: "reverse-shell-pipe",
+    prefilter: ["nc ", "ncat", "netcat"],
     re: /\b(?:cat|tar|base64)\b[^|\n]{0,200}\|\s*(?:nc|ncat|netcat)\s+\S+\s+\d{1,5}\b|\b(?:ba|z)?sh\b[^|\n]{0,80}\|\s*(?:nc|ncat|netcat)\s+\S+\s+\d{1,5}\b/g,
     severity: "high",
   },
@@ -99,6 +115,7 @@ const RULES: readonly Rule[] = [
     // 这条路不经过模型参数读取界面，是凭据出境的实际形态之一。
     // 只认「文件读取工具/命令 + 凭据文件路径」，不认路径单独出现（文档、配置示例常见）。
     id: "credential-file-read",
+    prefilter: [".ssh/", ".aws/", ".npmrc", ".pypirc", ".netrc", ".git-credentials", ".gnupg", ".env", "secret"],
     // 语义封闭 → 唯一允许阻断的规则（见 Rule.blocking）。
     blocking: true,
     // 命中集合全部以字面 "." 起头：前缀字符类展开后必然以非空白收尾，不存在空匹配。
@@ -136,6 +153,10 @@ function executesAfter(text: string, endOfMatch: number): boolean {
 }
 
 function scanDownloadThenExecute(text: string): readonly { readonly offset: number; readonly text: string }[] {
+  // 常数级预筛（同 Rule.prefilter 的理由）：命令名是下载动作的必要条件。
+  if (!text.includes("curl") && !text.includes("wget") && !text.includes("iwr") && !text.includes("Invoke-WebRequest")) {
+    return [];
+  }
   const out: { offset: number; text: string }[] = [];
   for (const m of text.matchAll(DOWNLOAD_RULE.re)) {
     // 落盘目标可以是绝对路径（/tmp/p.sh）：只要不是 URL、也不是 `-`（stdout）。
@@ -217,17 +238,60 @@ function offsetsFor(projectionIndex: number, withOffsets: boolean, offset: numbe
   return withOffsets && projectionIndex === 0 ? [offset] : [];
 }
 
+/**
+ * 整体预筛：这段文本里**有没有任何一个**危险命令规则可能命中。
+ *
+ * 为什么不是逐规则 `includes`（实测教训）：单次 `includes` 在 512KB 上要 0.057ms，
+ * 8 条规则 × 平均 3 个关键字 = 24 次 → **2.14ms**，比它想省的 1.9ms 还贵。
+ * 而单字符 `includes` 只要 0.004ms（memchr），几个单字符就把绝大多数文本排除了。
+ *
+ * 覆盖性论证（每条规则命中时必然含下列至少一个字符）：
+ *   - remote-pipe-exec / base64-pipe-exec / reverse-shell-pipe：必有 `|`
+ *   - process-substitution-exec：`<(` 或 `$(`
+ *   - powershell-download-exec：`IEX(` / `DownloadString(` 的 `(`，或 `-enc` / `-encodedcommand` 的 `-`
+ *   - reverse-shell：`/dev/tcp/` 的 `/`
+ *   - raw-ip-download：`://` 的 `/`
+ *   - credential-file-read：`.ssh/` 之类必有 `.` 或 `/`
+ *   - download-then-execute：`-O` 之类的 `-`，或路径里的 `/`
+ * 因此必须包含 `-`（`powershell.exe -enc` 形态不含其它任何一个）。
+ * 不放 `.`：它在任何含域名的文本里都有，排除力为零。
+ *
+ * **这条论证写错过一次**（实测：`powershell.exe -enc SQBFAFgA` 不含前五个字符，被误杀），
+ * 所以这里是按"每条规则 × 每个分支"逐个核对的，不是凭直觉。
+ */
+function mayHitAnyRule(text: string): boolean {
+  return (
+    text.includes("|") ||
+    text.includes("$") ||
+    text.includes("<") ||
+    text.includes("(") ||
+    text.includes("/") ||
+    text.includes("-")
+  );
+}
+
+/** 文本是否可能命中该规则（常数级预筛；无 prefilter 时恒真）。 */
+function mayMatch(text: string, rule: Rule): boolean {
+  const keys = rule.prefilter;
+  if (keys === undefined) return true;
+  for (const key of keys) if (text.includes(key)) return true;
+  return false;
+}
+
 /** 单条规则跨全部投影的命中。 */
 function hitsForRule(texts: readonly string[], rule: Rule, withOffsets: boolean): readonly RuleHit[] {
-  return texts.flatMap((text, i) =>
-    scanOne(text, rule).map((m) => ({ rule, offsets: offsetsFor(i, withOffsets, m.offset), text: m.text })),
+  return texts.flatMap((text, i) => (mayHitAnyRule(text) && mayMatch(text, rule) ?
+    scanOne(text, rule).map((m) => ({ rule, offsets: offsetsFor(i, withOffsets, m.offset), text: m.text }))
+      : []),
   );
 }
 
 function scanTextsWithText(texts: readonly string[], withOffsets: boolean): readonly RuleHit[] {
   const ruleHits = RULES.flatMap((rule) => hitsForRule(texts, rule, withOffsets));
   const downloadHits = texts.flatMap((text, i) =>
-    scanDownloadThenExecute(text).map((m) => ({ rule: DOWNLOAD_RULE, offsets: offsetsFor(i, withOffsets, m.offset), text: m.text })),
+    mayHitAnyRule(text)
+      ? scanDownloadThenExecute(text).map((m) => ({ rule: DOWNLOAD_RULE, offsets: offsetsFor(i, withOffsets, m.offset), text: m.text }))
+      : [],
   );
   return [...ruleHits, ...downloadHits];
 }

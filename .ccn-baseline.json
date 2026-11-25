@@ -5,7 +5,8 @@
     "A recorded function passes at its recorded CCN or lower and BLOCKS if it grows;",
     "functions with no entry are new code and still face the flat threshold.",
     "All numbers come from lizard -- one process per file -- because batch mode",
-    "inflates spans across file boundaries and would make them incomparable."
+    "inflates spans across file boundaries and would make them incomparable.",
+    "2026-11-25 (v0.8.0): every function is now CCN<=7. The target was 8, not 5: sampling the 6-7 band found linear guard chains (jsonAtPath: 13 lines, one loop, two guards) where splitting charges every caller a hop and lands both halves near the limit. CCN counts preconditions there, not confusion. The 63 entries in the 6-7 band are deliberately left: they read fine."
   ],
   "population": {
     "roots": [

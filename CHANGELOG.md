@@ -4,6 +4,64 @@ All notable changes to this project are documented in this file. The format is a
 take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.10.0] - 2026-11-26
+
+### Added
+
+**v2b-C: provider fingerprint patrol.** The gateway now periodically probes each
+managed provider with a request containing no user data, judges the response
+against per-dimension baselines, and records the result. **It only warns.**
+
+Read `docs/fingerprint-capability.md` before trusting it. The short version:
+
+- Four dimensions — tokenizer, format adherence, knowledge boundary, refusal
+  wording — sampled one per probe on rotation (four samples = 24h per dimension).
+- Per-dimension median baselines over a K=10 window. Median, not mean, because a
+  single outlier must not move the baseline; per dimension, because a vector
+  median is a point that never actually occurred.
+- Version changes are judged by **direction**, not by whether the `model` field
+  moved: field changed + behaviour intact is an upgrade, field changed +
+  behaviour degraded is a rollback, field unchanged + behaviour degraded means
+  the field is lying and carries severity high.
+- Catch-up probes (two dimensions, not three) confirm whether a single-dimension
+  degradation is stable or time-sliced.
+- Circuit breaker: 3 consecutive failures -> 6h -> 12h -> 24h, **persisted across
+  restarts**. Manual and periodic probes share one quota.
+- `llmveto fingerprint` shows trust scores; `--probe <provider>` requests a probe
+  and is subject to the same quota.
+
+### What it cannot do
+
+- **Not block, not auto-disable, not fail `doctor`.** Assertion AC-10b keeps the
+  trust score out of the policy engine.
+- **Probes are identifiable** by timing, payload shape and source address, even
+  after every disguise measure. A relay that cares can tell this machine runs a
+  gateway. That cost was accepted knowingly (DR-002/DR-003).
+- **Perfect time-slicing defeats it.** Rotation means four samples at four
+  moments, so the system cannot prove the degradations came from one model.
+- **No judgement before the first baseline.** `baseline_pending` is both a grace
+  period and a blind spot.
+
+### Fixed
+
+Six defects found by the code walkthrough, four of them mine:
+
+- `persistState()` existed and was never called, so the circuit breaker did not
+  survive a restart. Worse than the bug: the test called it explicitly and
+  therefore verified a call that never happened on a real path.
+- Catch-up quota lived in an in-memory Map, so restarting reset the daily
+  allowance. A control that clears on restart is not a control.
+- Deviation from a zero baseline was 1 for any non-zero observation, which the
+  absolute baseline read as "suspected smaller model".
+- `verdictFor` had no runtime type check; a numeric kind with a string baseline
+  (what JSON deserialisation hands you) makes every comparison NaN, and NaN
+  comparisons are all false — a silent permanent clean.
+- Replay took the last line rather than the latest state, so an out-of-order
+  write could clear a circuit breaker.
+- Two `as unknown as` casts defeated the store's closed-kind check.
+
+947 tests, lint clean, no function above CCN 7.
+
 ## [0.9.5] - 2026-11-26
 
 ### Added

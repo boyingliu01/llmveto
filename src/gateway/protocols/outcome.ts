@@ -1,5 +1,5 @@
 // @no-test-required: 测试在 tests/integration/protocol-outcome.test.ts（本项目测试布局为 tests/ 目录；Gate 5a 仅识别同目录/根 tests/ 六种路径）
-import { coverageReason, coverageVerdict, presentPaths } from "./coverage.ts";
+import { coverageReason, presentPaths } from "./coverage.ts";
 import { egressSecretScan } from "../../checkers/egress-secret-scan.ts";
 import { isAuthHeader } from "../scan-unit.ts";
 import { protocolFor, recognize } from "./registry.ts";

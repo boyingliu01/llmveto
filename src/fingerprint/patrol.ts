@@ -55,10 +55,19 @@ export class Patrol {
   private loadState(): void {
     for (const event of this.store.readAll()) {
       if (event.kind !== "patrol_state") continue;
-      const s = event as unknown as PatrolState;
-      // 同一 provider 取最后一条（后写的覆盖先写的）
-      this.states.set(s.provider_id, s);
+      if (this.shouldReplace(event)) this.states.set(event.provider_id, event);
     }
+  }
+
+  /**
+   * 这条状态是否应覆盖已有的。
+   *
+   * 取**退避截止最晚**的而不是"最后一条"：append-only log 不保证全局时间序，
+   * 用最后一条可能被旧状态覆盖，等于抹掉退避。
+   */
+  private shouldReplace(candidate: PatrolState): boolean {
+    const prev = this.states.get(candidate.provider_id);
+    return prev === undefined || candidate.backoff_until_ts > prev.backoff_until_ts;
   }
 
   private stateOf(providerId: string): PatrolState {

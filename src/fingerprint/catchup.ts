@@ -1,6 +1,6 @@
 // @no-test-required: 测试在 tests/unit/fingerprint/catchup.test.ts（Gate 5a 仅识别同目录/根 tests/ 六种路径）
 import type { Patrol } from "./patrol.ts";
-import type { FingerprintStore } from "./store.ts";
+import type { CatchUpQuotaEvent, FingerprintStore } from "./store.ts";
 import { type ProbeDimension, PROBE_DIMENSIONS } from "./probe.ts";
 
 /**
@@ -25,8 +25,6 @@ export const CATCHUP_DAILY_LIMIT = 1;
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
-/** 补齐配额的持久化事件类型。 */
-const CATCHUP_KIND = "catchup_quota" as const;
 
 /** 补齐补几个维度。 */
 export const CATCHUP_DIMENSIONS = 2;
@@ -66,11 +64,19 @@ export class CatchUpPlanner {
   /** 从 store 恢复各 provider 的上次补齐时刻。 */
   private loadQuotas(): void {
     if (this.store === undefined) return;
+    // 取**最大**时间戳而不是"最后一条"：append-only log 在并发写入下不保证
+    // 全局时间序，用最后一条可能被旧时间戳覆盖，导致配额意外重置（评审 caveat 1）。
+    // 取**最大**时间戳而不是"最后一条"：append-only log 在并发写入下不保证
+    // 全局时间序，用最后一条可能被旧时间戳覆盖，导致配额意外重置。
     for (const e of this.store.readAll()) {
-      if (e.kind !== CATCHUP_KIND) continue;
-      const ev = e as unknown as { provider_id: string; ts_ms: number };
-      this.lastCatchUp.set(ev.provider_id, ev.ts_ms);
+      if (e.kind !== "catchup_quota") continue;
+      this.recordQuotaOnly(e.provider_id, e.ts_ms);
     }
+  }
+
+  /** 只更新内存中的配额（回放用），取最大值。 */
+  private recordQuotaOnly(providerId: string, tsMs: number): void {
+    this.lastCatchUp.set(providerId, Math.max(this.lastCatchUp.get(providerId) ?? 0, tsMs));
   }
 
   /**
@@ -99,8 +105,10 @@ export class CatchUpPlanner {
   recordCatchUp(providerId: string): void {
     const at = this.now();
     this.lastCatchUp.set(providerId, at);
-    // 落盘：否则重启即重置配额（评审 C1）
-    this.store?.append({ kind: CATCHUP_KIND, provider_id: providerId, ts_ms: at } as unknown as Parameters<FingerprintStore["append"]>[0]);
+    // 落盘：否则重启即重置配额（评审 C1）。
+    // 用真正的强类型记录而不是 `as unknown as` 强转——后者会让 store 的
+    // 封闭枚举校验形同虚设（第 3 轮评审 caveat 3）。
+    this.store?.append({ kind: "catchup_quota", provider_id: providerId, ts_ms: at } satisfies CatchUpQuotaEvent);
   }
 
   /**

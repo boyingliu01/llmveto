@@ -139,3 +139,26 @@ describe("SL-08 熔断（AC-09a/09b/AC-20）", () => {
     expect(p.isBackingOff("prov")).toBe(false);
   });
 });
+
+describe("SL-08 乱序回放（第 3 轮评审 caveat 1 回归）", () => {
+  it("append-only log 中旧状态在后时，不覆盖已有的退避", () => {
+    const c = clock();
+    const store = tempStore();
+    const p = new Patrol({ store, now: c.now });
+    for (let i = 0; i < 3; i += 1) p.recordFailure("prov", "D0", "timeout");
+    const backedOff = p.backoffUntil("prov");
+
+    // 手工追加一条**更早**的状态（模拟并发乱序）
+    store.append({
+      kind: "patrol_state",
+      provider_id: "prov",
+      last_attempt_ts: 1,
+      consecutive_failures: 0,
+      backoff_rounds: 0,
+      backoff_until_ts: 0,
+    });
+    const revived = new Patrol({ store, now: c.now });
+    expect(revived.isBackingOff("prov")).toBe(true);
+    expect(revived.backoffUntil("prov")).toBe(backedOff);
+  });
+});

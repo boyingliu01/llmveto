@@ -148,3 +148,15 @@ describe("SL-09 配额跨重启（评审 C1 回归）", () => {
     expect(new CatchUpPlanner({ now: c.now, store: s }).shouldCatchUp("b", patrol)).toBe(true);
   });
 });
+
+describe("SL-09 配额乱序回放（评审 caveat 1）", () => {
+  it("旧配额事件在后时不覆盖新配额", () => {
+    const c = clock();
+    const s = store();
+    const patrol = new Patrol({ store: s, now: c.now });
+    new CatchUpPlanner({ now: c.now, store: s }).recordCatchUp("prov");
+    // 追加一条更早的配额（模拟乱序）
+    s.append({ kind: "catchup_quota", provider_id: "prov", ts_ms: 1 });
+    expect(new CatchUpPlanner({ now: c.now, store: s }).shouldCatchUp("prov", patrol)).toBe(false);
+  });
+});

@@ -1,0 +1,274 @@
+{
+  "_schema_version": 1,
+  "specification_ref": "specification.yaml (SPEC-V2BA-001, v1.0.0, 21 REQ / 48 AC)",
+  "sprint": "sprint-20261124-54",
+  "branch": "sprint/2026-11-24-01",
+  "build_mode": "ralph-loop",
+  "invariants": [
+    "每个切片完成前必须跑：npx vitest run（全量）+ npx tsc --noEmit + xp-gate check --all",
+    "改共享函数前必须先有 Chat 对照测试（SL-01）",
+    "DR-031：本分支产物不得接管用户日常流量（systemd 跑 main 的 dist）",
+    "DR-031：凭据探针复用 tests/fixtures/threats/T1b/secrets.yaml 中的既有值，不新造",
+    "R2 修正：识别以路由权威为主，内容吻合只在无权威前缀时使用（不得让 chat 与 anthropic 互相竞争）",
+    "R2 修正：任何适配器不得 import src/gateway/protocols/；客户端线格式声明落在 src/shared/"
+  ],
+  "slices": [
+    {
+      "id": "SL-01",
+      "title": "协议注册表骨架 + CoverageSpec oracle + 内容吻合识别 + Chat 对照锁",
+      "depends_on": [],
+      "requirements": [
+        "REQ-V2bA-03",
+        "REQ-V2bA-04",
+        "REQ-V2bA-14"
+      ],
+      "files": "src/gateway/protocols/{types,registry,chat}.ts + tests/unit/gateway/protocols/recognize.test.ts",
+      "verify": [
+        "npx vitest run tests/unit/gateway/protocols/recognize.test.ts tests/unit/gateway/scan-unit.test.ts"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "SL-02",
+      "title": "Anthropic Messages 非流式投影（含 handled/present 上报）",
+      "depends_on": [
+        "SL-01"
+      ],
+      "requirements": [
+        "REQ-V2bA-02",
+        "REQ-V2bA-05"
+      ],
+      "files": "src/gateway/protocols/anthropic.ts + tests/unit/gateway/protocols/anthropic.test.ts",
+      "verify": [
+        "npx vitest run tests/unit/gateway/protocols/anthropic.test.ts"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "SL-03",
+      "title": "Responses 非流式投影（含上报）",
+      "depends_on": [
+        "SL-01"
+      ],
+      "requirements": [
+        "REQ-V2bA-01",
+        "REQ-V2bA-05"
+      ],
+      "files": "src/gateway/protocols/responses.ts + tests/unit/gateway/protocols/responses.test.ts",
+      "verify": [
+        "npx vitest run tests/unit/gateway/protocols/responses.test.ts"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "SL-04",
+      "title": "两种新格式的流式帧投影",
+      "depends_on": [
+        "SL-02",
+        "SL-03"
+      ],
+      "requirements": [
+        "REQ-V2bA-01",
+        "REQ-V2bA-02"
+      ],
+      "files": "protocols/*.projectFrame + tests/unit/gateway/protocols/stream-frames.test.ts",
+      "verify": [
+        "npx vitest run tests/unit/gateway/protocols/stream-frames.test.ts"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "SL-05",
+      "title": "两轴处置（识别 × 覆盖）+ 四个 reason 码",
+      "depends_on": [
+        "SL-01",
+        "SL-02",
+        "SL-03"
+      ],
+      "requirements": [
+        "REQ-V2bA-14",
+        "REQ-V2bA-15",
+        "REQ-V2bA-15a"
+      ],
+      "files": "src/gateway/protocols/outcome.ts + core 接线 + tests/integration/protocol-outcome.test.ts",
+      "verify": [
+        "npx vitest run tests/integration/protocol-outcome.test.ts"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "SL-06",
+      "title": "路由前缀 + 受管路由定义 + 查询串透传",
+      "depends_on": [
+        "SL-01"
+      ],
+      "requirements": [
+        "REQ-V2bA-04b"
+      ],
+      "files": "src/gateway/protocols/routes.ts + server.parseRoute + tests/integration/route-passthrough.test.ts",
+      "verify": [
+        "npx vitest run tests/integration/route-passthrough.test.ts"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "SL-07",
+      "title": "客户端线格式声明（shared 层数据表）",
+      "depends_on": [
+        "SL-01"
+      ],
+      "requirements": [
+        "REQ-V2bA-10"
+      ],
+      "files": "src/shared/client-wire-format.ts + tests/unit/shared/client-wire-format.test.ts",
+      "verify": [
+        "npx vitest run tests/unit/shared/client-wire-format.test.ts"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "SL-08",
+      "title": "Claude Code 适配器",
+      "depends_on": [
+        "SL-02",
+        "SL-06"
+      ],
+      "requirements": [
+        "REQ-V2bA-06"
+      ],
+      "files": "src/adapters/claude-code.ts + tests/unit/adapters/claude-code.test.ts",
+      "verify": [
+        "npx vitest run tests/unit/adapters/claude-code.test.ts"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "SL-09",
+      "title": "Codex 适配器（TOML 定点编辑）",
+      "depends_on": [
+        "SL-03",
+        "SL-06"
+      ],
+      "requirements": [
+        "REQ-V2bA-07",
+        "REQ-V2bA-08a"
+      ],
+      "files": "src/adapters/codex.ts + src/adapters/toml-edit.ts + tests/unit/adapters/codex.test.ts",
+      "verify": [
+        "npx vitest run tests/unit/adapters/codex.test.ts"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "SL-10",
+      "title": "promptfoo 适配器（默认只报告）",
+      "depends_on": [
+        "SL-01",
+        "SL-06"
+      ],
+      "requirements": [
+        "REQ-V2bA-08"
+      ],
+      "files": "src/adapters/promptfoo.ts + tests/unit/adapters/promptfoo.test.ts",
+      "verify": [
+        "npx vitest run tests/unit/adapters/promptfoo.test.ts"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "SL-11",
+      "title": "doctor 六态 + 线格式覆盖判定",
+      "depends_on": [
+        "SL-05",
+        "SL-07",
+        "SL-08",
+        "SL-09",
+        "SL-10"
+      ],
+      "requirements": [
+        "REQ-V2bA-09",
+        "REQ-V2bA-10"
+      ],
+      "files": "src/cli/index.ts doctor 扩展 + tests/unit/cli/doctor-v2b.test.ts",
+      "verify": [
+        "npx vitest run tests/unit/cli/doctor-v2b.test.ts"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "SL-12",
+      "title": "金丝雀边界 + 能力清单 + KNOWN-ISSUES",
+      "depends_on": [
+        "SL-02",
+        "SL-03"
+      ],
+      "requirements": [
+        "REQ-V2bA-13"
+      ],
+      "files": "core canaryInjection gating + docs 能力清单 + tests/integration/canary-boundary.test.ts",
+      "verify": [
+        "npx vitest run tests/integration/canary-boundary.test.ts"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "SL-13",
+      "title": "四段全链 E2E + 阻断类端到端",
+      "depends_on": [
+        "SL-04",
+        "SL-05",
+        "SL-06",
+        "SL-08",
+        "SL-09"
+      ],
+      "requirements": [
+        "REQ-V2bA-00",
+        "REQ-V2bA-16"
+      ],
+      "files": "tests/integration/protocol-fullchain.test.ts",
+      "verify": [
+        "npx vitest run tests/integration/protocol-fullchain.test.ts"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "SL-14",
+      "title": "存量受管路由覆盖审计 + partial 计数守卫",
+      "depends_on": [
+        "SL-05",
+        "SL-13"
+      ],
+      "requirements": [
+        "REQ-V2bA-11",
+        "REQ-V2bA-15a"
+      ],
+      "files": "docs/protocol-coverage-audit.md + tests/unit/doc-consistency.test.ts 扩展",
+      "verify": [
+        "npx vitest run tests/unit/doc-consistency.test.ts"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "SL-15",
+      "title": "可追溯表 + 文档与登记表订正",
+      "depends_on": [
+        "SL-08",
+        "SL-09",
+        "SL-10",
+        "SL-11",
+        "SL-12",
+        "SL-13",
+        "SL-14"
+      ],
+      "requirements": [
+        "REQ-V2bA-12",
+        "REQ-V2bA-17"
+      ],
+      "files": "docs/protocol-field-provenance.md + ROADMAP/REQ/README×2/FAQ/KNOWN-ISSUES/licenses",
+      "verify": [
+        "npx vitest run tests/unit/doc-consistency.test.ts && node scripts/check-readme-parity.mjs"
+      ],
+      "status": "completed"
+    }
+  ]
+}

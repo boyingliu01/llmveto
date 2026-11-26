@@ -41,7 +41,9 @@ const LAYER_ALLOW: Record<string, string[]> = {
   "src/evidence":  ["../shared", "../evidence", "./"],
   "src/adapters":  ["../shared", "../adapters", "./"],
   "src/gateway":   ["../shared", "../checkers", "../policy", "../evidence", "../canary", "../gateway", "./"],
-  "src/cli":       ["../shared", "../checkers", "../policy", "../evidence", "../adapters", "../gateway", "../cli", "./"],
+  // v2b-C：fingerprint 是独立功能层，只依赖 shared；不得 import gateway/adapters（探针不经过反代核）
+  "src/fingerprint": ["../shared", "../fingerprint", "./"],
+  "src/cli":       ["../shared", "../checkers", "../policy", "../evidence", "../adapters", "../gateway", "../fingerprint", "../cli", "./"],
 };
 
 function layerOf(file: string): string | null {

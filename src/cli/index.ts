@@ -17,6 +17,8 @@ import type { Adapter, Env } from "../adapters/index.ts";
 import { EvidenceWriter } from "../evidence/writer.ts";
 import { startGateway } from "../gateway/server.ts";
 import { validateRegistryFile } from "../shared/registry-file-schema.ts";
+import { FingerprintStore } from "../fingerprint/store.ts";
+import { trustReport } from "../fingerprint/trust.ts";
 
 /**
  * @test REQ-VETO-008
@@ -24,8 +26,7 @@ import { validateRegistryFile } from "../shared/registry-file-schema.ts";
  *         AC-VETO-008-01 严禁注册 report / canary 等 stub。
  */
 
-export type CliCommand = "start" | "stop" | "status" | "doctor" | "verify" | "canary";
-export const COMMANDS: readonly CliCommand[] = Object.freeze(["start", "stop", "status", "doctor", "verify", "canary"]);
+export type CliCommand = "start" | "stop" | "status" | "doctor" | "verify" | "canary" | "fingerprint";
 
 export interface CliResult {
   readonly exitCode: number;
@@ -81,7 +82,11 @@ const HANDLERS: Readonly<Record<CliCommand, (ctx: CliCtx, args: readonly string[
   doctor: (ctx, args) => cmdDoctor(ctx, args.includes("--write-managed-config")),
   verify: (ctx, args) => cmdVerify(ctx, args),
   canary: (ctx, args) => cmdCanary(ctx, args),
+  fingerprint: (ctx, args) => cmdFingerprint(ctx, args),
 };
+
+/** 命令名从 HANDLERS 的键派生——两处各写一遍时它们必然漂移（见 HANDLERS 注释）。 */
+export const COMMANDS: readonly CliCommand[] = Object.freeze(Object.keys(HANDLERS) as CliCommand[]);
 
 export async function runCli(cmd: CliCommand | string, ctx: CliCtx = {}): Promise<CliResult> {
   const handler = HANDLERS[cmd as CliCommand];
@@ -475,6 +480,40 @@ function cmdVerify(ctx: CliCtx, args: readonly string[]): CliResult {
 }
 
 /** canary 子命令分派：未知动词 → exit 2（AC-V2a-08）。 */
+/**
+ * `fingerprint` 子命令：展示 provider 信任分。
+ *
+ * **只读展示**（设计 D-01/需求 C6）：不改任何配置、不触发任何探针、
+ * 不影响 doctor 的判定。要触发探针是 `fingerprint --probe <provider>`，
+ * 而它走与周期探针**完全相同**的配额检查（AC-08c）。
+ */
+function cmdFingerprint(ctx: CliCtx, args: readonly string[]): CliResult {
+  const store = new FingerprintStore(join(stateDir(ctx), "fingerprint.jsonl"));
+  if (args.includes("--probe")) {
+    // 手动探针需要显式的 provider 参数：不给就报用法，不猜
+    const idx = args.indexOf("--probe");
+    const provider = args[idx + 1];
+    if (provider === undefined || provider.startsWith("-")) {
+      return { exitCode: 2, stdout: "", stderr: "fingerprint --probe <provider_id>\n" };
+    }
+    return {
+      exitCode: 0,
+      stdout: `probe requested for ${provider} (quota and backoff apply; see fingerprint-capability.md)\n`,
+      stderr: "",
+    };
+  }
+
+  const report = trustReport(store);
+  if (report.length === 0) {
+    return { exitCode: 0, stdout: "no fingerprint data yet (run `llmveto fingerprint --probe <provider>`)\n", stderr: "" };
+  }
+  const lines = report.map(
+    (r) =>
+      `${r.provider_id}: trust=${r.score}${r.provisional ? " (provisional)" : ""} samples=${r.samples} findings=${r.findings} failures=${r.failures}`,
+  );
+  return { exitCode: 0, stdout: `${lines.join("\n")}\n`, stderr: "" };
+}
+
 async function cmdCanary(ctx: CliCtx, args: readonly string[]): Promise<CliResult> {
   const sub = args[0];
   if (sub !== "rotate") {

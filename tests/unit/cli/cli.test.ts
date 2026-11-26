@@ -28,8 +28,8 @@ describe("SL-11 CLI (REQ-VETO-008)", () => {
   beforeAll(() => { dir = mkdtempSync(join(tmpdir(), "llmveto-cli-")); });
   afterAll(() => { rmSync(dir, { recursive: true, force: true }); });
 
-  it("AC-01 命令集合封闭枚举：start/stop/status/doctor/verify + canary（SL-12 扩展 5→6）", () => {
-    expect([...COMMANDS].sort()).toEqual(["canary", "doctor", "start", "status", "stop", "verify"]);
+  it("AC-01 命令集合封闭枚举：start/stop/status/doctor/verify + canary + fingerprint（v2b-C 扩展 6→7）", () => {
+    expect([...COMMANDS].sort()).toEqual(["canary", "doctor", "fingerprint", "start", "status", "stop", "verify"]);
     expect(() => assertNoV2Stubs()).not.toThrow();
   });
 

@@ -4,6 +4,43 @@ All notable changes to this project are documented in this file. The format is a
 take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.9.5] - 2026-11-26
+
+### Added
+
+**v2b-C provider fingerprint patrol — all 15 slices complete.**
+
+The capability boundary is now written down in `docs/fingerprint-capability.md`,
+which is the part that matters most. In summary: the gateway periodically sends a
+probe containing no user data to each managed provider, judges the response
+against per-dimension baselines, and records the result. **It only warns.**
+
+What it explicitly cannot do, and why:
+
+- **Not block, not auto-disable, not fail `doctor`.** Fingerprint judgement is
+  affected by temperature, load and version updates, so giving it blocking power
+  would replay the shape v2b-A fixed: text rules whose false positives killed
+  the development session. The trust score is a display metric and there is an
+  assertion (AC-10b) keeping it out of the policy engine.
+- **Probes are identifiable.** No session content, no deployment markers, same
+  path as ordinary traffic, SDK-style User-Agent — and still recognisable by
+  timing, payload structure and source IP. A relay that cares can tell this
+  machine runs a gateway. That is the cost the user accepted in DR-002/DR-003.
+- **Perfect time-slicing defeats it.** Rotation means four samples at four
+  moments, so the system can never prove the degradations came from one model.
+  Catch-up probes catch imperfect slicing, not perfect slicing.
+- **No judgement before the first baseline.** `baseline_pending` is both a grace
+  period and a blind spot.
+
+### Fixed
+
+- `COMMANDS` was a hard-coded list next to `HANDLERS` while a comment claimed it
+  was derived from it. The comment now describes the code. Adding `fingerprint`
+  is what exposed the gap: the count assertion and the architecture layer check
+  both failed, which is exactly what those guards are for.
+
+82 fingerprint tests; 926 total, lint clean.
+
 ## [0.9.0] - 2026-11-26
 
 ### Added

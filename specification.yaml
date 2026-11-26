@@ -1,334 +1,585 @@
-# llmveto v2b-A 多客户端接入 — Specification
-# 权威来源：.sprint-state/review/r1-requirements-r3draft.md（R1 两轮评审后定稿）
-#           docs/plans/2026-11-24-v2b-a-design.md（D-01~D-09，用户 2026-11-24 批准）
-#           .sprint-state/decisions.md（DR-029 范围 / DR-030 评审面板 / DR-031 fail-closed 与探针来源）
-# 本文件是 ralph-loop / test-specification-alignment 的机读契约入口；AC 全文以需求文档为准，此处承载可判定的 given/when/then。
-
 specification:
-  id: "SPEC-V2BA-001"
-  name: "llmveto v2b-A — 多客户端接入（Claude Code / Codex / promptfoo）"
-  version: "1.0.0"
-  sprint_ref: "sprint-20261124-54"
-  branch: "sprint/2026-11-24-01"
+  id: SPEC-V2BA-001
+  name: llmveto v2b-A — 多客户端接入（Claude Code / Codex / promptfoo）
+  version: 1.0.0
+  sprint_ref: sprint-20261124-54
+  branch: sprint/2026-11-24-01
   review_gate:
-    r1_requirements: ".sprint-state/review/r1-consensus.md + r1-consensus-r2.md（两轮，5 个席位全部 REQUEST_CHANGES，逐条吸收后定稿）"
-    design_approval: "用户 2026-11-24 批准（DR-031）"
-    r2_design: "见 .sprint-state/review/r2-consensus.md"
+    r1_requirements: .sprint-state/review/r1-consensus.md + r1-consensus-r2.md（两轮，5
+      个席位全部 REQUEST_CHANGES，逐条吸收后定稿）
+    design_approval: 用户 2026-11-24 批准（DR-031）
+    r2_design: 见 .sprint-state/review/r2-consensus.md
   out_of_scope:
-    - "v2b-B billing reconciliation report CLI"
-    - "v2b-C fingerprint patrol with provider trust score"
-    - "ACP clients (trae / codebuddy) — registered architectural boundary"
-    - "TLS interception / redact / configurable policy (v3)"
-    - "real installed client E2E (none of the three clients is installed on this machine)"
+  - v2b-B billing reconciliation report CLI
+  - v2b-C fingerprint patrol with provider trust score
+  - ACP clients (trae / codebuddy) — registered architectural boundary
+  - TLS interception / redact / configurable policy (v3)
+  - real installed client E2E (none of the three clients is installed on this machine)
   requirements:
-    - id: "REQ-V2bA-00"
-      title: "入口到投影全链"
-      description: "受管路由请求由网关入口接住、以原始 body 交给协议识别与投影、并原样转发上游"
-      priority: "P0"
-      note: "投影函数单测通过不构成本条满足证据"
-      acceptance_criteria:
-        - id: "AC-V2bA-00a"
-          given: "真实 adapter 产物经真实 startGateway 发一次"
-          when: "请求到达上游"
-          then: "上游收到的 body 与客户端发出的逐字节相同（含查询串）"
-        - id: "AC-V2bA-00b"
-          given: "同上一次请求"
-          when: "扫描单元构建"
-          then: "unit.text 命中探针文本（仅上游一致或仅 evidence 有记录均不通过）"
-    - id: "REQ-V2bA-01"
-      title: "Responses 协议线覆盖（非流式 + 流式）"
-      description: "input/instructions/output 与 response.* 流式帧纳入投影"
-      priority: "P0"
-      acceptance_criteria:
-        - id: "AC-V2bA-01a"
-          given: "Responses 形态请求含 input[]/instructions/function_call.arguments/function_call_output.output"
-          when: "buildRequestScanUnit 执行"
-          then: "四类载荷全部进入 unit.text"
-        - id: "AC-V2bA-01b"
-          given: "Responses 非流式响应含 output[].content[].output_text 与 output[].arguments"
-          when: "buildResponseScanUnit 执行"
-          then: "两者进入 unit.text"
-        - id: "AC-V2bA-01c"
-          given: "Responses 流式帧 response.output_text.delta / response.function_call_arguments.delta / …done"
-          when: "逐帧投影"
-          then: "投影非空且命中探针"
-    - id: "REQ-V2bA-02"
-      title: "Anthropic Messages 协议线覆盖（非流式 + 流式）"
-      description: "system 块数组 / tool_use.input / tool_result / 响应 content 与 content_block_delta 纳入投影"
-      priority: "P0"
-      acceptance_criteria:
-        - id: "AC-V2bA-02a"
-          given: "Anthropic 请求 system 为块数组"
-          when: "buildRequestScanUnit 执行"
-          then: "块内 text 进入 unit.text"
-        - id: "AC-V2bA-02b"
-          given: "Anthropic 请求含 tool_use.input 对象与 tool_result.content"
-          when: "buildRequestScanUnit 执行"
-          then: "两者进入 unit.text 且标为派生"
-        - id: "AC-V2bA-02c"
-          given: "Anthropic 非流式响应 content[]"
-          when: "buildResponseScanUnit 执行"
-          then: "text 与 tool_use.input 进入 unit.text"
-        - id: "AC-V2bA-02d"
-          given: "Anthropic 流式帧 content_block_delta"
-          when: "逐帧投影"
-          then: "text_delta 与 input_json_delta 投影非空"
-    - id: "REQ-V2bA-03"
-      title: "协议形态识别与三态结果"
-      description: "recognize() 输出 known / known_but_empty / unknown"
-      priority: "P0"
-      note: "不静默判 clean"
-      acceptance_criteria:
-        - id: "AC-V2bA-03a"
-          given: "路由前缀 claude/codex/promptfoo 各一条真实形态请求"
-          when: "recognize 执行"
-          then: "分别解析为 anthropic-messages / openai-responses / chat"
-        - id: "AC-V2bA-03b"
-          given: "匿名路由上 messages+纯文本（Claude 无 system 与 Chat 结构相同）、带块数组 system 的 Claude、带 max_tokens 的标准 Chat"
-          when: "recognize 执行"
-          then: "三者均不得返回 unknown（禁止 chat 与 anthropic 互相竞争导致误判）"
-        - id: "AC-V2bA-03c"
-          given: "null / 数组 / 畸形输入"
-          when: "recognize 执行"
-          then: "返回数据不抛异常"
-    - id: "REQ-V2bA-04"
-      title: "协议抽象（数据驱动）"
-      description: "线格式 × 路由约定 两维注册表；每个协议 provide recognize/projectRequest/projectResponse"
-      priority: "P0"
-      note: "Chat 分支只加不改"
-      acceptance_criteria:
-        - id: "AC-V2bA-04a"
-          given: "Chat 形态请求与响应投影"
-          when: "改动前后比对"
-          then: "逐字节相同（对照门）"
-        - id: "AC-V2bA-04b"
-          given: "移除任一新增投影分支"
-          when: "跑对应正样本"
-          then: "正样本变红（反向探针）"
-    - id: "REQ-V2bA-04b"
-      title: "路由前缀归属与透传"
-      description: "保留段前缀 + rest/查询串原样到达上游"
-      priority: "P0"
-      acceptance_criteria:
-        - id: "AC-V2bA-04b1"
-          given: "请求 /v1/messages?beta=true 与 /v1/responses"
-          when: "经网关转发"
-          then: "上游收到完整路径与查询串"
-        - id: "AC-V2bA-04b2"
-          given: "新路由前缀集合"
-          when: "与保留段及既有客户端名比对"
-          then: "无冲突"
-    - id: "REQ-V2bA-05"
-      title: "offsets 口径"
-      description: "派生文本必须标注，不参与原文 offsets 断言"
-      priority: "P1"
-      note: "Chat offsets 语义不变"
-      acceptance_criteria:
-        - id: "AC-V2bA-05a"
-          given: "对象规范化 JSON 派生片段"
-          when: "投影产出"
-          then: "derived 标记为真且不参与原文 offsets 断言"
-        - id: "AC-V2bA-05b"
-          given: "Chat 形态既有 offsets 用例"
-          when: "全量回归"
-          then: "保持全绿"
-    - id: "REQ-V2bA-06"
-      title: "Claude Code 适配器"
-      description: "env.ANTHROPIC_BASE_URL 纳管"
-      priority: "P1"
-      note: "凭据变量显式不纳管"
-      acceptance_criteria:
-        - id: "AC-V2bA-06a"
-          given: "applyManagedConfig 写入 settings.env.ANTHROPIC_BASE_URL"
-          when: "detectDrift 执行"
-          then: "为空"
-        - id: "AC-V2bA-06b"
-          given: "手工改值"
-          when: "detectDrift 执行"
-          then: "含 claude.settings.env.ANTHROPIC_BASE_URL"
-        - id: "AC-V2bA-06c"
-          given: "适配器源码与产物"
-          when: "静态与行为断言"
-          then: "不写/不读/不比较 ANTHROPIC_AUTH_TOKEN 与 ANTHROPIC_API_KEY"
-    - id: "REQ-V2bA-07"
-      title: "Codex 适配器（TOML 定点编辑）"
-      description: "base_url + wire_api 两目标键"
-      priority: "P1"
-      note: "除目标键外逐字节相同"
-      acceptance_criteria:
-        - id: "AC-V2bA-07a"
-          given: "含注释/键序/CRLF 的既有 config.toml"
-          when: "applyManagedConfig 写回"
-          then: "除 base_url 与 wire_api 外逐字节相同"
-        - id: "AC-V2bA-07b"
-          given: "无 model_providers.llmveto 块的新文件"
-          when: "applyManagedConfig 写回"
-          then: "创建新块且可被解析"
-        - id: "AC-V2bA-07c"
-          given: "文件含多处同形目标键"
-          when: "applyManagedConfig 写回"
-          then: "拒绝写入并报错，文件未被修改"
-    - id: "REQ-V2bA-08a"
-      title: "写盘原语复用与备份"
-      description: "JSON 复用 config-io.writeJsonConfig"
-      priority: "P1"
-      note: "TOML 临时文件 rename + .bak"
-      acceptance_criteria:
-        - id: "AC-V2bA-08a1"
-          given: "三个 JSON 适配器写路径"
-          when: "源码断言"
-          then: "复用 config-io.writeJsonConfig，无第二份实现"
-        - id: "AC-V2bA-08a2"
-          given: "写入过程抛错"
-          when: "TOML 写路径执行"
-          then: "无半截文件残留，覆盖前 .bak 存在"
-    - id: "REQ-V2bA-08"
-      title: "promptfoo 适配器"
-      description: "项目级文件默认只报告，opt-in 才写"
-      priority: "P1"
-      acceptance_criteria:
-        - id: "AC-V2bA-08a"
-          given: "存在 promptfooconfig.yaml 但未加 --include-project-config"
-          when: "doctor 执行"
-          then: "文件 mtime 与内容不变"
-        - id: "AC-V2bA-08b"
-          given: "providers[] 增删元素"
-          when: "漂移 id 计算"
-          then: "以稳定标识而非下标标识"
-        - id: "AC-V2bA-08c"
-          given: "配置含 apiHost 或 OPENAI_BASE_URL"
-          when: "doctor 执行"
-          then: "标 unmanaged 且不计漂移"
-    - id: "REQ-V2bA-09"
-      title: "doctor 封闭枚举扩展与六态报告"
-      description: "六态可区分 + 退出码映射"
-      priority: "P1"
-      acceptance_criteria:
-        - id: "AC-V2bA-09a"
-          given: "分别构造六态"
-          when: "doctor 执行"
-          then: "六态可区分输出"
-        - id: "AC-V2bA-09b"
-          given: "六态各自触发"
-          when: "doctor 退出"
-          then: "not_installed/not_configured → 0；其余四态 → 1"
-    - id: "REQ-V2bA-10"
-      title: "线格式覆盖判定"
-      description: "无法确定时报 coverage_unknown"
-      priority: "P1"
-      note: "不折算成通过"
-      acceptance_criteria:
-        - id: "AC-V2bA-10a"
-          given: "客户端线格式无法确定"
-          when: "doctor 执行"
-          then: "输出 coverage_unknown 且 exit 1"
-        - id: "AC-V2bA-10b"
-          given: "线格式有覆盖且已正确配置"
-          when: "doctor 执行"
-          then: "非 DEGRADED"
-    - id: "REQ-V2bA-11"
-      title: "存量受管路由覆盖审计"
-      description: "既有路由 × 线格式 × 可见性 审计表"
-      priority: "P1"
-      acceptance_criteria:
-        - id: "AC-V2bA-11a"
-          given: "既有受管路由全集"
-          when: "审计表产出"
-          then: "每条列出线格式与可见性且被测试引用"
-    - id: "REQ-V2bA-12"
-      title: "字段来源可追溯表"
-      description: "字段 ↔ 文档 URL ↔ 核对日期 ↔ 原文摘录"
-      priority: "P2"
-      acceptance_criteria:
-        - id: "AC-V2bA-12a"
-          given: "可追溯表"
-          when: "静态断言"
-          then: "字段路径可 grep、含文档 URL 与核对日期、被 doc-consistency 引用"
-        - id: "AC-V2bA-12b"
-          given: "smol-toml 元数据"
-          when: "静态断言"
-          then: "版本/许可/依赖数同表覆盖"
-    - id: "REQ-V2bA-13"
-      title: "金丝雀边界"
-      description: "非 Chat 显式 inject_skipped + 能力清单 + KNOWN-ISSUES"
-      priority: "P2"
-      acceptance_criteria:
-        - id: "AC-V2bA-13a"
-          given: "非 Chat 形态请求"
-          when: "过闸"
-          then: "evidence 顶层出现 inject_skipped"
-        - id: "AC-V2bA-13b"
-          given: "交付文档"
-          when: "静态断言"
-          then: "失去能力清单存在且被 doc-consistency 引用"
-        - id: "AC-V2bA-13c"
-          given: "KNOWN-ISSUES.md"
-          when: "静态断言"
-          then: "有对应条目"
-    - id: "REQ-V2bA-14"
-      title: "可观测码与完成投影判据"
-      description: "四个稳定码"
-      priority: "P0"
-      note: "豁免判据=投影器完成性"
-      acceptance_criteria:
-        - id: "AC-V2bA-14a"
-          given: "reason 取值"
-          when: "类型与校验断言"
-          then: "封闭枚举四值"
-        - id: "AC-V2bA-14b"
-          given: "input:[] / messages:[] / 纯工具调用"
-          when: "过闸"
-          then: "判为 projected，不写 reason"
-    - id: "REQ-V2bA-15"
-      title: "未识别与零文本的处置"
-      description: "受管路由 fail-closed（DR-031）"
-      priority: "P0"
-      acceptance_criteria:
-        - id: "AC-V2bA-15a"
-          given: "受管路由上 unknown 形态"
-          when: "过闸"
-          then: "block + reason=shape_unrecognized"
-        - id: "AC-V2bA-15b"
-          given: "受管路由上 known_but_empty 形态"
-          when: "过闸"
-          then: "block + reason=shape_known_empty"
-    - id: "REQ-V2bA-15a"
-      title: "部分覆盖的显式化"
-      description: "shape_partial_coverage 且 BUILD 末计数为 0"
-      priority: "P0"
-      acceptance_criteria:
-        - id: "AC-V2bA-15a1"
-          given: "协议已知但某已知载荷字段未被覆盖"
-          when: "过闸"
-          then: "reason=shape_partial_coverage"
-        - id: "AC-V2bA-15a2"
-          given: "本机真实语料"
-          when: "BUILD 末统计"
-          then: "该码计数为 0"
-    - id: "REQ-V2bA-16"
-      title: "端到端验收判据升级"
-      description: "真过闸 = 命中探针文本 + evidence 记录"
-      priority: "P0"
-      acceptance_criteria:
-        - id: "AC-V2bA-16a"
-          given: "复用既有 fixture 凭据值放入当前为红的字段（Anthropic system 块 / tool_use.input / tool_result / 响应 content；Responses input[]/instructions/function_call.arguments/function_call_output/output[]）"
-          when: "经三种协议线各发一次"
-          then: "blocked_before_forward 且上游 0 请求"
-        - id: "AC-V2bA-16b"
-          given: "移除对应投影分支"
-          when: "重跑同一断言"
-          then: "变红（反向探针）"
-    - id: "REQ-V2bA-17"
-      title: "文档与登记表同批订正"
-      description: "含既有 opencode/anthropic 能力声明订正与 smol-toml 台账"
-      priority: "P2"
-      acceptance_criteria:
-        - id: "AC-V2bA-17a"
-          given: "文档与登记表"
-          when: "静态断言"
-          then: "ROADMAP/REQ 登记表/README 双份/FAQ/KNOWN-ISSUES/licenses 同批订正"
-        - id: "AC-V2bA-17b"
-          given: "doc-consistency"
-          when: "全量执行"
-          then: "覆盖上述订正点"
-
+  - id: REQ-V2bA-00
+    title: 入口到投影全链
+    description: 受管路由请求由网关入口接住、以原始 body 交给协议识别与投影、并原样转发上游
+    priority: P0
+    note: 投影函数单测通过不构成本条满足证据
+    acceptance_criteria:
+    - id: AC-V2bA-00a
+      given: 真实 adapter 产物经真实 startGateway 发一次
+      when: 请求到达上游
+      then: 上游收到的 body 与客户端发出的逐字节相同（含查询串）
+    - id: AC-V2bA-00b
+      given: 同上一次请求
+      when: 扫描单元构建
+      then: unit.text 命中探针文本（仅上游一致或仅 evidence 有记录均不通过）
+  - id: REQ-V2bA-01
+    title: Responses 协议线覆盖（非流式 + 流式）
+    description: input/instructions/output 与 response.* 流式帧纳入投影
+    priority: P0
+    acceptance_criteria:
+    - id: AC-V2bA-01a
+      given: Responses 形态请求含 input[]/instructions/function_call.arguments/function_call_output.output
+      when: buildRequestScanUnit 执行
+      then: 四类载荷全部进入 unit.text
+    - id: AC-V2bA-01b
+      given: Responses 非流式响应含 output[].content[].output_text 与 output[].arguments
+      when: buildResponseScanUnit 执行
+      then: 两者进入 unit.text
+    - id: AC-V2bA-01c
+      given: Responses 流式帧 response.output_text.delta / response.function_call_arguments.delta
+        / …done
+      when: 逐帧投影
+      then: 投影非空且命中探针
+  - id: REQ-V2bA-02
+    title: Anthropic Messages 协议线覆盖（非流式 + 流式）
+    description: system 块数组 / tool_use.input / tool_result / 响应 content 与 content_block_delta
+      纳入投影
+    priority: P0
+    acceptance_criteria:
+    - id: AC-V2bA-02a
+      given: Anthropic 请求 system 为块数组
+      when: buildRequestScanUnit 执行
+      then: 块内 text 进入 unit.text
+    - id: AC-V2bA-02b
+      given: Anthropic 请求含 tool_use.input 对象与 tool_result.content
+      when: buildRequestScanUnit 执行
+      then: 两者进入 unit.text 且标为派生
+    - id: AC-V2bA-02c
+      given: Anthropic 非流式响应 content[]
+      when: buildResponseScanUnit 执行
+      then: text 与 tool_use.input 进入 unit.text
+    - id: AC-V2bA-02d
+      given: Anthropic 流式帧 content_block_delta
+      when: 逐帧投影
+      then: text_delta 与 input_json_delta 投影非空
+  - id: REQ-V2bA-03
+    title: 协议形态识别与三态结果
+    description: recognize() 输出 known / known_but_empty / unknown
+    priority: P0
+    note: 不静默判 clean
+    acceptance_criteria:
+    - id: AC-V2bA-03a
+      given: 路由前缀 claude/codex/promptfoo 各一条真实形态请求
+      when: recognize 执行
+      then: 分别解析为 anthropic-messages / openai-responses / chat
+    - id: AC-V2bA-03b
+      given: 匿名路由上 messages+纯文本（Claude 无 system 与 Chat 结构相同）、带块数组 system 的 Claude、带
+        max_tokens 的标准 Chat
+      when: recognize 执行
+      then: 三者均不得返回 unknown（禁止 chat 与 anthropic 互相竞争导致误判）
+    - id: AC-V2bA-03c
+      given: null / 数组 / 畸形输入
+      when: recognize 执行
+      then: 返回数据不抛异常
+  - id: REQ-V2bA-04
+    title: 协议抽象（数据驱动）
+    description: 线格式 × 路由约定 两维注册表；每个协议 provide recognize/projectRequest/projectResponse
+    priority: P0
+    note: Chat 分支只加不改
+    acceptance_criteria:
+    - id: AC-V2bA-04a
+      given: Chat 形态请求与响应投影
+      when: 改动前后比对
+      then: 逐字节相同（对照门）
+    - id: AC-V2bA-04b
+      given: 移除任一新增投影分支
+      when: 跑对应正样本
+      then: 正样本变红（反向探针）
+  - id: REQ-V2bA-04b
+    title: 路由前缀归属与透传
+    description: 保留段前缀 + rest/查询串原样到达上游
+    priority: P0
+    acceptance_criteria:
+    - id: AC-V2bA-04b1
+      given: 请求 /v1/messages?beta=true 与 /v1/responses
+      when: 经网关转发
+      then: 上游收到完整路径与查询串
+    - id: AC-V2bA-04b2
+      given: 新路由前缀集合
+      when: 与保留段及既有客户端名比对
+      then: 无冲突
+  - id: REQ-V2bA-05
+    title: offsets 口径
+    description: 派生文本必须标注，不参与原文 offsets 断言
+    priority: P1
+    note: Chat offsets 语义不变
+    acceptance_criteria:
+    - id: AC-V2bA-05a
+      given: 对象规范化 JSON 派生片段
+      when: 投影产出
+      then: derived 标记为真且不参与原文 offsets 断言
+    - id: AC-V2bA-05b
+      given: Chat 形态既有 offsets 用例
+      when: 全量回归
+      then: 保持全绿
+  - id: REQ-V2bA-06
+    title: Claude Code 适配器
+    description: env.ANTHROPIC_BASE_URL 纳管
+    priority: P1
+    note: 凭据变量显式不纳管
+    acceptance_criteria:
+    - id: AC-V2bA-06a
+      given: applyManagedConfig 写入 settings.env.ANTHROPIC_BASE_URL
+      when: detectDrift 执行
+      then: 为空
+    - id: AC-V2bA-06b
+      given: 手工改值
+      when: detectDrift 执行
+      then: 含 claude.settings.env.ANTHROPIC_BASE_URL
+    - id: AC-V2bA-06c
+      given: 适配器源码与产物
+      when: 静态与行为断言
+      then: 不写/不读/不比较 ANTHROPIC_AUTH_TOKEN 与 ANTHROPIC_API_KEY
+  - id: REQ-V2bA-07
+    title: Codex 适配器（TOML 定点编辑）
+    description: base_url + wire_api 两目标键
+    priority: P1
+    note: 除目标键外逐字节相同
+    acceptance_criteria:
+    - id: AC-V2bA-07a
+      given: 含注释/键序/CRLF 的既有 config.toml
+      when: applyManagedConfig 写回
+      then: 除 base_url 与 wire_api 外逐字节相同
+    - id: AC-V2bA-07b
+      given: 无 model_providers.llmveto 块的新文件
+      when: applyManagedConfig 写回
+      then: 创建新块且可被解析
+    - id: AC-V2bA-07c
+      given: 文件含多处同形目标键
+      when: applyManagedConfig 写回
+      then: 拒绝写入并报错，文件未被修改
+  - id: REQ-V2bA-08a
+    title: 写盘原语复用与备份
+    description: JSON 复用 config-io.writeJsonConfig
+    priority: P1
+    note: TOML 临时文件 rename + .bak
+    acceptance_criteria:
+    - id: AC-V2bA-08a1
+      given: 三个 JSON 适配器写路径
+      when: 源码断言
+      then: 复用 config-io.writeJsonConfig，无第二份实现
+    - id: AC-V2bA-08a2
+      given: 写入过程抛错
+      when: TOML 写路径执行
+      then: 无半截文件残留，覆盖前 .bak 存在
+  - id: REQ-V2bA-08
+    title: promptfoo 适配器
+    description: 项目级文件默认只报告，opt-in 才写
+    priority: P1
+    acceptance_criteria:
+    - id: AC-V2bA-08a
+      given: 存在 promptfooconfig.yaml 但未加 --include-project-config
+      when: doctor 执行
+      then: 文件 mtime 与内容不变
+    - id: AC-V2bA-08b
+      given: providers[] 增删元素
+      when: 漂移 id 计算
+      then: 以稳定标识而非下标标识
+    - id: AC-V2bA-08c
+      given: 配置含 apiHost 或 OPENAI_BASE_URL
+      when: doctor 执行
+      then: 标 unmanaged 且不计漂移
+  - id: REQ-V2bA-09
+    title: doctor 封闭枚举扩展与六态报告
+    description: 六态可区分 + 退出码映射
+    priority: P1
+    acceptance_criteria:
+    - id: AC-V2bA-09a
+      given: 分别构造六态
+      when: doctor 执行
+      then: 六态可区分输出
+    - id: AC-V2bA-09b
+      given: 六态各自触发
+      when: doctor 退出
+      then: not_installed/not_configured → 0；其余四态 → 1
+  - id: REQ-V2bA-10
+    title: 线格式覆盖判定
+    description: 无法确定时报 coverage_unknown
+    priority: P1
+    note: 不折算成通过
+    acceptance_criteria:
+    - id: AC-V2bA-10a
+      given: 客户端线格式无法确定
+      when: doctor 执行
+      then: 输出 coverage_unknown 且 exit 1
+    - id: AC-V2bA-10b
+      given: 线格式有覆盖且已正确配置
+      when: doctor 执行
+      then: 非 DEGRADED
+  - id: REQ-V2bA-11
+    title: 存量受管路由覆盖审计
+    description: 既有路由 × 线格式 × 可见性 审计表
+    priority: P1
+    acceptance_criteria:
+    - id: AC-V2bA-11a
+      given: 既有受管路由全集
+      when: 审计表产出
+      then: 每条列出线格式与可见性且被测试引用
+  - id: REQ-V2bA-12
+    title: 字段来源可追溯表
+    description: 字段 ↔ 文档 URL ↔ 核对日期 ↔ 原文摘录
+    priority: P2
+    acceptance_criteria:
+    - id: AC-V2bA-12a
+      given: 可追溯表
+      when: 静态断言
+      then: 字段路径可 grep、含文档 URL 与核对日期、被 doc-consistency 引用
+    - id: AC-V2bA-12b
+      given: smol-toml 元数据
+      when: 静态断言
+      then: 版本/许可/依赖数同表覆盖
+  - id: REQ-V2bA-13
+    title: 金丝雀边界
+    description: 非 Chat 显式 inject_skipped + 能力清单 + KNOWN-ISSUES
+    priority: P2
+    acceptance_criteria:
+    - id: AC-V2bA-13a
+      given: 非 Chat 形态请求
+      when: 过闸
+      then: evidence 顶层出现 inject_skipped
+    - id: AC-V2bA-13b
+      given: 交付文档
+      when: 静态断言
+      then: 失去能力清单存在且被 doc-consistency 引用
+    - id: AC-V2bA-13c
+      given: KNOWN-ISSUES.md
+      when: 静态断言
+      then: 有对应条目
+  - id: REQ-V2bA-14
+    title: 可观测码与完成投影判据
+    description: 四个稳定码
+    priority: P0
+    note: 豁免判据=投影器完成性
+    acceptance_criteria:
+    - id: AC-V2bA-14a
+      given: reason 取值
+      when: 类型与校验断言
+      then: 封闭枚举四值
+    - id: AC-V2bA-14b
+      given: input:[] / messages:[] / 纯工具调用
+      when: 过闸
+      then: 判为 projected，不写 reason
+  - id: REQ-V2bA-15
+    title: 未识别与零文本的处置
+    description: 受管路由 fail-closed（DR-031）
+    priority: P0
+    acceptance_criteria:
+    - id: AC-V2bA-15a
+      given: 受管路由上 unknown 形态
+      when: 过闸
+      then: block + reason=shape_unrecognized
+    - id: AC-V2bA-15b
+      given: 受管路由上 known_but_empty 形态
+      when: 过闸
+      then: block + reason=shape_known_empty
+  - id: REQ-V2bA-15a
+    title: 部分覆盖的显式化
+    description: shape_partial_coverage 且 BUILD 末计数为 0
+    priority: P0
+    acceptance_criteria:
+    - id: AC-V2bA-15a1
+      given: 协议已知但某已知载荷字段未被覆盖
+      when: 过闸
+      then: reason=shape_partial_coverage
+    - id: AC-V2bA-15a2
+      given: 本机真实语料
+      when: BUILD 末统计
+      then: 该码计数为 0
+  - id: REQ-V2bA-16
+    title: 端到端验收判据升级
+    description: 真过闸 = 命中探针文本 + evidence 记录
+    priority: P0
+    acceptance_criteria:
+    - id: AC-V2bA-16a
+      given: 复用既有 fixture 凭据值放入当前为红的字段（Anthropic system 块 / tool_use.input / tool_result
+        / 响应 content；Responses input[]/instructions/function_call.arguments/function_call_output/output[]）
+      when: 经三种协议线各发一次
+      then: blocked_before_forward 且上游 0 请求
+    - id: AC-V2bA-16b
+      given: 移除对应投影分支
+      when: 重跑同一断言
+      then: 变红（反向探针）
+  - id: REQ-V2bA-17
+    title: 文档与登记表同批订正
+    description: 含既有 opencode/anthropic 能力声明订正与 smol-toml 台账
+    priority: P2
+    acceptance_criteria:
+    - id: AC-V2bA-17a
+      given: 文档与登记表
+      when: 静态断言
+      then: ROADMAP/REQ 登记表/README 双份/FAQ/KNOWN-ISSUES/licenses 同批订正
+    - id: AC-V2bA-17b
+      given: doc-consistency
+      when: 全量执行
+      then: 覆盖上述订正点
+  - id: REQ-V2bC-01
+    title: 探针载荷与会话无关且不含部署标识
+    acceptance_criteria:
+    - id: AC-01a
+      given: 任意会话下探针体 sha256 恒定
+    - id: AC-01b
+      given: 探针体不含 hostname/用户名/路径/UUID/时间戳
+    - id: AC-01c
+      given: 探针体 ≤512 字节
+  - id: REQ-V2bC-02
+    title: 四项特征分四次轮转采集
+    acceptance_criteria:
+    - id: AC-02a
+      given: 连续 4 次探针分别测 D0-D3
+    - id: AC-02b
+      given: 每次探针只测一维
+  - id: REQ-V2bC-03
+    title: 每维独立基线（K=10 中位数）
+    acceptance_criteria:
+    - id: AC-03a
+      given: 基线为最近 K 次中位数
+    - id: AC-03b
+      given: 单次异常值不改变中位数
+    - id: AC-03c
+      given: 各维基线互不影响
+  - id: REQ-V2bC-04
+    title: 特征提取有确定规则
+    acceptance_criteria:
+    - id: AC-04a
+      given: D0 偏离 >15% 判退化
+    - id: AC-04b
+      given: D1 剥围栏后 JSON 解析失败判退化
+    - id: AC-04c
+      given: D2 答案不在期望集判退化
+    - id: AC-04d
+      given: D3 Jaccard <0.5 判退化
+  - id: REQ-V2bC-05
+    title: 版本变更按方向判定
+    acceptance_criteria:
+    - id: AC-05a
+      given: 字段变+行为未退化 → clean
+    - id: AC-05b
+      given: 字段变+行为退化 → finding
+    - id: AC-05c
+      given: 字段不变+行为退化 → finding
+  - id: REQ-V2bC-06
+    title: 辅判据提供归因
+    acceptance_criteria:
+    - id: AC-06a
+      given: 每次探针都跑辅判据
+    - id: AC-06b
+      given: 双命中时写 hit_by 数组
+  - id: REQ-V2bC-07
+    title: 补齐探针封口退避交互
+    acceptance_criteria:
+    - id: AC-07a
+      given: 补齐失败计入同一计数器
+    - id: AC-07b
+      given: 退避中止补齐
+    - id: AC-07c
+      given: 退避期间探针请求数=0
+  - id: REQ-V2bC-08
+    title: 周期与频率约束
+    acceptance_criteria:
+    - id: AC-08a
+      given: 每 provider 6h ≤1 次
+    - id: AC-08b
+      given: 抖动 ±20%
+    - id: AC-08c
+      given: 手动与周期共享配额
+  - id: REQ-V2bC-09
+    title: 熔断与持久化
+    acceptance_criteria:
+    - id: AC-09a
+      given: 连续 3 次失败进退避
+    - id: AC-09b
+      given: 6h→12h→24h 指数退避
+    - id: AC-09c
+      given: 退避状态跨重启保留
+  - id: REQ-V2bC-10
+    title: 信任分只展示不进策略
+    acceptance_criteria:
+    - id: AC-10a
+      given: 信任分可从 evidence 聚合
+    - id: AC-10b
+      given: action 分布不含 fingerprint 来源
+  - id: REQ-V2bC-11
+    title: 三类 evidence 事件
+    acceptance_criteria:
+    - id: AC-11a
+      given: probe_feature 字段完整
+    - id: AC-11b
+      given: probe_failure.target_dimension 恒非空
+    - id: AC-11c
+      given: inconsistent_degradation 字段完整
+  - id: REQ-V2bC-12
+    title: 网络层形态伪装
+    acceptance_criteria:
+    - id: AC-12a
+      given: UA 来自 SDK 列表
+    - id: AC-12b
+      given: 路径同形
+  - id: REQ-V2bC-13
+    title: 独立 agent 不占主流量连接
+    acceptance_criteria:
+    - id: AC-13a
+      given: 探针不共用主连接池
+    - id: AC-13b
+      given: 周期运行时 G2 门不退化
+  - id: REQ-V2bC-14
+    title: CLI 入口
+    acceptance_criteria:
+    - id: AC-14a
+      given: fingerprint 子命令可用
+    - id: AC-14b
+      given: 输出信任分与最近特征
+  - id: REQ-V2bC-15
+    title: 分片对抗识别
+    acceptance_criteria:
+    - id: AC-15a
+      given: 其余维正常而单维退化 → inconsistent_degradation
+  - id: REQ-POST-01
+    title: （历史 REQ，定义见来源文档）
+    source: docs/issues/
+    acceptance_criteria: []
+  - id: REQ-V2a-01
+    title: （历史 REQ，定义见来源文档）
+    source: docs/plans/2026-09-27-v2a-design.md
+    acceptance_criteria: []
+  - id: REQ-V2a-02
+    title: （历史 REQ，定义见来源文档）
+    source: docs/adr/0003-stream-toolcall-window-accumulation.md
+    acceptance_criteria: []
+  - id: REQ-V2a-03
+    title: （历史 REQ，定义见来源文档）
+    source: docs/plans/2026-09-27-v2a-requirements.md
+    acceptance_criteria: []
+  - id: REQ-V2a-04
+    title: （历史 REQ，定义见来源文档）
+    source: docs/plans/2026-09-27-v2a-requirements.md
+    acceptance_criteria: []
+  - id: REQ-V2a-05
+    title: （历史 REQ，定义见来源文档）
+    source: docs/adr/0004-canary-as-finding-reserved-field.md
+    acceptance_criteria: []
+  - id: REQ-V2a-06
+    title: （历史 REQ，定义见来源文档）
+    source: docs/plans/2026-09-27-v2a-requirements.md
+    acceptance_criteria: []
+  - id: REQ-V2a-07
+    title: （历史 REQ，定义见来源文档）
+    source: docs/plans/2026-09-27-v2a-requirements.md
+    acceptance_criteria: []
+  - id: REQ-V2a-08
+    title: （历史 REQ，定义见来源文档）
+    source: docs/plans/2026-09-27-v2a-requirements.md
+    acceptance_criteria: []
+  - id: REQ-V2a-09
+    title: （历史 REQ，定义见来源文档）
+    source: docs/plans/2026-09-27-v2a-requirements.md
+    acceptance_criteria: []
+  - id: REQ-V2a-10
+    title: （历史 REQ，定义见来源文档）
+    source: docs/plans/2026-09-27-v2a-requirements.md
+    acceptance_criteria: []
+  - id: REQ-V2a-11
+    title: （历史 REQ，定义见来源文档）
+    source: docs/plans/2026-09-27-v2a-requirements.md
+    acceptance_criteria: []
+  - id: REQ-V2a-12
+    title: （历史 REQ，定义见来源文档）
+    source: docs/plans/2026-09-27-v2a-design.md
+    acceptance_criteria: []
+  - id: REQ-V2a-13
+    title: （历史 REQ，定义见来源文档）
+    source: docs/plans/2026-09-27-v2a-design.md
+    acceptance_criteria: []
+  - id: REQ-V2a-14
+    title: （历史 REQ，定义见来源文档）
+    source: docs/plans/2026-09-27-v2a-requirements.md
+    acceptance_criteria: []
+  - id: REQ-V2a-15
+    title: （历史 REQ，定义见来源文档）
+    source: docs/adr/0005-stream-window-ownership.md
+    acceptance_criteria: []
+  - id: REQ-V2bA-04a
+    title: （历史 REQ，定义见来源文档）
+    source: docs/issues/
+    acceptance_criteria: []
+  - id: REQ-V2bA-08a2
+    title: （历史 REQ，定义见来源文档）
+    source: docs/issues/
+    acceptance_criteria: []
+  - id: REQ-V2bA-13b
+    title: （历史 REQ，定义见来源文档）
+    source: docs/issues/
+    acceptance_criteria: []
+  - id: REQ-VETO-002
+    title: （历史 REQ，定义见来源文档）
+    source: docs/issues/
+    acceptance_criteria: []
+  - id: REQ-VETO-003
+    title: （历史 REQ，定义见来源文档）
+    source: docs/issues/
+    acceptance_criteria: []
+  - id: REQ-VETO-004
+    title: （历史 REQ，定义见来源文档）
+    source: docs/issues/
+    acceptance_criteria: []
+  - id: REQ-VETO-005
+    title: （历史 REQ，定义见来源文档）
+    source: docs/issues/
+    acceptance_criteria: []
+  - id: REQ-VETO-006
+    title: （历史 REQ，定义见来源文档）
+    source: docs/issues/
+    acceptance_criteria: []
+  - id: REQ-VETO-007
+    title: （历史 REQ，定义见来源文档）
+    source: docs/issues/
+    acceptance_criteria: []
+  - id: REQ-VETO-008
+    title: （历史 REQ，定义见来源文档）
+    source: docs/adr/0001-node-runtime-distribution.md
+    acceptance_criteria: []
+  - id: REQ-VETO-009
+    title: （历史 REQ，定义见来源文档）
+    source: docs/issues/
+    acceptance_criteria: []
+  - id: REQ-VETO-010
+    title: （历史 REQ，定义见来源文档）
+    source: docs/issues/
+    acceptance_criteria: []
+  - id: REQ-VETO-011
+    title: （历史 REQ，定义见来源文档）
+    source: docs/issues/
+    acceptance_criteria: []
+  - id: REQ-VETO-012
+    title: （历史 REQ，定义见来源文档）
+    source: docs/issues/
+    acceptance_criteria: []
+  - id: REQ-VETO-013
+    title: （历史 REQ，定义见来源文档）
+    source: docs/adr/0002-bench-http-e2e-methodology.md
+    acceptance_criteria: []
+  - id: REQ-VETO-014
+    title: （历史 REQ，定义见来源文档）
+    source: docs/issues/
+    acceptance_criteria: []
+  v2bc_sprint:
+    spec_id: SPEC-V2bC-001
+    sprint: sprint-v2bc
+    design: docs/plans/2026-11-26-v2bc-fingerprint-design.md

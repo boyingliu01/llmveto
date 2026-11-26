@@ -1,19 +1,21 @@
 {
-  "sprint_id": "sprint-20261008-26",
-  "branch": "sprint/2026-10-08-01",
+  "sprint_id": "sprint-20261124-54",
+  "branch": "sprint/2026-11-24-01",
   "coverage": {
-    "completed": 6,
+    "completed": 5,
     "total": 6,
-    "pct": 100
+    "pct": 83
   },
-  "missing_phases": [],
+  "missing_phases": [
+    {
+      "phase": 6,
+      "name": "CLOSE"
+    }
+  ],
   "incomplete_phases": [],
   "warnings": [
-    "Phase 2 (DESIGN) completed but has no duration recorded",
-    "Phase 4 (VERIFY) completed but has no duration recorded",
-    "Phase 5 (SHIP) completed but has no duration recorded",
-    "Phase 6 (CLOSE) completed but has no duration recorded"
+    "Phase 5 (SHIP) completed but has no duration recorded"
   ],
   "errors": [],
-  "verdict": "PASS"
+  "verdict": "PASS_WITH_WARNINGS"
 }

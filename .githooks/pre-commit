@@ -8,6 +8,15 @@ set -uo pipefail
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT" || exit 1
 
+# ── 项目门禁：中英 README 结构对等 ──────────────────────────────────
+if [ -f scripts/check-readme-parity.mjs ]; then
+  echo "→ Project gate: readme parity..."
+  if ! node scripts/check-readme-parity.mjs; then
+    echo "❌ BLOCKED - 中英 README 结构不对等（标题序列或表格行数）" >&2
+    exit 1
+  fi
+fi
+
 # ── 项目门禁：孤儿导出（写了没接线） ──────────────────────────────
 if [ -f scripts/check-orphan-exports.mjs ]; then
   echo "→ Project gate: orphan exports..."

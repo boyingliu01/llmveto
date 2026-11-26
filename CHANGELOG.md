@@ -4,6 +4,44 @@ All notable changes to this project are documented in this file. The format is a
 take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.10.4] - 2026-11-26
+
+### Added
+
+**Orphan-export gate** (`scripts/check-orphan-exports.mjs`, npm run
+`check:orphans`). Fails the commit when an export under `src/` has no caller
+outside its own definition.
+
+The gate exists because of a defect that human review could not catch: four
+modules had tests, the tests were green, and none of the modules was ever
+called. `verdictFor` -- the entire judgement chain -- never executed outside a
+test. A missing call site produces no error, no warning, and no failing test.
+
+Three things the gate does that a simple "unused export" lint does not:
+
+  Zero-reference exports cannot be waived. A comment claiming "used by tests"
+  is not evidence -- `coverageOf` carried exactly that comment and had no
+  referent anywhere, tests included. It was deleted rather than waived.
+
+  Waivers are named and justified. The five remaining test-only exports
+  (assertNoV2Stubs, probeDigest, TRUST_MIN, EMPTY_PROJECTION, and the like) are
+  listed with a reason each, so the next person can judge whether the reason
+  still holds.
+
+  Stale waivers fail too. A waiver for a symbol that no longer exists is
+  rot, and it would quietly widen the allowlist over time.
+
+Mutation-tested: injecting an uncalled export turns the gate red with the exact
+file and symbol; removing it turns the gate green.
+
+### Changed
+
+Project hooks now layer over XP-Gate's. `core.hooksPath` points at
+`.githooks/`, whose `pre-commit` runs project-specific gates and then execs the
+global XP-Gate hook. Git honours only one `core.hooksPath`, and editing the
+global hook is undone by `xp-gate doctor --sync-hooks`, so layering is the only
+arrangement where a project can add a gate of its own.
+
 ## [0.10.3] - 2026-11-26
 
 ### Fixed

@@ -1,6 +1,6 @@
 {
   "name": "llmveto",
-  "version": "0.10.3",
+  "version": "0.10.4",
   "description": "Local security gateway that vetoes malicious LLM relay traffic — deterministic verification, fail-closed blocking, tamper-evident audit trail.",
   "type": "module",
   "license": "MIT",
@@ -51,7 +51,8 @@
     "release:gate": "node scripts/release-gate.mjs",
     "prepublishOnly": "npm run release:gate",
     "clean": "rimraf dist coverage",
-    "dev:patch-archlint": "node scripts/patch-archlint-musl.mjs"
+    "dev:patch-archlint": "node scripts/patch-archlint-musl.mjs",
+    "check:orphans": "node scripts/check-orphan-exports.mjs"
   },
   "devDependencies": {
     "@archlinter/cli": "^0.17.1",

@@ -1,0 +1,26 @@
+#!/bin/bash
+# 项目本地门禁（叠加在 XP-Gate 全局钩子之前）。
+#
+# 为什么需要叠加：XP-Gate 的钩子装在用户级 core.hooksPath，一个项目要加自己的
+# 检查，只能把 hooksPath 指到项目目录，再由项目脚本转调全局钩子。
+# 直接改全局钩子会被 `xp-gate doctor --sync-hooks` 覆盖掉。
+set -uo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT" || exit 1
+
+# ── 项目门禁：孤儿导出（写了没接线） ──────────────────────────────
+if [ -f scripts/check-orphan-exports.mjs ]; then
+  echo "→ Project gate: orphan exports..."
+  if ! node scripts/check-orphan-exports.mjs; then
+    echo "❌ BLOCKED - 存在零引用导出或未登记的测试专用导出（见上方清单）" >&2
+    exit 1
+  fi
+fi
+
+# ── 转调 XP-Gate 全局钩子 ────────────────────────────────────────
+GLOBAL_HOOK="${XP_GATE_GLOBAL_HOOK:-$HOME/.config/xp-gate/hooks/pre-commit}"
+if [ -x "$GLOBAL_HOOK" ]; then
+  exec "$GLOBAL_HOOK" "$@"
+fi
+echo "⚠️  XP-Gate 全局钩子未找到（$GLOBAL_HOOK），跳过全局门禁" >&2
+exit 0

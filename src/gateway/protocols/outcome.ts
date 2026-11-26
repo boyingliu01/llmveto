@@ -325,16 +325,6 @@ function hasMessageContainer(value: unknown): boolean {
   return Array.isArray(value);
 }
 
-/** 仅用于测试与审计：暴露某 body 的覆盖结论（不含 fail-closed 决策）。 */
-export function coverageOf(direction: Direction, parsed: unknown): "full" | "partial" | "vacuous" | "unknown" {
-  const body = asBody(parsed);
-  if (body === null) return "unknown";
-  const recognized = recognize(direction, body, null);
-  const proto = recognized.kind === "unknown" ? undefined : protocolFor(recognized.format);
-  if (proto === undefined) return "unknown";
-  return coverageVerdict(presentFor(direction, body, proto), projectionFor(direction, body, proto).handled);
-}
-
 /** 某方向下 body 实际存在的已知载荷路径。 */
 function presentFor(direction: Direction, body: Record<string, unknown>, proto: WireProtocol): readonly string[] {
   return presentPaths(direction === "request" ? proto.coverage.requestPayloadPaths : proto.coverage.responsePayloadPaths, body);

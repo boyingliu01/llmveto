@@ -4,6 +4,38 @@ All notable changes to this project are documented in this file. The format is a
 take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.10.2] - 2026-11-26
+
+### Fixed
+
+**The periodic patrol was never wired to anything.** `Patrol`, `sendProbe` and
+`extractFeature` each had tests and none of them was called from production
+code, so "periodic inspection" existed only in the test suite. This is the same
+shape as the v2b-A walkthrough finding (a parameter added and never passed),
+and I made it again.
+
+`ProbeScheduler` now connects the three and runs from the daemon when enabled.
+
+### Added
+
+**`LLMVETO_FINGERPRINT_PATROL`, default off.** A gateway already in use should
+not start sending requests to a relay because it was upgraded -- that is not a
+feature shipping, it is the machine's network footprint changing silently.
+Enabled only by `1` or `true` (case-insensitive); a typo leaves it off rather
+than starting to send.
+
+Verified end to end: with the switch unset, starting the daemon produces no
+fingerprint file; with it set, the daemon probes on start and records events.
+
+### Known limitation
+
+The model name sent in a probe is derived from the provider id
+(`opencode/whalecloud` -> `whalecloud`), because the managed enumeration does
+not carry "which model this provider serves". A user-configured model name is
+outside v2b-C and is registered here rather than guessed at.
+
+965 tests.
+
 ## [0.10.1] - 2026-11-26
 
 ### Changed

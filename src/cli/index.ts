@@ -19,6 +19,8 @@ import { startGateway } from "../gateway/server.ts";
 import { validateRegistryFile } from "../shared/registry-file-schema.ts";
 import { FingerprintStore } from "../fingerprint/store.ts";
 import { doctorFingerprintCheck, trustReport } from "../fingerprint/trust.ts";
+import { Patrol, patrolEnabledFromEnv } from "../fingerprint/patrol.ts";
+import { ProbeScheduler } from "../fingerprint/scheduler.ts";
 
 /**
  * @test REQ-VETO-008
@@ -245,7 +247,11 @@ async function cmdStartDaemon(ctx: CliCtx, env: Readonly<Record<string, string |
   });
   writeFileSync(pidFile(ctx), String(process.pid), "utf8");
   writeFileSync(urlFile(ctx), gw.url, "utf8");
-  installShutdownHandlers(ctx, () => gw.close());
+  const scheduler = startFingerprintPatrol(env, dir, parsed.upstreams ?? {});
+  installShutdownHandlers(ctx, async () => {
+    scheduler?.stop();
+    await gw.close();
+  });
   // server 持有事件循环 → 本 Promise resolve 后进程不退出（后台常驻）。
   return { exitCode: 0, stdout: `gateway listening at ${gw.url}\n`, stderr: "" };
 }
@@ -413,6 +419,27 @@ function doctorCoverageCounters(file: string): DoctorCheck {
     ok: true,
     message: `total=${c.total} allowed=${c.allowed} blocked=${c.blocked} warned=${c.warned} terminated=${c.terminated} degraded=${c.degraded}`,
   };
+}
+
+/**
+ * 按开关启动周期探针（用户决策：默认**关闭**）。
+ *
+ * 默认关闭的理由：升级不该改变机器的对外行为。一个已经在用的网关，升级后
+ * 突然每 6 小时向中转站发请求，那不是功能上线，是静默改变网络足迹。
+ *
+ * `LLMVETO_FINGERPRINT_PATROL=1|true` 才启用，其余（含拼写错误）一律不启用
+ * ——不该因为打错字就默认开始发送。
+ */
+function startFingerprintPatrol(
+  env: Readonly<Record<string, string | undefined>>,
+  dir: string,
+  upstreams: Readonly<Record<string, string>>,
+): ProbeScheduler | null {
+  if (!patrolEnabledFromEnv(env)) return null;
+  const store = new FingerprintStore(join(dir, "fingerprint.jsonl"));
+  const scheduler = new ProbeScheduler({ store, patrol: new Patrol({ store }), providers: upstreams });
+  scheduler.start();
+  return scheduler;
 }
 
 /**

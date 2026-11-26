@@ -184,3 +184,19 @@ export class Patrol {
     return this.stateOf(providerId).backoff_rounds;
   }
 }
+
+/**
+ * 是否启用周期探针（用户决策：默认**关闭**）。
+ *
+ * 默认关闭的理由不是"功能不重要"，而是**升级不该改变机器的对外行为**：
+ * 一个已经在用的网关，升级后突然开始每 6 小时向中转站发请求，那不叫功能上线，
+ * 叫静默改变网络足迹。用户显式打开才算同意。
+ *
+ * 开关值：`LLMVETO_FINGERPRINT_PATROL=1` 或 `true` 才启用；其余一律关闭
+ * （含拼写错误——不该因为打错字就默认发送）。
+ */
+export function patrolEnabledFromEnv(env: Readonly<Record<string, string | undefined>>): boolean {
+  const raw = env.LLMVETO_FINGERPRINT_PATROL;
+  if (raw === undefined) return false;
+  return raw === "1" || raw.toLowerCase() === "true";
+}

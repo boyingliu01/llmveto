@@ -3,7 +3,7 @@
   "evidence_schema_version": 2,
   "id": "sprint-20261124-54",
   "task_description": "llmveto v2b slice A: multi-client onboarding (Claude Code / Codex / promptfoo) into MANAGED_CONFIG_IDS with doctor drift assertions and end-to-end vetting probes. Deferred: fingerprint patrol with trust score (v2b-C), billing reconciliation report CLI (v2b-B)",
-  "phase": 5,
+  "phase": 6,
   "status": "in_progress",
   "started_at": "2026-11-24T01:13:46.716Z",
   "phase_history": [
@@ -46,6 +46,14 @@
       "started_at": "2026-11-26T06:35:38.203Z",
       "completed_at": "2026-11-26T06:35:38.203Z",
       "duration_seconds": 0
+    },
+    {
+      "phase": 6,
+      "phase_name": "CLOSE",
+      "status": "completed",
+      "started_at": "2026-11-26T07:39:09.060Z",
+      "completed_at": "2026-11-26T07:39:09.061Z",
+      "duration_seconds": 0
     }
   ],
   "isolation": {
@@ -61,7 +69,7 @@
     "auto_estimate": "complex",
     "scope": "v2b-C fingerprint patrol",
     "deferred": "v2b-B report CLI, v2b-C fingerprint patrol",
-    "decisions": "DR-001 skip v2b-B, DR-002 both periodic and manual probes",
+    "decisions": "DR-004 patrol defaults off",
     "risks_for_phase2": [
       "R-PRE-1 no local client installs",
       "R-PRE-2 Codex TOML I/O",
@@ -75,7 +83,7 @@
     "review": "R1 two rounds (5 seats) + R2 one round (2 seats), all REQUEST_CHANGES, all Critical/Major absorbed",
     "delphi_gate": "NOT met (0% APPROVED); user approved via DR-031",
     "new_dependency": "smol-toml@1.9.1 (BSD-3-Clause, zero deps)",
-    "tests": "947",
+    "tests": "973",
     "coverage_gate": "release-gate 10/10 PASS",
     "design_docs": "protocol-capability-matrix / protocol-coverage-audit / protocol-field-provenance",
     "known_defects_fixed_during_build": "postinstall module-not-found on install; smoke adapter isolation; promptfoo installed detection; PathSegment array resolution",
@@ -89,9 +97,10 @@
     "review_rounds": "5+2",
     "lint": "clean",
     "ccn": "no function above 7",
-    "version": "0.10.0",
+    "version": "0.10.3",
     "tag": "v0.10.0",
-    "release": "https://github.com/boyingliu01/llmveto/releases/tag/v0.10.0"
+    "release": "https://github.com/boyingliu01/llmveto/releases/tag/v0.10.0",
+    "uat": "CLI verified, boundary doc reviewed across 4 discussion rounds"
   },
   "metrics": {}
 }

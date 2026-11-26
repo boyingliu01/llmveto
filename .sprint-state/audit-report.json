@@ -2,20 +2,16 @@
   "sprint_id": "sprint-20261124-54",
   "branch": "sprint/2026-11-24-01",
   "coverage": {
-    "completed": 5,
+    "completed": 6,
     "total": 6,
-    "pct": 83
+    "pct": 100
   },
-  "missing_phases": [
-    {
-      "phase": 6,
-      "name": "CLOSE"
-    }
-  ],
+  "missing_phases": [],
   "incomplete_phases": [],
   "warnings": [
-    "Phase 5 (SHIP) completed but has no duration recorded"
+    "Phase 5 (SHIP) completed but has no duration recorded",
+    "Phase 6 (CLOSE) completed but has no duration recorded"
   ],
   "errors": [],
-  "verdict": "PASS_WITH_WARNINGS"
+  "verdict": "PASS"
 }

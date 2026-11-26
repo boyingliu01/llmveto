@@ -364,3 +364,12 @@
   探针会周期性发往中转站，其存在本身是可被上游观测的事实。能力边界写进
   docs/fingerprint-capability.md，不掩饰。
 - **Timestamp**: 2026-11-26T12:10:00+08:00
+
+## Decision DR-004
+- **Phase**: 6/6 CLOSE
+- **Question**: 周期探针 `LLMVETO_FINGERPRINT_PATROL` 默认值
+- **Options**: 保持默认关闭 / 现在就启用 / 先手动测几次
+- **Choice**: **保持默认关闭**
+- **Rationale**: 探针可被中转站识别，且最可能的对抗是"对探针返回真模型、对真实流量返回假模型"。
+  在未确认该 provider 是否有问题前，不主动增加网络足迹。需要时用 `--probe` 手动触发。
+- **Timestamp**: 2026-11-26T15:40:00+08:00

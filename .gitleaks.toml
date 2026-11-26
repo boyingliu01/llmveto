@@ -44,3 +44,18 @@ useDefault = true
     '''b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAt''',
     '''MIIEowIBAAKCAQEA0Z3VS5JJcds3xfn''',
   ]
+
+# ── 0.10.8：补齐 Anthropic 密钥（2026-11-26 实测缺失）──
+#
+# 实测：gitleaks 8.30.1 内置规则对 `sk-ant-api03-<95位>` **不检出**
+# （对照：同一批测试里 `ghp_`+36 位与 `AKIA`+16 位都能检出）。
+# 本网关保护的是 LLM 流量，Anthropic 密钥正是最该拦的一类，
+# 而 Gate 8 在它上面一直是假绿灯。
+#
+# 判据取官方形态：`sk-ant-` 前缀 + 可选 apiNN + `-` + 长 base64 段。
+# 长度下限取 40：官方密钥主体远长于此，而文档里手写的示例短串不会误报。
+[[rules]]
+  id = "anthropic-api-key"
+  description = "Anthropic API key"
+  regex = '''sk-ant-[a-z0-9]{2,10}-[A-Za-z0-9_-]{40,}'''
+  keywords = ["sk-ant-"]

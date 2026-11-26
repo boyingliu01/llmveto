@@ -8,6 +8,17 @@ set -uo pipefail
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT" || exit 1
 
+# ── 项目门禁：密钥扫描（补 XP-Gate Gate 8 的漏检） ──────────────────
+# 实测：Gate 8 在 112 次历史提交中 51 次 SKIP（reason 为空），
+# 且内置规则对 sk-ant-api03- 格式不检出。本项目自带规则集兜底。
+if [ -f scripts/check-secrets.mjs ]; then
+  echo "→ Project gate: secrets..."
+  if ! node scripts/check-secrets.mjs; then
+    echo "❌ BLOCKED - 检出未登记密钥（或扫描器报错）" >&2
+    exit 1
+  fi
+fi
+
 # ── 项目门禁：中英 README 结构对等 ──────────────────────────────────
 if [ -f scripts/check-readme-parity.mjs ]; then
   echo "→ Project gate: readme parity..."

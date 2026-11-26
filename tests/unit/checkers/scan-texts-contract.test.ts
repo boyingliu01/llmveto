@@ -74,6 +74,14 @@ const ALLOWLIST: readonly Exemption[] = [
     reason: "命中片段内的 `-enc` 形态判定（区分讨论与执行），非扫描输入",
   },
   {
+    file: "dangerous-command-scan.ts",
+    // 2026-11-26：`isQuotedOrInlineCode` 读 `match.text.length` 只为算出命中段的结束位置，
+    // 用来判断它是否落在反引号/引号内（区分"谈论规则"与"执行命令"）。只读长度，
+    // 不读内容——扫描输入仍是 scanTexts(unit) 的双投影。
+    pattern: /^match\.text\.length$/,
+    reason: "命中段结束位置，用于判断是否在反引号/引号内，只读长度",
+  },
+  {
     file: "tool-call-shape.ts",
     // `chunk.text.length` in stream checker —— window overflow 累积字节计数，
     // `chunk.text` 用于流式文本累积（非安全判定）；实际 tool call 提取与三子规则

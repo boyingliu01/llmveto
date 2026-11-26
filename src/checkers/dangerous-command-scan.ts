@@ -286,9 +286,53 @@ function hasEncodedPayload(text: string, match: { readonly offset: number; reado
  * ≠ 行为发生"的规则。`IEX(` 与 `DownloadString(` 是完整调用形态，照旧直报。
  */
 function isReportableHit(rule: Rule, text: string, match: { offset: number; text: string }): boolean {
-  if (rule.id !== "powershell-download-exec") return true;
-  if (/-enc(?:odedcommand)?\b/i.test(match.text)) return hasEncodedPayload(text, match);
+  if (rule.id === "powershell-download-exec") return isRealEncodedCall(text, match);
+  if (rule.id === "credential-file-read") return isQuotedOrInlineCode(text, match);
   return true;
+}
+
+/** `-enc` 之后是否真跟着足够长的 base64 载荷（vs 文档里的短示例）。 */
+function isRealEncodedCall(text: string, match: { offset: number; text: string }): boolean {
+  if (!/-enc(?:odedcommand)?\b/i.test(match.text)) return true;
+  return hasEncodedPayload(text, match);
+}
+
+/**
+ * `credential-file-read` 的误报过滤：这次读凭据到底是**要执行**，还是**在谈论**。
+ *
+ * 实测背景（2026-11-26T12:00:47，本仓库自己的开发会话被拦 5 次）：
+ * 当时正在讨论这条规则本身，请求体里带着 `cat ~/.ssh/id_rsa` 之类**示例文本**，
+ * 请求体约 1MB（完整会话上下文）。规则按"读取命令 + 凭据路径"正确命中，
+ * 但被谈论的命令不等于被执行的命令——网关没有执行任何东西。
+ *
+ * 判据：命中的文本若落在**反引号行内代码**或**双引号包裹**里，视为引用而非执行。
+ *
+ * 为什么这两种形态够用：
+ *   - 真实 tool-call 的 `command` 字段是 JSON 字符串，`cat ~/.ssh/id_rsa` 两侧
+ *     是 `"` 且**紧邻**（`"command":"cat ~/.ssh/id_rsa"`）。这里判的是匹配文本
+ *     **自身**是否被引号包住，而不是它在 JSON 字符串里——后者恒为真，等于不判。
+ *   - markdown 讨论几乎总用反引号。
+ *
+ * **承认的边界**：若 agent 直接在 prose 里写裸的 `cat ~/.ssh/id_rsa`（无反引号、
+ * 无引号），仍会命中。这是刻意的——宁可漏判"谈论"也不放过"执行"，
+ * 而反引号/引号是谈论方最自然的写法，执行方反而不加。
+ */
+function isQuotedOrInlineCode(text: string, match: { offset: number; text: string }): boolean {
+  // ① JSON 工具调用：引号**紧邻字段名**（`"command":"cat ..."`、`"path":"~/.ssh/..."`）。
+  //    这是执行形态，必须命中——判据看引号之外是不是字段名，而不是"有没有引号"。
+  if (/"[a-z_]+"\s*:\s*"$/i.test(text.slice(Math.max(0, match.offset - 40), match.offset))) return true;
+  // ② 两侧成对的引号 + 前面是空白/词（不是 `:`）= 句子引用，放行。
+  //    对照：`"command":"cat ~/.ssh/id_rsa"` 的引号前是 `:` → 走 ① 命中。
+  const before = text[match.offset - 1];
+  const after = text[match.offset + match.text.length];
+  if ((before === '"' && after === '"') || (before === "'" && after === "'")) {
+    const beforeQuote = text.slice(Math.max(0, match.offset - 2), match.offset - 1);
+    if (/[\s,;:!?]/.test(beforeQuote) || match.offset === 1) return false;
+  }
+  // ② 反引号行内代码：向前数未配对的反引号，奇数个说明在代码段内
+  const lineStart = text.lastIndexOf("\n", match.offset) + 1;
+  const ticks = (text.slice(lineStart, match.offset).match(/`/g) ?? []).length;
+  return ticks % 2 === 0;
 }
 
 /**

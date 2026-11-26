@@ -237,3 +237,27 @@ describe("dangerous-command-scan 流式（REQ-POST-01 跨 chunk）", () => {
     expect(r.evidence[0]!.offsets).toBeUndefined();
   });
 });
+
+describe("credential-file-read：区分『执行』与『谈论』（2026-11-26 实测误报回归）", () => {
+  // 背景：讨论这条规则本身时，请求体里带着 `cat ~/.ssh/id_rsa` 之类示例，
+  // 网关把它当成了要执行的命令，拦了真实开发会话 5 次（请求体约 1MB）。
+  // 规则命中是对的，但"被谈论的命令"不等于"被执行的命令"。
+
+  it("工具调用形态（引号紧邻字段名）仍然命中——不能因为加了过滤就漏报", () => {
+    expect(ids(resp('{"command":"cat ~/.ssh/id_rsa"}'))).toContain("credential-file-read");
+    expect(ids(resp('{"path":"~/.ssh/id_ed25519"}'))).toContain("credential-file-read");
+    expect(ids(resp('{"file_path":"/home/u/proj/.env"'))).toContain("credential-file-read");
+  });
+
+  it("反引号行内代码里的示例 → 放行（markdown 讨论的典型写法）", () => {
+    expect(ids(resp("As discussed, `cat ~/.ssh/id_rsa` would leak the key."))).not.toContain("credential-file-read");
+  });
+
+  it("英文句子里的引用（引号是句子的一部分而非字段边界）→ 放行", () => {
+    expect(ids(resp('the rule matches "cat ~/.ssh/id_rsa" as an example'))).not.toContain("credential-file-read");
+  });
+
+  it("朴素命令行（无引号无标记）→ 仍然命中", () => {
+    expect(ids(resp("cat ~/.aws/credentials"))).toContain("credential-file-read");
+  });
+});

@@ -53,13 +53,24 @@ export interface InconsistentDegradationEvent {
   readonly ts: string;
 }
 
-export type ProbeEvent = ProbeFeatureEvent | ProbeFailureEvent | InconsistentDegradationEvent;
+export type ProbeEvent = ProbeFeatureEvent | ProbeFailureEvent | InconsistentDegradationEvent | PatrolStateEvent;
+
+/** patrol 的持久化状态（C7e：退避必须跨重启保留）。与三类证据事件同表，便于一致的时间序。 */
+export interface PatrolStateEvent {
+  readonly kind: "patrol_state";
+  readonly provider_id: string;
+  readonly last_attempt_ts: number;
+  readonly consecutive_failures: number;
+  readonly backoff_rounds: number;
+  readonly backoff_until_ts: number;
+}
 
 /** 封闭枚举：新增事件类型必须改这里（而不是让写入端自由发挥）。 */
 export const PROBE_EVENT_KINDS = Object.freeze([
   "probe_feature",
   "probe_failure",
   "inconsistent_degradation",
+  "patrol_state",
 ] as const);
 
 function assertValid(event: ProbeEvent): void {

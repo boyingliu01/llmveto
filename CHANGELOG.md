@@ -4,6 +4,42 @@ All notable changes to this project are documented in this file. The format is a
 take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.10.3] - 2026-11-26
+
+### Fixed
+
+**Four more features that existed only in the test suite.** The user asked
+whether the same "written but never wired" defect appeared elsewhere, so I
+scanned the source for exports with no production caller. Four were real:
+
+- `verdictFor` — the entire judgement chain. The scheduler wrote
+  `verdict: "baseline_pending"` for every probe and never called it, so the trust
+  score could never see a finding and `doctor` could never go red. All the
+  direction logic, attribution and severity lived only in tests.
+- `dimensionFor` rotation — the sequence number came from the D0 record count,
+  but each round samples one dimension, so D0 barely advanced and D2/D3 were
+  never reached. Rotation did not rotate.
+- `CatchUpPlanner` — catch-up probes and sharding detection (REQ-07 and REQ-15,
+  the whole point of design D-04a) were never invoked.
+- `baselineKey` / payload generation — created and tested, but the store had no
+  generation field and baselines were not isolated, so a payload rotation would
+  have compared incomparable observations.
+
+### Removed
+
+Five dead exports with zero references anywhere: `boundFormatForPath`,
+`wireRoutePrefixes`, `PROBE_MAX_BYTES`, `PROBE_ERROR_CLASSES`,
+`CATCHUP_DAILY_LIMIT`.
+
+### Compatibility
+
+Feature events without a `generation` field are treated as **the current
+generation**, not generation 0. Treating pre-upgrade history as a previous
+generation would void every existing baseline at once and manufacture a rebuild
+window out of nothing.
+
+973 tests.
+
 ## [0.10.2] - 2026-11-26
 
 ### Fixed

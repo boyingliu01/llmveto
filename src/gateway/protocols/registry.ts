@@ -126,13 +126,3 @@ export function recognize(direction: Direction, parsed: unknown, routePrefix?: s
   if (!isObject(parsed)) return { kind: "unknown" };
   return direction === "response" ? recognizeResponse(parsed) : recognizeBody(parsed, "request");
 }
-
-/** `parseRoute` 用：给定首段路径返回与之绑定的线格式（未绑定时 undefined）。 */
-export function boundFormatForPath(firstSegment: string | null): WireFormat | undefined {
-  return formatForPrefix(firstSegment);
-}
-
-/** 供测试与文档列出全部已绑定前缀。 */
-export function wireRoutePrefixes(): readonly string[] {
-  return [...WIRE_ROUTE_PREFIXES.keys()];
-}

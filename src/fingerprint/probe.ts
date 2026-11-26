@@ -36,9 +36,6 @@ export const PAYLOAD_GENERATION = 1 as const;
 
 export type ProbeDimension = (typeof PROBE_DIMENSIONS)[number];
 
-/** 每维载荷的字节上限（需求 C1c）。 */
-export const PROBE_MAX_BYTES = 512 as const;
-
 /** D2 的知识边界问题：答案唯一且极冷门（不是常识，弱模型常答错）。 */
 const KNOWLEDGE_QUESTION = "只回答一个词：冰岛的首都是哪里？";
 

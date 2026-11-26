@@ -15,19 +15,16 @@ import type { ProbeDimension } from "./probe.ts";
 
 export type ProbeErrorClass = "timeout" | "rst" | "http_5xx" | "http_429" | "decode_error";
 
-export const PROBE_ERROR_CLASSES: readonly ProbeErrorClass[] = Object.freeze([
-  "timeout",
-  "rst",
-  "http_5xx",
-  "http_429",
-  "decode_error",
-]);
-
 /** 正常探针：计入 K=10 特征窗口。 */
 export interface ProbeFeatureEvent {
   readonly kind: "probe_feature";
   readonly provider_id: string;
   readonly dimension: ProbeDimension;
+  /**
+   * 载荷代号。换代后旧代的事件与新代的观测**不可比**，所以基线按代过滤。
+   * 缺失视为**当前代**（兼容 v0.10.1 之前写入、没有该字段的历史数据）。
+   */
+  readonly generation?: number;
   readonly value: number | boolean | string;
   readonly verdict: "clean" | "finding" | "baseline_pending";
   readonly deviation: number;
@@ -147,9 +144,17 @@ export class FingerprintStore {
    * 取的是**最近**的而不是最早的：基线要反映当前状态，早期数据在
    * provider 升级后就是噪声。
    */
-  recentFeatures(providerId: string, dimension: ProbeDimension, limit: number): ProbeFeatureEvent[] {
+  recentFeatures(providerId: string, dimension: ProbeDimension, limit: number, generation?: number): ProbeFeatureEvent[] {
     const hits = this.readAll().filter(
-      (e): e is ProbeFeatureEvent => e.kind === "probe_feature" && e.provider_id === providerId && e.dimension === dimension,
+      (e): e is ProbeFeatureEvent =>
+        e.kind === "probe_feature" &&
+        e.provider_id === providerId &&
+        e.dimension === dimension &&
+        // 指定代时只取该代：换载荷后 token 数/措辞全变，混算会让换代本身
+        // 表现为一次大规模退化（正是 baselineKey 要防的）
+        // 缺失 generation 视为**当前代**而不是代 0：v0.10.1 之前写入的事件没有该字段，
+        // 把它们一律当作"上一代"会让升级后所有历史基线突然作废，凭空制造一次重建窗口。
+        (generation === undefined || (e.generation ?? generation) === generation),
     );
     return hits.slice(-limit);
   }

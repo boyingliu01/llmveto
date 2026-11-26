@@ -20,9 +20,6 @@ import { type ProbeDimension, PROBE_DIMENSIONS } from "./probe.ts";
 /** 补齐探针的最少间隔（R5 CAVEAT-2：串行发，3–5 秒，不用抖动）。 */
 export const CATCHUP_SERIES_GAP_MS = 4_000;
 
-/** 补齐的每日配额（D-04a：与 C2a 的豁免**不叠加**）。 */
-export const CATCHUP_DAILY_LIMIT = 1;
-
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 

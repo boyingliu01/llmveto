@@ -4,6 +4,41 @@ All notable changes to this project are documented in this file. The format is a
 take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.10.1] - 2026-11-26
+
+### Changed
+
+Two adjustments from the user's UAT review.
+
+**`doctor` now reports fingerprint results.** A trust score below 60 with a full
+K-window of samples turns `doctor.fingerprint` red. The criterion is deliberately
+conservative: no data is PASS, and fewer than 10 samples is PASS with
+`provisional` — "not measured yet" is not "measured badly", and a red light on
+every fresh install would train users to ignore it. Blocking is still not on the
+table; `doctor` is user-initiated, so a FAIL interrupts nothing.
+
+**Probe payloads can be rotated.** `PAYLOAD_GENERATION` swaps all four probe
+texts as a set. The reason is the most likely counter-attack: once a relay knows
+what the probe looks like, it can serve the real model to the probe and the
+swapped model to real traffic, and no criterion can catch that because the
+relay's test is "does this look like a probe".
+
+Baselines are isolated per generation (`baselineKey`) so a rotation rebuilds
+rather than mixing incomparable observations — mixing would make the rotation
+itself look like a mass degradation.
+
+Rotation is for "I think they have spotted us", not a scheduled event: every
+rotation blinds the system until the new baseline settles, and that window is
+the attacker's opportunity.
+
+### Documented
+
+`docs/fingerprint-capability.md` now spells out the selective-passing attack and
+its consequence — the patrol catches relays that cannot be bothered to target
+gateway users, not relays that specifically do.
+
+955 tests.
+
 ## [0.10.0] - 2026-11-26
 
 ### Added

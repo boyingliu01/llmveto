@@ -18,7 +18,7 @@ import { EvidenceWriter } from "../evidence/writer.ts";
 import { startGateway } from "../gateway/server.ts";
 import { validateRegistryFile } from "../shared/registry-file-schema.ts";
 import { FingerprintStore } from "../fingerprint/store.ts";
-import { trustReport } from "../fingerprint/trust.ts";
+import { doctorFingerprintCheck, trustReport } from "../fingerprint/trust.ts";
 
 /**
  * @test REQ-VETO-008
@@ -415,6 +415,18 @@ function doctorCoverageCounters(file: string): DoctorCheck {
   };
 }
 
+/**
+ * 指纹巡检的 doctor 检查项（用户决策：升级 doctor 而不是阻断）。
+ *
+ * 判据保守：无数据、样本不足都算 PASS。理由是"还没测"不等于"测出问题"——
+ * 把未测量判成失败，会让每个刚装上网关的用户第一眼就看到红灯。
+ */
+function doctorFingerprint(ctx: CliCtx): DoctorCheck {
+  const store = new FingerprintStore(join(stateDir(ctx), "fingerprint.jsonl"));
+  const v = doctorFingerprintCheck(store);
+  return { id: "doctor.fingerprint", ok: v.ok, message: v.message };
+}
+
 async function cmdDoctor(ctx: CliCtx, writeManaged: boolean): Promise<CliResult> {
   // AC-VETO-008-02 检查项封闭枚举：① 受管配置漂移 ② 端口连通 ③（可选）写托管 ④ evidence 链
   const env = ctx.env ?? process.env;
@@ -439,6 +451,8 @@ async function cmdDoctor(ctx: CliCtx, writeManaged: boolean): Promise<CliResult>
   checks.push(doctorEvidenceChain(evidencePath));
   checks.push(checkCanaryRegistry(ctx));
   checks.push(doctorCoverageCounters(evidencePath));
+  // 指纹巡检（v2b-C）：只在这里报，不阻断流量
+  checks.push(doctorFingerprint(ctx));
 
   const failing = checks.filter((c) => !c.ok);
   const exit = failing.length === 0 ? 0 : 1;

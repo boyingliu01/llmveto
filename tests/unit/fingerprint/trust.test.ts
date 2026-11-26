@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { FingerprintStore } from "../../../src/fingerprint/store.ts";
-import { TRUST_MAX, TRUST_MIN, trustFor, trustReport } from "../../../src/fingerprint/trust.ts";
+import { TRUST_MAX, TRUST_MIN, doctorFingerprintCheck, doctorVerdictFor, trustFor, trustReport } from "../../../src/fingerprint/trust.ts";
 
 // @test REQ-V2bC-10 / AC-10a~b
 // @intent 信任分是**展示层**指标。两条不能破的线：
@@ -105,5 +105,46 @@ describe("SL-13 报告（多 provider）", () => {
     feature(s, "zebra", "clean");
     feature(s, "alpha", "clean");
     expect(trustReport(s).map((t) => t.provider_id)).toEqual(["alpha", "zebra"]);
+  });
+});
+
+describe("SL-13 doctor 判定（用户决策：升级 doctor 而非阻断）", () => {
+  it("无数据 → PASS（'还没测'不等于'测出问题'）", () => {
+    const v = doctorFingerprintCheck(store());
+    expect(v.ok).toBe(true);
+    expect(v.message).toContain("no fingerprint data");
+  });
+
+  it("样本不足 → PASS 且标注 provisional（不误判为故障）", () => {
+    const s = store();
+    for (let i = 0; i < 3; i += 1) feature(s, "p", "finding");
+    const v = doctorFingerprintCheck(s);
+    expect(v.ok).toBe(true);
+    expect(v.message).toContain("provisional");
+  });
+
+  it("样本足够且分数低于阈值 → FAIL", () => {
+    const s = store();
+    for (let i = 0; i < 10; i += 1) feature(s, "p", "finding");
+    const v = doctorFingerprintCheck(s);
+    expect(v.ok).toBe(false);
+    expect(v.message).toContain("疑似模型被偷换或降级");
+  });
+
+  it("样本足够且分数达标 → PASS", () => {
+    const s = store();
+    for (let i = 0; i < 10; i += 1) feature(s, "p", "clean");
+    expect(doctorFingerprintCheck(s).ok).toBe(true);
+  });
+
+  it("阈值边界：60 分 PASS，59 分 FAIL", () => {
+    const s = store();
+    // 10 条中 4 条 finding → 6 clean → 60 分
+    for (let i = 0; i < 10; i += 1) feature(s, "p", i < 4 ? "finding" : "clean");
+    expect(doctorVerdictFor(trustFor(s, "p")).ok).toBe(true);
+
+    const s2 = store();
+    for (let i = 0; i < 10; i += 1) feature(s2, "p", i < 5 ? "finding" : "clean");
+    expect(doctorVerdictFor(trustFor(s2, "p")).ok).toBe(false);
   });
 });

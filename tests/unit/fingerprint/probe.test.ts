@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PROBE_DIMENSIONS, buildProbeBody, dimensionFor, probeDigest } from "../../../src/fingerprint/probe.ts";
+import { PAYLOAD_GENERATION, PROBE_DIMENSIONS, baselineKey, buildProbeBody, dimensionFor, probeDigest } from "../../../src/fingerprint/probe.ts";
 
 // @test REQ-V2bC-01 / REQ-V2bC-02 / AC-01a~c / AC-02a~b
 // @intent 探针是整个 v2b-C 里**唯一会主动向中转站发请求的东西**。
@@ -70,5 +70,23 @@ describe("SL-01 维度轮转（REQ-V2bC-02）", () => {
     const text = JSON.stringify(unit);
     expect(text.toLowerCase()).toContain("json");
     expect(text).not.toContain("拒绝");
+  });
+});
+
+describe("SL-01 载荷代与基线隔离（用户决策：载荷轮换）", () => {
+  it("基线键带代号，换代后旧基线不与新观测混算", () => {
+    expect(baselineKey("D0")).toBe(`g${PAYLOAD_GENERATION}:D0`);
+    expect(baselineKey("D0")).not.toBe("D0");
+  });
+
+  it("不同维度的基线键互不相同", () => {
+    const keys = PROBE_DIMENSIONS.map(baselineKey);
+    expect(new Set(keys).size).toBe(4);
+  });
+
+  it("当前代有对应载荷集（换代忘了加会立刻红）", () => {
+    for (const dim of PROBE_DIMENSIONS) {
+      expect(buildProbeBody(dim, "m")).toHaveProperty("messages");
+    }
   });
 });

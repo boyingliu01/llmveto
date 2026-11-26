@@ -64,6 +64,44 @@ export function trustFor(store: FingerprintStore, providerId: string): ProviderT
   };
 }
 
+/**
+ * doctor 的判定结果（用户要求：指纹结论驱动 doctor 的 PASS/FAIL）。
+ *
+ * 为什么是 doctor 而不是阻断（用户决策）：doctor 由用户显式运行，
+ * 报 FAIL 不打断任何流量——它给出"这个 provider 有问题"的明确信号，
+ * 又不承担误判的可用性代价。等积累足够数据证明 FP=0 后再谈阻断。
+ *
+ * 判据刻意保守：
+ *   - 样本不足 K 窗口 → PASS（还没有证据，不是有证据说明它坏）
+ *   - 有 finding 但仍在宽限期 → PASS + 提示
+ *   - 信任分 < 阈值 → FAIL
+ */
+export const DOCTOR_FAIL_THRESHOLD = 60 as const;
+
+export interface DoctorFingerprintVerdict {
+  readonly ok: boolean;
+  readonly message: string;
+}
+
+/** 单个 provider 的 doctor 判定。 */
+export function doctorVerdictFor(trust: ProviderTrust): DoctorFingerprintVerdict {
+  if (trust.provisional) {
+    return { ok: true, message: `${trust.provider_id}: trust=${trust.score} (provisional, ${trust.samples} samples — 尚不足以判定)` };
+  }
+  if (trust.score < DOCTOR_FAIL_THRESHOLD) {
+    return { ok: false, message: `${trust.provider_id}: trust=${trust.score} < ${DOCTOR_FAIL_THRESHOLD} (${trust.findings}/${trust.samples} findings) — 疑似模型被偷换或降级` };
+  }
+  return { ok: true, message: `${trust.provider_id}: trust=${trust.score}` };
+}
+
+/** 全部 provider 的 doctor 判定汇总（无数据时 PASS，因为"没测过"不是"测出问题"）。 */
+export function doctorFingerprintCheck(store: FingerprintStore): { readonly ok: boolean; readonly message: string } {
+  const report = trustReport(store);
+  if (report.length === 0) return { ok: true, message: "no fingerprint data yet (not a failure: nothing has been measured)" };
+  const verdicts = report.map(doctorVerdictFor);
+  return { ok: verdicts.every((v) => v.ok), message: verdicts.map((v) => v.message).join("; ") };
+}
+
 /** 全部已知 provider 的信任分（按 id 排序，便于人类阅读与 diff）。 */
 export function trustReport(store: FingerprintStore): ProviderTrust[] {
   const ids = new Set(store.readAll().map((e) => e.provider_id));

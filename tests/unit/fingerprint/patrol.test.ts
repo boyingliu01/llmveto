@@ -109,12 +109,24 @@ describe("SL-08 熔断（AC-09a/09b/AC-20）", () => {
     const store = tempStore();
     const first = new Patrol({ store, now: c.now });
     for (let i = 0; i < 3; i += 1) first.recordFailure("prov", "D0", "timeout");
-    first.persistState();
+    // **不调用 persistState**：真实路径上没有这一步。
+    // 第一版正是靠显式调用它才让这条测试变绿，而熔断状态实际从未落盘。
 
     // 模拟重启：同一 store、新的 Patrol 实例
     const revived = new Patrol({ store, now: c.now });
     expect(revived.isBackingOff("prov")).toBe(true);
     expect(revived.shouldProbe("prov")).toBe(false);
+  });
+
+  it("AC-09c 回归：不显式调 persistState 也能跨重启保留（第一版漏掉的正是这个）", () => {
+    const c = clock();
+    const store = tempStore();
+    const first = new Patrol({ store, now: c.now });
+    for (let i = 0; i < 3; i += 1) first.recordFailure("prov", "D0", "timeout");
+    // 断言落盘实际发生了：store 里必须有 patrol_state 事件
+    const states = store.readAll().filter((e) => e.kind === "patrol_state");
+    expect(states.length).toBeGreaterThan(0);
+    expect(new Patrol({ store, now: c.now }).isBackingOff("prov")).toBe(true);
   });
 
   it("成功探针重置连续失败计数", () => {

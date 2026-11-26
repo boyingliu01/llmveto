@@ -1,5 +1,6 @@
 // @no-test-required: 测试在 tests/unit/fingerprint/catchup.test.ts（Gate 5a 仅识别同目录/根 tests/ 六种路径）
 import type { Patrol } from "./patrol.ts";
+import type { FingerprintStore } from "./store.ts";
 import { type ProbeDimension, PROBE_DIMENSIONS } from "./probe.ts";
 
 /**
@@ -24,6 +25,9 @@ export const CATCHUP_DAILY_LIMIT = 1;
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
+/** 补齐配额的持久化事件类型。 */
+const CATCHUP_KIND = "catchup_quota" as const;
+
 /** 补齐补几个维度。 */
 export const CATCHUP_DIMENSIONS = 2;
 
@@ -40,13 +44,33 @@ export interface CatchUpSample {
 export class CatchUpPlanner {
   private readonly lastCatchUp = new Map<string, number>();
   private readonly now: () => number;
+  private readonly store: FingerprintStore | undefined;
 
   /**
    * @param now 时钟注入。测试不真的等 24 小时，而"用真实时钟 + 不测"是
    *   配额检查最典型的失效方式——它看起来有约束，实际从没被验证过。
    */
-  constructor(opts: { readonly now?: () => number } = {}) {
+  /**
+   * @param opts.store 传入则配额**跨重启保留**。
+   *
+   * 第一版只用内存 Map：重启即清空，配额形同虚设（评审 C1）。
+   * 那条约束与本模块的其它约束同源——"探针可被观测"是已接受的代价，
+   * 而配额是**控制这个代价的手段**，能用重启清零的控制不算控制。
+   */
+  constructor(opts: { readonly now?: () => number; readonly store?: FingerprintStore } = {}) {
     this.now = opts.now ?? (() => Date.now());
+    this.store = opts.store;
+    this.loadQuotas();
+  }
+
+  /** 从 store 恢复各 provider 的上次补齐时刻。 */
+  private loadQuotas(): void {
+    if (this.store === undefined) return;
+    for (const e of this.store.readAll()) {
+      if (e.kind !== CATCHUP_KIND) continue;
+      const ev = e as unknown as { provider_id: string; ts_ms: number };
+      this.lastCatchUp.set(ev.provider_id, ev.ts_ms);
+    }
   }
 
   /**
@@ -73,7 +97,10 @@ export class CatchUpPlanner {
   }
 
   recordCatchUp(providerId: string): void {
-    this.lastCatchUp.set(providerId, this.now());
+    const at = this.now();
+    this.lastCatchUp.set(providerId, at);
+    // 落盘：否则重启即重置配额（评审 C1）
+    this.store?.append({ kind: CATCHUP_KIND, provider_id: providerId, ts_ms: at } as unknown as Parameters<FingerprintStore["append"]>[0]);
   }
 
   /**

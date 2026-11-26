@@ -131,3 +131,40 @@ describe("SL-05 辅判据归因（REQ-V2bC-06 / AC-06a~b）", () => {
     expect(v.hit_by).toEqual(["relative"]);
   });
 });
+
+describe("SL-03 base=0 不误归因（评审 MAJOR-1 回归）", () => {
+  it("基线为 0 且观测非零 → 判退化但不归因到任何形态", () => {
+    const v = verdictFor({ kind: "numeric", baseValue: 0, observed: 3, modelChanged: true });
+    expect(v.verdict).toBe("finding");
+    expect(v.hit_by).toEqual(["relative"]);
+    expect(v.deviation).toBe(-1);
+  });
+
+  it("基线为 0 且观测为 0 → clean", () => {
+    expect(verdictFor({ kind: "numeric", baseValue: 0, observed: 0, modelChanged: true }).verdict).toBe("clean");
+  });
+});
+
+describe("SL-03 运行时类型校验（评审 MAJOR-2 回归）", () => {
+  it("kind=numeric 但 baseValue 是字符串 → baseline_pending（不是 NaN 静默 clean）", () => {
+    const v = verdictFor({
+      kind: "numeric",
+      // biome-ignore lint/suspicious/noExplicitAny: 模拟 JSON 反序列化出的脏数据
+      baseValue: "100" as any,
+      observed: 50,
+      modelChanged: false,
+    });
+    expect(v.verdict).toBe("baseline_pending");
+  });
+
+  it("kind=boolean 但 observed 是数字 → baseline_pending", () => {
+    const v = verdictFor({
+      kind: "boolean",
+      baseValue: true,
+      // biome-ignore lint/suspicious/noExplicitAny: 同上
+      observed: 1 as any,
+      modelChanged: false,
+    });
+    expect(v.verdict).toBe("baseline_pending");
+  });
+});

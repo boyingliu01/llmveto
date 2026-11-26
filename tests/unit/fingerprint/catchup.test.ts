@@ -122,3 +122,29 @@ describe("SL-10 分片识别（AC-15a）", () => {
     expect(verdict.kind).toBe("stable_degradation");
   });
 });
+
+describe("SL-09 配额跨重启（评审 C1 回归）", () => {
+  it("重启后配额不清零（第一版用内存 Map，重启即绕过）", () => {
+    const c = clock();
+    const s = store();
+    const patrol = new Patrol({ store: s, now: c.now });
+    const planner = new CatchUpPlanner({ now: c.now, store: s });
+    planner.recordCatchUp("prov");
+    expect(new CatchUpPlanner({ now: c.now, store: s }).shouldCatchUp("prov", patrol)).toBe(false);
+  });
+
+  it("配额落盘：store 里能看到 catchup_quota 事件", () => {
+    const c = clock();
+    const s = store();
+    new CatchUpPlanner({ now: c.now, store: s }).recordCatchUp("prov");
+    expect(s.readAll().filter((e) => e.kind === "catchup_quota")).toHaveLength(1);
+  });
+
+  it("不同 provider 的配额互不影响", () => {
+    const c = clock();
+    const s = store();
+    const patrol = new Patrol({ store: s, now: c.now });
+    new CatchUpPlanner({ now: c.now, store: s }).recordCatchUp("a");
+    expect(new CatchUpPlanner({ now: c.now, store: s }).shouldCatchUp("b", patrol)).toBe(true);
+  });
+});

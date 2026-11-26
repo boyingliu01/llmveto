@@ -74,8 +74,18 @@ export class Patrol {
     );
   }
 
+  /**
+   * 更新内存状态并**立即落盘**。
+   *
+   * 为什么不在 `put` 之外单独要求调用方 persistState：第一版就是这么写的，
+   * 结果 `persistState()` 只有定义、没有任何调用点——熔断状态从不落盘，
+   * 重启后 `isBackingOff` 回到 false，等于"重启即绕过退避"（AC-20 要防的正是这个）。
+   * 而测试之所以没抓到，是因为它**显式调用了 persistState**，验证了一条
+   * 真实路径上不存在的调用。状态变更必须自带持久化，不依赖调用方记性。
+   */
   private put(state: PatrolState): void {
     this.states.set(state.provider_id, state);
+    this.store.append(state);
   }
 
   /** 该 provider 是否仍在退避（AC-20）。 */
@@ -148,7 +158,12 @@ export class Patrol {
     });
   }
 
-  /** 把当前状态写盘（AC-09c）。 */
+  /**
+   * 把全部内存状态补写一遍。
+   *
+   * 保留是因为状态变更已由 `put` 自动落盘，这里只用于"加载后立即再写一次"的
+   * 极端场景（如迁移旧格式）。**不再需要**在正常路径上调它。
+   */
   persistState(): void {
     for (const s of this.states.values()) {
       this.store.append(s);

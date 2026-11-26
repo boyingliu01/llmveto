@@ -1,6 +1,6 @@
 {
   "name": "llmveto",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "description": "Local security gateway that vetoes malicious LLM relay traffic — deterministic verification, fail-closed blocking, tamper-evident audit trail.",
   "type": "module",
   "license": "MIT",

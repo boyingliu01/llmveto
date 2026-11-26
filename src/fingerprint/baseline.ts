@@ -125,7 +125,10 @@ function deviates(input: VerdictInput): { deviated: boolean; deviation: number }
   if (input.kind === "numeric") {
     const base = input.baseValue as number;
     const observed = input.observed as number;
-    if (base === 0) return { deviated: observed !== 0, deviation: observed === 0 ? 0 : 1 };
+    // base=0 时"相对偏离"没有定义（除零）。此时判退化是对的，但**不能算 deviation**
+    // ——任何非零观测都会得到 1，而那会被绝对基线读成"疑似小模型"（评审 MAJOR-1）。
+    // 用 -1 表示"偏离但无法量化"，绝对基线见到负值即跳过归因。
+    if (base === 0) return { deviated: observed !== 0, deviation: observed === 0 ? 0 : -1 };
     const ratio = Math.abs(observed - base) / base;
     return { deviated: ratio > NUMERIC_DEVIATION, deviation: ratio };
   }
@@ -135,6 +138,20 @@ function deviates(input: VerdictInput): { deviated: boolean; deviation: number }
   }
   const sim = jaccard(String(input.baseValue), String(input.observed));
   return { deviated: sim < TEXT_SIMILARITY_FLOOR, deviation: 1 - sim };
+}
+
+/** 退化时的结果：带上归因，并按"字段是否撒谎"分级。 */
+function findingResult(input: VerdictInput, deviation: number): VerdictResult {
+  // AC-06a：辅判据**每次**都跑，不做"主判据没中才跑"的兜底——
+  // 兜底形式会让"字段撒谎"这种最严重情形漏在主判据的宽限期里。
+  const hits: ("relative" | "absolute")[] = ["relative"];
+  // deviation < 0 = 偏离但无法量化（base=0）：跳过归因，不让它落进任何区间
+  if (input.kind === "numeric" && deviation >= 0 && absoluteLabel(deviation) !== undefined) hits.push("absolute");
+
+  // 字段不变却退化 = 字段在撒谎，比版本回退更严重
+  return input.modelChanged
+    ? { verdict: "finding", deviation, hit_by: hits }
+    : { verdict: "finding", deviation, severity: "high", hit_by: hits };
 }
 
 /**
@@ -147,20 +164,32 @@ function deviates(input: VerdictInput): { deviated: boolean; deviation: number }
  *
  * 需求评审 R2 指出原稿"字段变→clean"会让版本回退永远检不出——那条规则在此推翻。
  */
+/**
+ * `baseValue` 的类型是否与 `kind` 一致。
+ *
+ * 类型系统在这里保护不了我们：`VerdictInput` 的 `baseValue` 是联合类型，
+ * 但真正的数据来自 JSON 反序列化，那里没有类型。一个 `kind:"numeric"` 配
+ * 字符串基线会让 `deviates()` 算出 NaN，而 NaN 的所有比较都为 false——
+ * 结果是**永远判 clean**，一个静默的 fail-open。
+ */
+const KIND_TYPEOF: Readonly<Record<VerdictInput["kind"], string>> = Object.freeze({
+  numeric: "number",
+  boolean: "boolean",
+  text: "string",
+});
+
+function baseMatchesKind(input: VerdictInput): boolean {
+  if (input.baseValue === null) return true;
+  const want = KIND_TYPEOF[input.kind];
+  return typeof input.baseValue === want && typeof input.observed === want;
+}
+
+
 export function verdictFor(input: VerdictInput): VerdictResult {
-  if (input.baseValue === null) return { verdict: "baseline_pending", deviation: 0 };
-
+  // 基线缺失或与观测不可比 → 宽限期，不产出判定
+  if (input.baseValue === null || !baseMatchesKind(input)) {
+    return { verdict: "baseline_pending", deviation: 0 };
+  }
   const { deviated, deviation } = deviates(input);
-  if (!deviated) return { verdict: "clean", deviation };
-
-  // AC-06a：辅判据**每次**都跑，不做"主判据没中才跑"的兜底——
-  // 兜底形式会让"字段撒谎"这种最严重情形漏在主判据的宽限期里。
-  const hits: ("relative" | "absolute")[] = ["relative"];
-  const label = input.kind === "numeric" ? absoluteLabel(deviation) : undefined;
-  if (label !== undefined) hits.push("absolute");
-
-  // 字段不变却退化 = 字段在撒谎，比版本回退更严重
-  return input.modelChanged
-    ? { verdict: "finding", deviation, hit_by: hits }
-    : { verdict: "finding", deviation, severity: "high", hit_by: hits };
+  return deviated ? findingResult(input, deviation) : { verdict: "clean", deviation };
 }

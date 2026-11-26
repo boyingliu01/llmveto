@@ -20,14 +20,20 @@ export type FeatureResult =
 const MISSING: FeatureResult = Object.freeze({ kind: "missing" });
 
 /** 从 chat 响应里取第一条 message 的 content 文本。 */
+/** 非 null、非数组的对象。 */
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+/** 取对象字段；不是记录时给 undefined。 */
+function field(v: unknown, key: string): unknown {
+  return isRecord(v) ? v[key] : undefined;
+}
+
+/** 从 chat 响应里取第一条 message 的 content 文本。 */
 function contentOf(parsed: Record<string, unknown>): string | undefined {
-  const choices = parsed.choices;
-  if (!Array.isArray(choices) || choices.length === 0) return undefined;
-  const first = choices[0];
-  if (first === null || typeof first !== "object") return undefined;
-  const message = (first as Record<string, unknown>).message;
-  if (message === null || typeof message !== "object") return undefined;
-  const content = (message as Record<string, unknown>).content;
+  const first = Array.isArray(parsed.choices) ? parsed.choices[0] : undefined;
+  const content = field(field(first, "message"), "content");
   return typeof content === "string" ? content : undefined;
 }
 

@@ -102,3 +102,32 @@ describe("SL-03 判定：版本变更看方向（AC-05a~c）", () => {
     expect(v.verdict).toBe("baseline_pending");
   });
 });
+
+describe("SL-05 辅判据归因（REQ-V2bC-06 / AC-06a~b）", () => {
+  const base = { kind: "numeric" as const, baseValue: 100, modelChanged: true };
+
+  it("AC-06b：双命中时 hit_by 同时含 relative 与 absolute", () => {
+    // 偏离 50% → 落在 smaller_model 区间 [0,0.5) 内
+    const v = verdictFor({ ...base, observed: 50 });
+    expect(v.verdict).toBe("finding");
+    expect(v.hit_by).toEqual(["relative", "absolute"]);
+  });
+
+  it("AC-06a：主判据命中但辅判据不认时，hit_by 只有 relative", () => {
+    // 偏离 20% —— 超阈值（15%）但落在所有登记区间之外
+    const v = verdictFor({ ...base, observed: 80 });
+    expect(v.verdict).toBe("finding");
+    expect(v.hit_by).toEqual(["relative"]);
+  });
+
+  it("AC-06b：clean 时不写 hit_by（没有命中就没有归因）", () => {
+    const v = verdictFor({ ...base, observed: 100 });
+    expect(v.verdict).toBe("clean");
+    expect(v.hit_by).toBeUndefined();
+  });
+
+  it("布尔维度没有绝对基线（只覆盖数值形态）", () => {
+    const v = verdictFor({ kind: "boolean", baseValue: true, observed: false, modelChanged: true });
+    expect(v.hit_by).toEqual(["relative"]);
+  });
+});

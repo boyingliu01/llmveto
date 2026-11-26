@@ -86,6 +86,38 @@ export interface VerdictResult {
   /** 相对基线的偏离度；数值维度是比例，文本是 1−相似度。 */
   readonly deviation: number;
   readonly severity?: "high";
+  /** 命中来源（REQ-V2bC-06 / AC-06a~b）：主判据与辅判据并行跑，双命中时都记。 */
+  readonly hit_by?: readonly ("relative" | "absolute")[];
+}
+
+/**
+ * 绝对基线能认出的降级形态（设计 D-03：只覆盖登记过的少数形态）。
+ *
+ * 它提供的是**归因**而不是**发现**——主判据说"这一维偏离了"，
+ * 辅判据说"看起来像 4-bit 量化"。对用户来说后者可行动得多。
+ */
+export interface AbsoluteSignatures {
+  readonly [signature: string]: {
+    /** 该形态的判据：观测值落在区间内即匹配。 */
+    readonly min: number;
+    readonly max: number;
+    readonly label: string;
+  };
+}
+
+/** 登记的降级形态（数值维度用；区间是宽的——归因不需要精确）。 */
+export const KNOWN_DEGRADATIONS: AbsoluteSignatures = Object.freeze({
+  quantized_4bit: { min: 0.5, max: 0.72, label: "疑似 4-bit 量化的 tokenizer 偏差" },
+  quantized_8bit: { min: 0.72, max: 0.85, label: "疑似 8-bit 量化" },
+  smaller_model: { min: 0.85, max: 1.0, label: "疑似被替换成明显更小的模型" },
+});
+
+/** 数值观测是否匹配某个已登记的降级形态（返回 label 或 undefined）。 */
+function absoluteLabel(deviation: number): string | undefined {
+  for (const sig of Object.values(KNOWN_DEGRADATIONS)) {
+    if (deviation >= sig.min && deviation < sig.max) return sig.label;
+  }
+  return undefined;
 }
 
 /** 观测值是否偏离基线（各维度各自的判据）。 */
@@ -121,8 +153,14 @@ export function verdictFor(input: VerdictInput): VerdictResult {
   const { deviated, deviation } = deviates(input);
   if (!deviated) return { verdict: "clean", deviation };
 
+  // AC-06a：辅判据**每次**都跑，不做"主判据没中才跑"的兜底——
+  // 兜底形式会让"字段撒谎"这种最严重情形漏在主判据的宽限期里。
+  const hits: ("relative" | "absolute")[] = ["relative"];
+  const label = input.kind === "numeric" ? absoluteLabel(deviation) : undefined;
+  if (label !== undefined) hits.push("absolute");
+
   // 字段不变却退化 = 字段在撒谎，比版本回退更严重
   return input.modelChanged
-    ? { verdict: "finding", deviation }
-    : { verdict: "finding", deviation, severity: "high" };
+    ? { verdict: "finding", deviation, hit_by: hits }
+    : { verdict: "finding", deviation, severity: "high", hit_by: hits };
 }

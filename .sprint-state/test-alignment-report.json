@@ -1,18 +1,18 @@
 {
   "alignment_status": "PASS",
   "phase": 4,
-  "sprint_id": "sprint-20261124-54",
-  "head_commit": "de5738c717cd8e774192f97b9fcf0bdbc43292aa",
+  "sprint_id": "sprint-v2bc",
+  "head_commit": "2f3fdaf7c89e0ebeec788ef014d17118b0b8a472",
   "specification_path": "specification.yaml",
-  "spec_hash": "b99fb2b958ea3c379c9b62b323dcd9edf5279abfe79f31019c6e99f4d810de61",
-  "generated_at": "2026-11-24T20:00:00Z",
-  "generated_by": "manual sweep (xp-gate check-alignment only reads a pre-generated report; none existed for this sprint)",
-  "method": "每个 REQ 用 grep -rl 在 tests/ 下统计引用文件；AC 取自 specification.yaml",
+  "spec_hash": "153078ac219390700bf2898b14ab65f678027347c4dda641fa3fe93c72a3c2f5",
+  "generated_at": "2026-11-26T06:15:07Z",
+  "generated_by": "manual sweep for v2b-C",
   "score": 100,
-  "requirements_total": 21,
-  "requirements_covered": 21,
-  "acceptance_criteria_total": 49,
+  "requirements_total": 15,
+  "requirements_covered": 15,
+  "acceptance_criteria_total": 38,
   "misaligned": [],
+  "historical_requirements": 53,
   "requirements": [
     {
       "id": "REQ-V2bA-00",
@@ -240,6 +240,7 @@
       "id": "REQ-V2bA-15",
       "title": "未识别与零文本的处置",
       "test_files": [
+        "tests/integration/route-passthrough.test.ts",
         "tests/integration/protocol-outcome.test.ts",
         "tests/unit/gateway/protocols/coverage.test.ts",
         "tests/unit/route-keys.test.ts",
@@ -287,6 +288,522 @@
         "AC-V2bA-17a",
         "AC-V2bA-17b"
       ],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2bC-01",
+      "title": "探针载荷与会话无关且不含部署标识",
+      "test_files": [
+        "tests/unit/fingerprint/probe.test.ts"
+      ],
+      "acceptance_criteria": [
+        "AC-01a",
+        "AC-01b",
+        "AC-01c"
+      ],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2bC-02",
+      "title": "四项特征分四次轮转采集",
+      "test_files": [
+        "tests/unit/fingerprint/probe.test.ts"
+      ],
+      "acceptance_criteria": [
+        "AC-02a",
+        "AC-02b"
+      ],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2bC-03",
+      "title": "每维独立基线（K=10 中位数）",
+      "test_files": [
+        "tests/unit/fingerprint/baseline.test.ts"
+      ],
+      "acceptance_criteria": [
+        "AC-03a",
+        "AC-03b",
+        "AC-03c"
+      ],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2bC-04",
+      "title": "特征提取有确定规则",
+      "test_files": [
+        "tests/unit/fingerprint/features.test.ts"
+      ],
+      "acceptance_criteria": [
+        "AC-04a",
+        "AC-04b",
+        "AC-04c",
+        "AC-04d"
+      ],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2bC-05",
+      "title": "版本变更按方向判定",
+      "test_files": [
+        "tests/unit/fingerprint/baseline.test.ts"
+      ],
+      "acceptance_criteria": [
+        "AC-05a",
+        "AC-05b",
+        "AC-05c"
+      ],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2bC-06",
+      "title": "辅判据提供归因",
+      "test_files": [
+        "tests/unit/fingerprint/baseline.test.ts"
+      ],
+      "acceptance_criteria": [
+        "AC-06a",
+        "AC-06b"
+      ],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2bC-07",
+      "title": "补齐探针封口退避交互",
+      "test_files": [
+        "tests/unit/fingerprint/catchup.test.ts"
+      ],
+      "acceptance_criteria": [
+        "AC-07a",
+        "AC-07b",
+        "AC-07c"
+      ],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2bC-08",
+      "title": "周期与频率约束",
+      "test_files": [
+        "tests/unit/fingerprint/patrol.test.ts"
+      ],
+      "acceptance_criteria": [
+        "AC-08a",
+        "AC-08b",
+        "AC-08c"
+      ],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2bC-09",
+      "title": "熔断与持久化",
+      "test_files": [
+        "tests/unit/fingerprint/patrol.test.ts"
+      ],
+      "acceptance_criteria": [
+        "AC-09a",
+        "AC-09b",
+        "AC-09c"
+      ],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2bC-10",
+      "title": "信任分只展示不进策略",
+      "test_files": [
+        "tests/unit/fingerprint/trust.test.ts"
+      ],
+      "acceptance_criteria": [
+        "AC-10a",
+        "AC-10b"
+      ],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2bC-11",
+      "title": "三类 evidence 事件",
+      "test_files": [
+        "tests/unit/fingerprint/store.test.ts"
+      ],
+      "acceptance_criteria": [
+        "AC-11a",
+        "AC-11b",
+        "AC-11c"
+      ],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2bC-12",
+      "title": "网络层形态伪装",
+      "test_files": [
+        "tests/unit/fingerprint/http.test.ts"
+      ],
+      "acceptance_criteria": [
+        "AC-12a",
+        "AC-12b"
+      ],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2bC-13",
+      "title": "独立 agent 不占主流量连接",
+      "test_files": [
+        "tests/unit/fingerprint/http.test.ts"
+      ],
+      "acceptance_criteria": [
+        "AC-13a",
+        "AC-13b"
+      ],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2bC-14",
+      "title": "CLI 入口",
+      "test_files": [
+        "tests/unit/fingerprint/cli.test.ts"
+      ],
+      "acceptance_criteria": [
+        "AC-14a",
+        "AC-14b"
+      ],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2bC-15",
+      "title": "分片对抗识别",
+      "test_files": [
+        "tests/unit/fingerprint/catchup.test.ts"
+      ],
+      "acceptance_criteria": [
+        "AC-15a"
+      ],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-POST-01",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/unit/checkers/dangerous-command-scan.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2a-01",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/fixtures/threats/T2c/tool-call-arguments.yaml",
+        "tests/unit/gateway/scan-unit.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2a-02",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/unit/checkers/tool-call-shape.test.ts",
+        "tests/unit/checkers/scan-texts-contract.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2a-03",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/integration/detection-matrix.test.ts",
+        "tests/fixtures/threats/T3a/thinking-mismatch.yaml",
+        "tests/unit/checkers/thinking-signature-presence.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2a-04",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/unit/checkers/usage-reconcile.test.ts",
+        "tests/unit/checkers/scan-texts-contract.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2a-05",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/integration/canary-origin-attribution.test.ts",
+        "tests/integration/canary-detection.test.ts",
+        "tests/unit/checkers/canary-return-scan.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2a-06",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/unit/evidence/aggregate.test.ts",
+        "tests/unit/cli/doctor-v2a.test.ts",
+        "tests/unit/cli/canary-rotate.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2a-07",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/unit/shared/registry-file-schema.test.ts",
+        "tests/unit/architecture-boundaries.test.ts",
+        "tests/unit/canary/store.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2a-08",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/integration/relay-detection.test.ts",
+        "tests/unit/evil-relay.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2a-09",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/unit/ci-workflows.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2a-10",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/unit/doc-consistency.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2a-11",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/integration/canary-inject.test.ts",
+        "tests/integration/registry-degraded.test.ts",
+        "tests/unit/policy/degraded.test.ts",
+        "tests/unit/canary/session-key.test.ts",
+        "tests/unit/canary/inject.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2a-12",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/integration/budget-gate.test.ts",
+        "tests/unit/gateway/budget.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2a-13",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/unit/policy/degraded.test.ts",
+        "tests/unit/evidence/reason.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2a-14",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/unit/evidence/reason.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2a-15",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/integration/stream-windows.test.ts",
+        "tests/fixtures/stream-window-overflow.ts",
+        "tests/unit/gateway/window-store.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2bA-04a",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/unit/gateway/protocols/__snapshots__/chat.test.ts.snap",
+        "tests/unit/gateway/protocols/chat.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-V2bA-08a2",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [],
+      "acceptance_criteria": [],
+      "status": "uncovered"
+    },
+    {
+      "id": "REQ-V2bA-13b",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/unit/doc-consistency.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-VETO-002",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/integration/gateway-mock.test.ts",
+        "tests/unit/gateway/scan-unit.test.ts",
+        "tests/unit/gateway/server-binding.test.ts",
+        "tests/e2e/upstream-failure-resilience.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-VETO-003",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/unit/architecture-boundaries.test.ts",
+        "tests/unit/checkers/egress-secret-scan.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-VETO-004",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/unit/checkers/invisible-unicode-scan.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-VETO-005",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/unit/checkers/model-label-consistency.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-VETO-006",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/unit/policy/engine.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-VETO-007",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/unit/evidence/writer.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-VETO-008",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/unit/cli/cli.test.ts",
+        "tests/e2e/daemon-lifecycle.test.ts",
+        "tests/e2e/cli-smoke.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-VETO-009",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/config-io.test.ts",
+        "tests/unit/gateway/router.test.ts",
+        "tests/unit/adapters/adapters.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-VETO-010",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/unit/evidence/verify.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-VETO-011",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/utils/mock-upstream.ts",
+        "tests/unit/utils/mock-upstream.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-VETO-012",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/integration/detection-matrix.test.ts",
+        "tests/integration/false-positive-matrix.test.ts",
+        "tests/utils/yaml-subset.ts",
+        "tests/utils/yaml-subset.test.ts",
+        "tests/fixtures/threats/T3a/label.yaml",
+        "tests/fixtures/threats/T1b/secrets.yaml",
+        "tests/fixtures/threats/T2c/unicode.yaml"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-VETO-013",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/integration/dangerous-command-scan.test.ts"
+      ],
+      "acceptance_criteria": [],
+      "status": "covered"
+    },
+    {
+      "id": "REQ-VETO-014",
+      "title": "（历史 REQ，定义见来源文档）",
+      "test_files": [
+        "tests/e2e/fail-closed-request.test.ts",
+        "tests/e2e/managed-path-probe.test.ts",
+        "tests/e2e/delphi-path.test.ts",
+        "tests/e2e/fail-closed-stream-scenario4.test.ts",
+        "tests/e2e/fail-closed-stream-scenario3.test.ts",
+        "tests/e2e/verify-chain.test.ts",
+        "tests/e2e/doctor-drift.test.ts"
+      ],
+      "acceptance_criteria": [],
       "status": "covered"
     }
   ]

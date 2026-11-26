@@ -119,12 +119,29 @@
 
 ## 用法
 
+### 开关（默认关闭）
+
+```bash
+# 启用周期探针（默认不启用）
+export LLMVETO_FINGERPRINT_PATROL=1
+llmveto start
+```
+
+**默认关闭是刻意的**：一个已经在用的网关，不该因为升级就开始向中转站发请求。
+那不是功能上线，是**机器的网络足迹静默改变**。只有显式设为 `1` 或 `true`
+才启用；拼错（`yes`/`on`/`0`）一律不启用。
+
+### 查询
+
 ```bash
 # 查看各 provider 信任分（只读，不触发探针）
 llmveto fingerprint
 
 # 手动请求一次探针（仍受配额与退避约束）
 llmveto fingerprint --probe opencode/whalecloud
+
+# 看指纹结论是否让 doctor 报 FAIL
+llmveto doctor
 ```
 
 输出示例：
@@ -143,6 +160,12 @@ opencode/whalecloud: trust=100 (provisional) samples=3 findings=0 failures=0
 | `findings > 0` | 检出偏离 | 看 evidence 里的 `dimension` 与 `deviation` |
 | `failures > 0` | 探针发不出去 | 检查网络；连续 3 次会进退避 |
 | `inconsistent_degradation` | 疑似分片对抗 | 最严重的信号 |
+
+## 已知限制
+
+**探针请求里的模型名来自 provider id 尾段**（`opencode/whalecloud` → `whalecloud`），
+因为受管枚举里没有"该 provider 服务哪个模型"这一信息。真实支持需要用户配置，
+不在 v2b-C 范围内。这意味着探针探测的模型可能与用户实际调用的模型不同。
 
 ## 版本
 

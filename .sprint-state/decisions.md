@@ -336,3 +336,31 @@
 - **落地**：`docs/plans/2026-11-24-v2b-a-design.md`（§2.3/§2.4/D-02/D-03/D-04~D-07/§4 切片/§5 风险）、
   `specification.yaml`（REQ-03/14/15/15a 与 AC 同步）、`.sprint-state/slices-manifest.json`（15 切片、拓扑校验、21/21 REQ 覆盖）、
   `.sprint-state/review/r1-requirements-r3draft.md`（同批同步）、`.sprint-state/review/r2-consensus.md`。
+
+## Decision DR-001
+- **Phase**: 1/6 PREP
+- **Question**: v2b-B（计费对账）的官价数据源空白，怎么处置？
+- **Options**: 内置官价表只做成本估算 / 连账单对比一起做 / 跳过
+- **Choice**: **跳过**
+- **Rationale**: 官价表需要定期维护，内置会过期；维护成本高于价值。用户判断不值得做。
+- **Timestamp**: 2026-11-26T11:56:00+08:00
+
+## Decision DR-002
+- **Phase**: 1/6 PREP
+- **Question**: v2b-C 的"主动探针与最小暴露承诺冲突"怎么解？
+- **Options**: 被动指纹（从 evidence 推导）/ 只在手动命令时探针 / 周期+手动都做 / 跳过
+- **Choice**: **周期探针 + 手动探针都做**
+- **Rationale**: 用户选择完整实现。这意味着**接受"最小暴露"承诺的例外**——设计阶段必须
+  明确探针发出什么内容、频率上限、是否会泄露用户数据，并写进能力矩阵。
+  不能假装这条冲突不存在。
+- **Timestamp**: 2026-11-26T11:57:00+08:00
+
+## Decision DR-003
+- **Phase**: 2/6 DESIGN
+- **Question**: 设计已完成（7 轮评审），但有三条必须承认的代价：①探针可被上游观测 ②完美时间分片识别不了 ③只 warn 不阻断。是否批准？
+- **Options**: 批准进 BUILD / 只做手动探针不做周期 / 先读设计再定
+- **Choice**: **批准设计，进 BUILD**
+- **Rationale**: 用户接受三条已知代价。这意味着「最小暴露」承诺的例外正式生效——
+  探针会周期性发往中转站，其存在本身是可被上游观测的事实。能力边界写进
+  docs/fingerprint-capability.md，不掩饰。
+- **Timestamp**: 2026-11-26T12:10:00+08:00

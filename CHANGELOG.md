@@ -4,6 +4,36 @@ All notable changes to this project are documented in this file. The format is a
 take on [Keep a Changelog](https://keepachangelog.com/), and the project aims at
 [Semantic Versioning](https://semver.org/).
 
+## [0.9.0] - 2026-11-26
+
+### Added
+
+**v2b-C provider fingerprint patrol (in progress).** Slice 1-4 of 15: probe
+payloads, feature extraction, baseline, and verdict.
+
+- **Probe payloads are deliberately boring.** Four dimensions, each a fixed
+  string under 512 bytes, no runtime state consulted. The test asserts the
+  payload's sha256 is identical across three wildly different session states,
+  and that it contains no hostname, path, UUID or timestamp. Making probes look
+  like ordinary traffic would tempt them to carry real context; the design
+  instead accepts that probes are identifiable and writes that into the
+  capability boundary.
+- **Feature extraction distinguishes "measured false" from "not measured."**
+  `missing` is its own variant, because folding a failed sample into a falsy
+  value makes the baseline treat sampling failure as degradation. `D1` strips
+  markdown fences before parsing: a weak model wrapping JSON in ```json is
+  being polite, not degraded.
+- **The version-change rule reads direction, not change.** The requirements
+  review found the original rule (`model` field changed => clean) makes API
+  version rollback undetectable -- one of the four degradations this feature
+  exists to catch. Now: field changed + behaviour intact => clean (legitimate
+  upgrade); field changed + behaviour degraded => finding (rollback); field
+  unchanged + behaviour degraded => finding with severity high (the field is
+  lying).
+
+37 tests. Slices 5-15 pending: persistence, scheduling, circuit breaker,
+catch-up, sharding detection, network-shape disguise, trust score, CLI.
+
 ## [0.8.0] - 2026-11-25
 
 ### Changed

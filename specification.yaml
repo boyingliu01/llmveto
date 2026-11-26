@@ -579,6 +579,21 @@ specification:
     title: （历史 REQ，定义见来源文档）
     source: docs/issues/
     acceptance_criteria: []
+  - id: REQ-V3-01
+    title: 策略可配置化边界：阻断规则不可降级（除非带理由与有效期的登记豁免）
+    acceptance_criteria:
+    - id: AC-V3-01a
+      given: 降级 credential-file-read 且无 acknowledged_risks → 拒绝加载
+    - id: AC-V3-01b
+      given: acknowledged_risks 的 reason 为空或缺失 → 拒绝
+    - id: AC-V3-01c
+      given: expires_at 缺失/已过期/超 90 天 → 拒绝
+    - id: AC-V3-01d
+      given: 合法降级 → 接受，并记入 degraded 清单
+    - id: AC-V3-01e
+      given: 观测类 checker 降级无需登记，但记入 degraded
+    - id: AC-V3-01f
+      given: 配置错误 → 回退内置默认而非拒绝启动（AC-8）
   v2bc_sprint:
     spec_id: SPEC-V2bC-001
     sprint: sprint-v2bc

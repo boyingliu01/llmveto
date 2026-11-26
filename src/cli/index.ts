@@ -21,6 +21,7 @@ import { FingerprintStore } from "../fingerprint/store.ts";
 import { doctorFingerprintCheck, trustReport } from "../fingerprint/trust.ts";
 import { Patrol, patrolEnabledFromEnv } from "../fingerprint/patrol.ts";
 import { ProbeScheduler } from "../fingerprint/scheduler.ts";
+import { loadPolicyConfig } from "../policy/config.ts";
 
 /**
  * @test REQ-VETO-008
@@ -454,6 +455,30 @@ function doctorFingerprint(ctx: CliCtx): DoctorCheck {
   return { id: "doctor.fingerprint", ok: v.ok, message: v.message };
 }
 
+/**
+ * 策略配置检查项：让"我降级了什么"始终可见。
+ *
+ * 配置加载失败时**不是** FAIL——网关已按内置默认策略运行（AC-8），
+ * 防护没有消失。但必须 WARN 出来，否则用户以为配置生效了。
+ */
+function doctorPolicyConfig(): DoctorCheck {
+  const r = loadPolicyConfig(globalPolicyPath());
+  if (r.status === "ok") {
+    if (r.degraded.length === 0) return { id: "doctor.policy-config", ok: true, message: "default policy (no overrides)" };
+    return { id: "doctor.policy-config", ok: false, message: `degraded: ${r.degraded.join(", ")}` };
+  }
+  return {
+    id: "doctor.policy-config",
+    ok: false,
+    message: `配置加载失败，已回退内置默认：${r.error ?? "(unknown)"}`,
+  };
+}
+
+/** 全局策略配置路径（项目级覆盖属后续切片）。 */
+function globalPolicyPath(): string {
+  return join(homedir(), ".config", "llmveto", "policy.json");
+}
+
 async function cmdDoctor(ctx: CliCtx, writeManaged: boolean): Promise<CliResult> {
   // AC-VETO-008-02 检查项封闭枚举：① 受管配置漂移 ② 端口连通 ③（可选）写托管 ④ evidence 链
   const env = ctx.env ?? process.env;
@@ -480,6 +505,8 @@ async function cmdDoctor(ctx: CliCtx, writeManaged: boolean): Promise<CliResult>
   checks.push(doctorCoverageCounters(evidencePath));
   // 指纹巡检（v2b-C）：只在这里报，不阻断流量
   checks.push(doctorFingerprint(ctx));
+  // 策略配置（v3）：降级状态必须可见，否则用户忘了自己降级过
+  checks.push(doctorPolicyConfig());
 
   const failing = checks.filter((c) => !c.ok);
   const exit = failing.length === 0 ? 0 : 1;

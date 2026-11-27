@@ -59,6 +59,14 @@ export interface GatewayConfig {
   readonly upstreamBaseUrl: string; // TEST 契约 #1：可注入 mock-upstream；亦作路径路由未命中时的 catch-all
   readonly evidenceWriter: EvidenceWriter;
   readonly bodyCapture?: BodyCapture;
+  /**
+   * 已生效的策略降级（来自 policy 配置加载）。
+   *
+   * 落进每条 evidence 记录，让"我降级了什么"在**每次命中时**可见，
+   * 而不只是启动时看一次 doctor（delphi 评审可行席要求明确指出的缺口：
+   * 风险必须持续显式呈现，不能仅依赖启动提示）。
+   */
+  readonly degradedPolicy?: readonly string[];
   readonly clientHeaderName?: string; // 客户端身份头，默认 x-llmveto-client
   readonly providerId?: string;
   /**

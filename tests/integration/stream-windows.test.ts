@@ -34,6 +34,8 @@ import {
 let dir: string;
 let mock: MockUpstream | null = null;
 let gw: Awaited<ReturnType<typeof startGateway>> | null = null;
+/** 每次 boot 的单调序号：证据文件名必须确定唯一，不能用随机数。 */
+let seq = 0;
 
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), "llmveto-stream-windows-"));
@@ -155,7 +157,11 @@ async function waitForEvidence(path: string): Promise<readonly ParsedRecord[]> {
 }
 
 async function boot(...extra: readonly CheckerSpec[]): Promise<{ g: NonNullable<typeof gw>; evidencePath: string }> {
-  const evidencePath = join(dir, "ev-" + Math.random().toString(36).slice(2) + ".jsonl");
+  // 确定性唯一名而不是 Math.random()：并发下随机名有碰撞可能，而证据文件被
+  // 两个用例共用时 waitForEvidence 会读到别人的记录（实测导致断言
+  // "expected 'event: error...' to contain delivered_chunks:2048" 偶发失败）。
+  seq += 1;
+  const evidencePath = join(dir, `ev-${seq}.jsonl`);
   gw = await startGateway({
     config: {
       upstreamBaseUrl: mock!.url,
@@ -175,7 +181,11 @@ async function bootWithBudget(
   spec: CheckerSpec,
   budgetMs: number,
 ): Promise<{ g: NonNullable<typeof gw>; evidencePath: string }> {
-  const evidencePath = join(dir, "ev-" + Math.random().toString(36).slice(2) + ".jsonl");
+  // 确定性唯一名而不是 Math.random()：并发下随机名有碰撞可能，而证据文件被
+  // 两个用例共用时 waitForEvidence 会读到别人的记录（实测导致断言
+  // "expected 'event: error...' to contain delivered_chunks:2048" 偶发失败）。
+  seq += 1;
+  const evidencePath = join(dir, `ev-${seq}.jsonl`);
   gw = await startGateway({
     config: {
       upstreamBaseUrl: mock!.url,

@@ -45,7 +45,10 @@ export class ProbeScheduler {
   constructor(opts: SchedulerOptions) {
     this.opts = opts;
     this.log = opts.log ?? ((m) => process.stderr.write(`${m}\n`));
-    this.planner = new CatchUpPlanner({ store: opts.store });
+    // **必须传同一个时钟**：CatchUpPlanner 默认用真实 Date.now()，而测试注入的是假时钟。
+    // 两者混用会让"补齐配额是否已用"的判定随测试执行速度漂移——实测在并发下
+    // 偶发失败（同一测试单独跑 3 次全绿、全量跑时红）。时钟不一致是隐形的非确定性源。
+    this.planner = new CatchUpPlanner({ store: opts.store, now: opts.patrol.clock });
   }
 
   /**

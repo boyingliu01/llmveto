@@ -205,7 +205,9 @@ describe("轮转真的在转（第三个'加了没接入'）", () => {
   it("连续 4 轮采样覆盖 D0-D3（第一版用某一维的记录数当序号，永远轮不到 D2/D3）", async () => {
     const store = tempStore();
     let now = 1_700_000_000_000;
-    const patrol = new Patrol({ store, now: () => now });
+    // 抖动固定为 0 → 周期恒为 6h，7h 推进必过配额。
+    // 不固定的话 nextEligibleAt 在 4.8–7.2h 间随机，7h 推进偶发不够（实测 5 次跑 2 次红）。
+    const patrol = new Patrol({ store, now: () => now, jitter: () => 0.5 });
     const seen: string[] = [];
     const sched = new ProbeScheduler({
       store,

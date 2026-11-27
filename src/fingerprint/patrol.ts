@@ -41,6 +41,17 @@ export interface PatrolOptions {
 export class Patrol {
   private readonly store: FingerprintStore;
   private readonly now: () => number;
+
+  /**
+   * 本实例使用的时钟。
+   *
+   * 暴露出来是为了让**上游组件（ProbeScheduler → CatchUpPlanner）复用同一个时钟**。
+   * 不暴露的话，它们各自 new 一个默认 Date.now()，假时钟的测试就会在
+   * "配额是否已用"这类时间比较上与真实时钟打架——并发下表现为偶发失败。
+   */
+  get clock(): () => number {
+    return this.now;
+  }
   private readonly jitter: () => number;
   private readonly states = new Map<string, PatrolState>();
 

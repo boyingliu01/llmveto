@@ -21,7 +21,7 @@ import { FingerprintStore } from "../fingerprint/store.ts";
 import { doctorFingerprintCheck, trustReport } from "../fingerprint/trust.ts";
 import { Patrol, patrolEnabledFromEnv } from "../fingerprint/patrol.ts";
 import { ProbeScheduler } from "../fingerprint/scheduler.ts";
-import { loadPolicyConfig } from "../policy/config.ts";
+import { loadPolicyConfig, renewPolicyRisk } from "../policy/config.ts";
 
 /**
  * @test REQ-VETO-008
@@ -29,7 +29,7 @@ import { loadPolicyConfig } from "../policy/config.ts";
  *         AC-VETO-008-01 严禁注册 report / canary 等 stub。
  */
 
-export type CliCommand = "start" | "stop" | "status" | "doctor" | "verify" | "canary" | "fingerprint";
+export type CliCommand = "start" | "stop" | "status" | "doctor" | "verify" | "canary" | "fingerprint" | "policy";
 
 export interface CliResult {
   readonly exitCode: number;
@@ -86,6 +86,7 @@ const HANDLERS: Readonly<Record<CliCommand, (ctx: CliCtx, args: readonly string[
   verify: (ctx, args) => cmdVerify(ctx, args),
   canary: (ctx, args) => cmdCanary(ctx, args),
   fingerprint: (ctx, args) => cmdFingerprint(ctx, args),
+  policy: (ctx, args) => cmdPolicy(ctx, args),
 };
 
 /** 命令名从 HANDLERS 的键派生——两处各写一遍时它们必然漂移（见 HANDLERS 注释）。 */
@@ -242,6 +243,11 @@ async function cmdStartDaemon(ctx: CliCtx, env: Readonly<Record<string, string |
       evidenceWriter: new EvidenceWriter(evidenceFile(ctx)),
       // D-02：registry 与 gateway.pid 同级；缺省此路径 = canary 域整体关闭（rotate 503 / 不注入）。
       canaryRegistryPath: join(dir, "canary-registry.json"),
+      // 策略降级状态进 evidence：让每次命中都看得见，不只在 doctor 里
+      ...(() => {
+        const pol = loadPolicyConfig(globalPolicyPath());
+        return pol.degraded.length === 0 ? {} : { degradedPolicy: pol.degraded };
+      })(),
       ...(parsed.upstreams === undefined ? {} : { upstreams: parsed.upstreams }),
       ...(env.LLMVETO_MODELS_SNAPSHOT === undefined ? {} : { modelsSnapshotPath: env.LLMVETO_MODELS_SNAPSHOT }),
     },
@@ -456,22 +462,53 @@ function doctorFingerprint(ctx: CliCtx): DoctorCheck {
 }
 
 /**
- * 策略配置检查项：让"我降级了什么"始终可见。
+ * `policy` 子命令：续期已声明的风险接受。
  *
- * 配置加载失败时**不是** FAIL——网关已按内置默认策略运行（AC-8），
- * 防护没有消失。但必须 WARN 出来，否则用户以为配置生效了。
+ * 为什么需要它（delphi 可行席指出的闭环缺口）：90 天上限逼用户重新面对决定，
+ * 但如果重新面对的唯一方式是手改 JSON，"摩擦"就退化成了复制粘贴。
+ * 一个显式命令至少留下"我在某天主动续了期"的痕迹。
+ */
+function cmdPolicy(ctx: CliCtx, args: readonly string[]): CliResult {
+  if (args[0] !== "renew") {
+    return { exitCode: 2, stdout: "", stderr: "policy renew --rule <rule_id> --days <n>\n" };
+  }
+  const ruleIdx = args.indexOf("--rule");
+  const daysIdx = args.indexOf("--days");
+  const rule = ruleIdx >= 0 ? args[ruleIdx + 1] : undefined;
+  const days = daysIdx >= 0 ? Number(args[daysIdx + 1]) : Number.NaN;
+  if (rule === undefined || Number.isNaN(days)) {
+    return { exitCode: 2, stdout: "", stderr: "policy renew --rule <rule_id> --days <n>\n" };
+  }
+  const r = renewPolicyRisk(globalPolicyPath(), rule, days);
+  if (r.status !== "ok") return { exitCode: 1, stdout: "", stderr: `renew failed: ${r.error ?? "(unknown)"}\n` };
+  void ctx;
+  return { exitCode: 0, stdout: `renewed ${rule} until ${r.expiresAt ?? "?"}\n`, stderr: "" };
+}
+
+/**
+ * 策略配置检查项：让"我承担了什么风险"始终可见。
+ *
+ * **降级不等于 FAIL**（delphi R5 可行席指出「合法降级 → FAIL」自相矛盾）：
+ * 网关仍在运行、仍在拦，只是少了一条规则。FAIL 会让人以为网关坏了，
+ * 而事实是他自己做的选择。所以拆成两件事：
+ *   ok: true  + message 里写明 DEGRADED —— 网关健康，但有已声明的风险
+ *   ok: false —— 仅用于"配置坏了"（已回退默认，需要人看）
  */
 function doctorPolicyConfig(): DoctorCheck {
   const r = loadPolicyConfig(globalPolicyPath());
-  if (r.status === "ok") {
-    if (r.degraded.length === 0) return { id: "doctor.policy-config", ok: true, message: "default policy (no overrides)" };
-    return { id: "doctor.policy-config", ok: false, message: `degraded: ${r.degraded.join(", ")}` };
+  if (r.status !== "ok") {
+    // 配置错误：网关已回退内置默认（AC-8），防护没消失，但配置是坏的
+    return {
+      id: "doctor.policy-config",
+      ok: false,
+      message: `配置加载失败，已回退内置默认（防护仍在）：${r.error ?? "(unknown)"}`,
+    };
   }
-  return {
-    id: "doctor.policy-config",
-    ok: false,
-    message: `配置加载失败，已回退内置默认：${r.error ?? "(unknown)"}`,
-  };
+  if (r.degraded.length === 0) {
+    return { id: "doctor.policy-config", ok: true, message: "default policy (no overrides)" };
+  }
+  const risks = r.acceptedRisks.length === 0 ? "" : ` — 已接受风险: ${r.acceptedRisks.join(", ")}`;
+  return { id: "doctor.policy-config", ok: true, message: `DEGRADED: ${r.degraded.join(", ")}${risks}` };
 }
 
 /** 全局策略配置路径（项目级覆盖属后续切片）。 */

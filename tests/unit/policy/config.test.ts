@@ -68,7 +68,7 @@ describe("AC-2 / AC-3 逃生舱的约束", () => {
   const ack = (over: Record<string, unknown> = {}) =>
     configText([downgradeTo("warn")], {
       acknowledged_risks: [
-        { rule_id: "credential-file-read", action: "warn", reason: "误报太多", expires_at: "2026-12-20T00:00:00Z", ...over },
+        { rule_id: "credential-file-read", action: "warn", reason: "该规则在此环境持续误报", expires_at: "2026-12-20T00:00:00Z", ...over },
       ],
     });
 
@@ -84,6 +84,10 @@ describe("AC-2 / AC-3 逃生舱的约束", () => {
     expect(r.error).toContain("reason");
   });
 
+  it("AC-2（技术席 R5）：理由过短（占位符）→ 拒绝", () => {
+    expect(load(ack({ reason: "x" })).status).toBe("rejected");
+  });
+
   it("AC-2：理由缺失 → 拒绝", () => {
     const r = load(ack({ reason: undefined }));
     expect(r.status).toBe("rejected");
@@ -93,6 +97,10 @@ describe("AC-2 / AC-3 逃生舱的约束", () => {
     const r = load(ack({ expires_at: undefined }));
     expect(r.status).toBe("rejected");
     expect(r.error).toContain("expires_at");
+  });
+
+  it("AC-3（技术席 R5）：非 ISO-8601 UTC 形态 → 拒绝", () => {
+    expect(load(ack({ expires_at: "2026-12-20" })).status).toBe("rejected");
   });
 
   it("AC-3：已过期 → 拒绝", () => {
@@ -160,5 +168,88 @@ describe("schema 校验", () => {
 
   it("空配置对象 → 接受（等于默认）", () => {
     expect(load(JSON.stringify({ schema_version: 1 })).status).toBe("ok");
+  });
+});
+
+describe("风险接受语义（delphi R5 可行席：名字必须与行为一致）", () => {
+  const ack = (over: Record<string, unknown> = {}) =>
+    configText([downgradeTo("warn")], {
+      acknowledged_risks: [
+        { rule_id: "credential-file-read", action: "warn", reason: "该规则在此环境持续误报", expires_at: "2026-12-20T00:00:00Z", ...over },
+      ],
+    });
+
+  it("阻断类降级被记入 acceptedRisks（与观测类降级区分开）", () => {
+    const r = load(ack());
+    expect(r.status).toBe("ok");
+    expect(r.acceptedRisks).toEqual(["credential-file-read"]);
+    expect(r.degraded).toContain("credential-file-read");
+  });
+
+  it("观测类降级只进 degraded，不进 acceptedRisks", () => {
+    const r = load(configText([{ checker: "model-label-consistency", finding_action: "allow" }]));
+    expect(r.degraded).toContain("model-label-consistency");
+    expect(r.acceptedRisks).toEqual([]);
+  });
+
+  it("无降级时 acceptedRisks 为空", () => {
+    expect(load(configText([])).acceptedRisks).toEqual([]);
+  });
+});
+
+describe("过期自动回退与续期（delphi R2 可行席要求闭环）", () => {
+  const ack = (expires: string) =>
+    configText([downgradeTo("warn")], {
+      acknowledged_risks: [
+        { rule_id: "credential-file-read", action: "warn", reason: "该规则在此环境持续误报", expires_at: expires },
+      ],
+    });
+
+  it("过期 → 降级不生效（acceptedRisks 为空），即自动回退默认防护", () => {
+    const r = load(ack("2026-11-01T00:00:00Z"));
+    expect(r.status).toBe("rejected");
+    expect(r.degraded).toEqual([]);
+    expect(r.acceptedRisks).toEqual([]);
+  });
+
+  it("到期前一秒仍生效", () => {
+    const oneSecondBefore = new Date(NOW + 1000).toISOString();
+    expect(load(ack(oneSecondBefore)).acceptedRisks).toEqual(["credential-file-read"]);
+  });
+
+  it("续期到未来 → 重新生效", () => {
+    const future = new Date(NOW + 30 * DAY_MS).toISOString();
+    expect(load(ack(future)).acceptedRisks).toEqual(["credential-file-read"]);
+  });
+
+  it("renewPolicyRisk 把指定风险接受的到期时间推后", () => {
+    const { renewPolicyRisk } = require("../../../src/policy/config.ts") as typeof import("../../../src/policy/config.ts");
+    const dir = mkdtempSync(join(tmpdir(), "renew-"));
+    dirs.push(dir);
+    const path = join(dir, "policy.json");
+    writeFileSync(path, ack("2026-12-01T00:00:00Z"), "utf8");
+
+    const r = renewPolicyRisk(path, "credential-file-read", 30, { now: () => NOW });
+    expect(r.status).toBe("ok");
+    // 续期后可加载且仍生效
+    expect(loadPolicyConfig(path, { now: () => NOW }).acceptedRisks).toEqual(["credential-file-read"]);
+  });
+
+  it("renew 超过 90 天上限 → 拒绝续期", () => {
+    const { renewPolicyRisk } = require("../../../src/policy/config.ts") as typeof import("../../../src/policy/config.ts");
+    const dir = mkdtempSync(join(tmpdir(), "renew2-"));
+    dirs.push(dir);
+    const path = join(dir, "policy.json");
+    writeFileSync(path, ack("2026-12-01T00:00:00Z"), "utf8");
+    expect(renewPolicyRisk(path, "credential-file-read", 200, { now: () => NOW }).status).toBe("rejected");
+  });
+
+  it("renew 不存在的 rule → 拒绝", () => {
+    const { renewPolicyRisk } = require("../../../src/policy/config.ts") as typeof import("../../../src/policy/config.ts");
+    const dir = mkdtempSync(join(tmpdir(), "renew3-"));
+    dirs.push(dir);
+    const path = join(dir, "policy.json");
+    writeFileSync(path, ack("2026-12-01T00:00:00Z"), "utf8");
+    expect(renewPolicyRisk(path, "no-such-rule", 30, { now: () => NOW }).status).toBe("rejected");
   });
 });

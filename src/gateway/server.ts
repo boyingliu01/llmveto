@@ -544,6 +544,16 @@ function modelNameOf(text: string): string | null {
   return parsed !== null && typeof parsed.model === "string" ? parsed.model : null;
 }
 
+/**
+ * 策略降级的可选位。
+ *
+ * 与 `reason` 同一规矩：没有降级时**键整体缺席**，不写空数组。
+ * "没降级"和"降级清单为空"必须能区分——前者是常态，后者是加载异常。
+ */
+function optionalDegraded(degraded: readonly string[] | undefined): { readonly policy_degraded?: readonly string[] } {
+  return degraded === undefined || degraded.length === 0 ? {} : { policy_degraded: degraded };
+}
+
 /** `reason` 可选位：未传时**键整体缺席**（§14.4-4），不是显式 null。 */
 function optionalReason(reason: string | undefined): { readonly reason?: string } {
   return reason === undefined ? {} : { reason };
@@ -569,6 +579,7 @@ function writeEvidence(cfg: GatewayConfig, p: EvidenceWriteParams): void {
     findings: p.findings,
     action_taken: p.actionTaken,
     ...optionalReason(p.reason), // 可选位：未传时键整体缺席（§14.4-4），v1 记录形状零扰动
+    ...optionalDegraded(cfg.degradedPolicy), // 可选位：有降级才出现
     response_delivered: { partial: p.partial, delivered_chunks: p.deliveredChunks },
     request_body_sha256: sha256Hex(forwarded),
     response_body_sha256: sha256Hex(p.respText),

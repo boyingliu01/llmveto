@@ -305,3 +305,38 @@ describe("降级真正生效（第六个'加了没接入'的回归）", () => {
     expect(decide([input], { acceptedRules: [] }).action).toBe(decide([input]).action);
   });
 });
+
+describe("续期审计留痕（delphi R4 架构席建议）", () => {
+  it("续期成功写出审计条目：rule / days / at / expires_at", () => {
+    const { renewPolicyRisk } = require("../../../src/policy/config.ts") as typeof import("../../../src/policy/config.ts");
+    const dir = mkdtempSync(join(tmpdir(), "renew-audit-"));
+    dirs.push(dir);
+    const path = join(dir, "policy.json");
+    writeFileSync(
+      path,
+      configText([downgradeTo("warn")], {
+        acknowledged_risks: [
+          { rule_id: "credential-file-read", action: "warn", reason: "该规则在此环境持续误报", expires_at: "2026-12-01T00:00:00Z" },
+        ],
+      }),
+      "utf8",
+    );
+    const r = renewPolicyRisk(path, "credential-file-read", 30, { now: () => NOW });
+    expect(r.status).toBe("ok");
+    expect(r.audit).toEqual({
+      rule_id: "credential-file-read",
+      days: 30,
+      renewed_at: new Date(NOW).toISOString(),
+      expires_at: r.expiresAt,
+    });
+  });
+
+  it("续期失败不产生审计条目", () => {
+    const { renewPolicyRisk } = require("../../../src/policy/config.ts") as typeof import("../../../src/policy/config.ts");
+    const dir = mkdtempSync(join(tmpdir(), "renew-audit2-"));
+    dirs.push(dir);
+    const path = join(dir, "policy.json");
+    writeFileSync(path, configText([downgradeTo("warn")], { acknowledged_risks: [] }), "utf8");
+    expect(renewPolicyRisk(path, "no-such", 30, { now: () => NOW }).audit).toBeUndefined();
+  });
+});

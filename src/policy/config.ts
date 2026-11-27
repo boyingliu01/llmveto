@@ -178,12 +178,27 @@ export function loadPolicyConfig(path: string, opts: { readonly now?: () => numb
   return { status: "ok", degraded: result.degraded, acceptedRisks: result.acceptedRisks, fallback: false };
 }
 
+/** 续期审计条目：谁在何时把哪条风险接受续到了什么时候。 */
+export interface RenewAudit {
+  readonly rule_id: string;
+  readonly days: number;
+  readonly renewed_at: string;
+  readonly expires_at: string;
+}
+
 /** 续期结果。 */
 export interface RenewResult {
   readonly status: "ok" | "rejected";
   readonly error?: string;
   /** 续期后的到期时刻（ISO-8601）。 */
   readonly expiresAt?: string;
+  /**
+   * 审计条目（delphi R4 架构席建议）。
+   *
+   * 风险接受本身是用户权利，但"续了多久、什么时候续的"应当可查——
+   * 否则"每 90 天续一次"就是一个日志上看不见的永久降级。
+   */
+  readonly audit?: RenewAudit;
 }
 
 /**
@@ -265,5 +280,8 @@ export function renewPolicyRisk(
   const applied = applyRenewal(read.config, ruleId, expiresAt, nowMs);
   if ("error" in applied) return { status: "rejected", error: applied.error };
 
-  return writeRenewal(path, applied.next, expiresAt);
+  const written = writeRenewal(path, applied.next, expiresAt);
+  return written.status === "ok"
+    ? { ...written, audit: { rule_id: ruleId, days, renewed_at: new Date(nowMs).toISOString(), expires_at: expiresAt } }
+    : written;
 }

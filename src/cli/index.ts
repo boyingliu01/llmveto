@@ -482,7 +482,10 @@ function cmdPolicy(ctx: CliCtx, args: readonly string[]): CliResult {
   const r = renewPolicyRisk(globalPolicyPath(), rule, days);
   if (r.status !== "ok") return { exitCode: 1, stdout: "", stderr: `renew failed: ${r.error ?? "(unknown)"}\n` };
   void ctx;
-  return { exitCode: 0, stdout: `renewed ${rule} until ${r.expiresAt ?? "?"}\n`, stderr: "" };
+  // 输出审计条目：让"我续了什么、续了多久"留在终端历史里
+  const a = r.audit;
+  const meta = a === undefined ? "" : ` (${a.days} days, renewed at ${a.renewed_at})`;
+  return { exitCode: 0, stdout: `renewed ${rule} until ${r.expiresAt ?? "?"}${meta}\n`, stderr: "" };
 }
 
 /**

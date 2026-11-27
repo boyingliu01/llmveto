@@ -1,5 +1,6 @@
 import type { Action, CheckerResult } from "../shared/types.ts";
 import { mapBySpec, mapBySpecWithRules } from "./mapping.ts";
+import type { Finding } from "../shared/vocab.ts";
 import { BLOCKING_RULE_IDS } from "../checkers/dangerous-command-scan.ts";
 
 /**
@@ -41,9 +42,45 @@ const RULE_GRADED_CHECKERS: ReadonlySet<string> = Object.freeze(new Set(["danger
  * dangerous-command-scan 的 credential-file-read）；其余 checker 的 evidence 不参与判定，
  * 映射逐字不变。
  */
-function actionFor({ checkerId, safetyClass, result }: PolicyInput): Action {
+function actionFor({ checkerId, safetyClass, result }: PolicyInput, acceptedRules: ReadonlySet<string>): Action {
   if (!RULE_GRADED_CHECKERS.has(checkerId)) return mapBySpec({ id: checkerId, safetyClass }, result.verdict);
-  return mapBySpecWithRules({ id: checkerId, safetyClass }, result.verdict, result.evidence, BLOCKING_RULE_IDS);
+  const mapped = mapBySpecWithRules({ id: checkerId, safetyClass }, result.verdict, result.evidence, BLOCKING_RULE_IDS);
+  return applyRiskAcceptance(mapped, result.evidence, acceptedRules);
+}
+
+/**
+ * 用户已声明承担该规则的风险 → 从 block 降为 warn。
+ *
+ * **只降 block，不降到 allow**：降级是"我看见了但选择承担"，不是"假装没发生"。
+ * warn 仍写 evidence、仍在 doctor 里可见——这正是"风险接受"与"关掉检测"的区别。
+ */
+function applyRiskAcceptance(mapped: Action, evidence: readonly Finding[] | undefined, acceptedRules: ReadonlySet<string>): Action {
+  if (mapped !== "block") return mapped;
+  return hitAcceptedRule(evidence, acceptedRules) ? "warn" : mapped;
+}
+
+/**
+ * 这条 finding 的规则是否在用户的"已接受风险"里。
+ *
+ * **只降 block 不降 allow**：降级是"我看见了但选择承担"，不是"假装没发生"。
+ * warn 仍写 evidence、仍在 doctor 里可见——这正是"风险接受"与"关掉检测"的区别。
+ */
+function hitAcceptedRule(evidence: readonly Finding[] | undefined, acceptedRules: ReadonlySet<string>): boolean {
+  if (evidence === undefined || acceptedRules.size === 0) return false;
+  return evidence.some((e) => e.rule_id !== undefined && acceptedRules.has(e.rule_id));
+}
+
+/** 从选项取查找集；未配置时给空集（避免每次调用构造新对象）。 */
+function acceptedSetOf(opts: DecideOptions | undefined): ReadonlySet<string> {
+  const rules = opts?.acceptedRules;
+  return rules === undefined || rules.length === 0 ? EMPTY_SET : new Set(rules);
+}
+
+const EMPTY_SET: ReadonlySet<string> = new Set();
+
+/** `decide` 的选项：目前只有"用户已接受的风险"。 */
+export interface DecideOptions {
+  readonly acceptedRules?: readonly string[];
 }
 
 /** D-11：观测类 checker 的 scanner_error 等于本交互观测面降级（safetyClass 走 fail-closed block，不在此列）。 */
@@ -51,12 +88,13 @@ function isObservationalError({ safetyClass, result }: PolicyInput): boolean {
   return !safetyClass && result.verdict === "error";
 }
 
-export function decide(inputs: readonly PolicyInput[]): PolicyDecision {
+export function decide(inputs: readonly PolicyInput[], opts?: DecideOptions): PolicyDecision {
   let worst: Action = "allow";
   let degraded = false;
+  const accepted = acceptedSetOf(opts);
   const reasons: { checker: string; verdict: CheckerResult["verdict"]; action: Action }[] = [];
   for (const input of inputs) {
-    const action = actionFor(input);
+    const action = actionFor(input, accepted);
     reasons.push({ checker: input.checkerId, verdict: input.result.verdict, action });
     if (SEVERITY[action] > SEVERITY[worst]) worst = action;
     degraded = degraded || isObservationalError(input);

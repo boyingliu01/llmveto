@@ -253,3 +253,55 @@ describe("过期自动回退与续期（delphi R2 可行席要求闭环）", () 
     expect(renewPolicyRisk(path, "no-such-rule", 30, { now: () => NOW }).status).toBe("rejected");
   });
 });
+
+/** 造一条 finding（Finding 的必填项补齐）。 */
+function finding(ruleId: string) {
+  return {
+    checker: "dangerous-command-scan",
+    threat: "T2a",
+    verdict: "finding" as const,
+    severity: "high" as const,
+    rule_id: ruleId,
+  };
+}
+
+describe("降级真正生效（第六个'加了没接入'的回归）", () => {
+  it("decide 收到 acceptedRules 时，该规则的 finding 降为 warn", async () => {
+    const { decide } = await import("../../../src/policy/engine.ts");
+    const input = {
+      checkerId: "dangerous-command-scan",
+      safetyClass: true,
+      result: {
+        verdict: "finding" as const,
+        evidence: [finding("credential-file-read")],
+      },
+    };
+    // 未降级 → block
+    expect(decide([input]).action).toBe("block");
+    // 声明风险接受 → warn
+    expect(decide([input], { acceptedRules: ["credential-file-read"] }).action).toBe("warn");
+  });
+
+  it("只降级被点名的规则，其它阻断规则仍 block", async () => {
+    const { decide } = await import("../../../src/policy/engine.ts");
+    const input = {
+      checkerId: "dangerous-command-scan",
+      safetyClass: true,
+      result: {
+        verdict: "finding" as const,
+        evidence: [finding("credential-file-read")],
+      },
+    };
+    expect(decide([input], { acceptedRules: ["some-other-rule"] }).action).toBe("block");
+  });
+
+  it("空 acceptedRules 与不传等价", async () => {
+    const { decide } = await import("../../../src/policy/engine.ts");
+    const input = {
+      checkerId: "dangerous-command-scan",
+      safetyClass: true,
+      result: { verdict: "finding" as const, evidence: [finding("credential-file-read")] },
+    };
+    expect(decide([input], { acceptedRules: [] }).action).toBe(decide([input]).action);
+  });
+});

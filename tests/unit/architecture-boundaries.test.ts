@@ -43,7 +43,9 @@ const LAYER_ALLOW: Record<string, string[]> = {
   "src/gateway":   ["../shared", "../checkers", "../policy", "../evidence", "../canary", "../gateway", "./"],
   // v2b-C：fingerprint 是独立功能层，只依赖 shared；不得 import gateway/adapters（探针不经过反代核）
   "src/fingerprint": ["../shared", "../fingerprint", "./"],
-  "src/cli":       ["../shared", "../checkers", "../policy", "../evidence", "../adapters", "../gateway", "../fingerprint", "../cli", "./"],
+  // v3：audit 只读落盘数据（watched 声明 + evidence），不参与流量路径，故不 import gateway
+  "src/audit": ["../shared", "../audit", "./"],
+  "src/cli":       ["../shared", "../checkers", "../policy", "../evidence", "../adapters", "../gateway", "../fingerprint", "../audit", "../cli", "./"],
 };
 
 function layerOf(file: string): string | null {

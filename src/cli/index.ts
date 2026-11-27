@@ -22,6 +22,8 @@ import { doctorFingerprintCheck, trustReport } from "../fingerprint/trust.ts";
 import { Patrol, patrolEnabledFromEnv } from "../fingerprint/patrol.ts";
 import { ProbeScheduler } from "../fingerprint/scheduler.ts";
 import { loadPolicyConfig, renewPolicyRisk } from "../policy/config.ts";
+import { type CoverageEntry, type EvidenceSample, computeCoverage } from "../audit/coverage.ts";
+import { loadWatchList } from "../audit/watch-list.ts";
 
 /**
  * @test REQ-VETO-008
@@ -29,7 +31,7 @@ import { loadPolicyConfig, renewPolicyRisk } from "../policy/config.ts";
  *         AC-VETO-008-01 严禁注册 report / canary 等 stub。
  */
 
-export type CliCommand = "start" | "stop" | "status" | "doctor" | "verify" | "canary" | "fingerprint" | "policy";
+export type CliCommand = "start" | "stop" | "status" | "doctor" | "verify" | "canary" | "fingerprint" | "policy" | "audit";
 
 export interface CliResult {
   readonly exitCode: number;
@@ -87,6 +89,7 @@ const HANDLERS: Readonly<Record<CliCommand, (ctx: CliCtx, args: readonly string[
   canary: (ctx, args) => cmdCanary(ctx, args),
   fingerprint: (ctx, args) => cmdFingerprint(ctx, args),
   policy: (ctx, args) => cmdPolicy(ctx, args),
+  audit: (ctx) => cmdAudit(ctx),
 };
 
 /** 命令名从 HANDLERS 的键派生——两处各写一遍时它们必然漂移（见 HANDLERS 注释）。 */
@@ -462,6 +465,71 @@ function doctorFingerprint(ctx: CliCtx): DoctorCheck {
 }
 
 /**
+ * `audit`：配置遗漏可见性。
+ *
+ * **这不是绕过检测**（delphi 需求评审三席一致否决了那个定位）。
+ * 它只回答"你声明在用的 agent 中，哪些在窗口内没有网关流量"，
+ * 典型用途是发现"忘了接入"或"升级后配置漂移"。
+ * 需要可信遥测源的绕过检测见 issue #3。
+ *
+ * 退出码（设计 D-06）：0 正常；1 命令本身失败；2 检出 missing。
+ */
+function cmdAudit(ctx: CliCtx): CliResult {
+  const list = loadWatchList(globalWatchListPath());
+  if (list.status === "absent") {
+    return {
+      exitCode: 0,
+      stdout: `未启用：${globalWatchListPath()} 不存在\n声明你在这台机器上使用的 agent 即可启用，例如：\n  {"schema_version":1,"agents":["claude-code","codex"]}\n`,
+      stderr: "",
+    };
+  }
+  if (list.status === "empty") {
+    return { exitCode: 0, stdout: `清单为空：${globalWatchListPath()} 的 agents 数组没有条目\n`, stderr: "" };
+  }
+  if (list.status === "invalid") {
+    return { exitCode: 1, stdout: "", stderr: `清单无法解析：${list.error ?? "(unknown)"}\n` };
+  }
+
+  const samples = readEvidenceSamples(ctx);
+  const r = computeCoverage(list.agents, samples, { now: Date.now(), windowDays: list.windowDays });
+  const lines = [`watched: ${list.agents.length} agents, window: ${list.windowDays} days`, ""];
+  for (const e of r.entries) lines.push(formatCoverageLine(e));
+  lines.push("", `known clients in evidence: ${r.knownClients.length === 0 ? "(none)" : r.knownClients.join(", ")}`);
+  // missing 用 2 而不是 1：1 的通用语义是"工具出错"，两者不能混
+  return { exitCode: r.hasMissing ? 2 : 0, stdout: `${lines.join("\n")}\n`, stderr: "" };
+}
+
+/** 单行的展示形态；`stale` 附"早于窗口"提示，`missing` 是最需要行动的那类。 */
+function formatCoverageLine(e: CoverageEntry): string {
+  const pad = e.agent.padEnd(14);
+  if (e.state === "active") return `  active   ${pad}${e.count} requests, last ${e.lastSeen ?? "?"}`;
+  if (e.state === "stale") return `  stale    ${pad}0 requests in window, last ${e.lastSeen ?? "?"}  (older than window)`;
+  return `  missing  ${pad}0 requests — declared but never seen`;
+}
+
+/** 从 evidence 里读各记录的 client/ts 投影；文件不存在时为空。 */
+function readEvidenceSamples(ctx: CliCtx): EvidenceSample[] {
+  const path = evidenceFile(ctx);
+  if (!existsSync(path)) return [];
+  const out: EvidenceSample[] = [];
+  for (const line of readFileSync(path, "utf8").split("\n")) {
+    if (line.trim() === "") continue;
+    try {
+      const r = JSON.parse(line) as { client?: unknown; ts?: unknown };
+      if (typeof r.client === "string" && typeof r.ts === "string") out.push({ client: r.client, ts: r.ts });
+    } catch {
+      // 崩溃残留：跳过这一行，保留其余（与 evidence 读取的既有约定一致）
+    }
+  }
+  return out;
+}
+
+/** 监看清单路径。 */
+function globalWatchListPath(): string {
+  return join(homedir(), ".config", "llmveto", "watched.json");
+}
+
+/**
  * `policy` 子命令：续期已声明的风险接受。
  *
  * 为什么需要它（delphi 可行席指出的闭环缺口）：90 天上限逼用户重新面对决定，
@@ -486,6 +554,26 @@ function cmdPolicy(ctx: CliCtx, args: readonly string[]): CliResult {
   const a = r.audit;
   const meta = a === undefined ? "" : ` (${a.days} days, renewed at ${a.renewed_at})`;
   return { exitCode: 0, stdout: `renewed ${rule} until ${r.expiresAt ?? "?"}${meta}\n`, stderr: "" };
+}
+
+/**
+ * 配置遗漏可见性检查项。
+ *
+ * **缺声明是 SKIP 不是 PASS**（设计 D-04）：PASS 意味着"检查过且没问题"，
+ * 而这里有可能是根本没启用。把"没检查"报成"没问题"，是本项目反复出现的缺陷。
+ */
+function doctorAuditWatch(): DoctorCheck {
+  const list = loadWatchList(globalWatchListPath());
+  if (list.status === "absent") {
+    return { id: "doctor.audit-watch", ok: false, message: "SKIP — 未声明监看清单（未启用配置遗漏可见性）" };
+  }
+  if (list.status === "empty") {
+    return { id: "doctor.audit-watch", ok: false, message: "SKIP — 监看清单为空" };
+  }
+  if (list.status === "invalid") {
+    return { id: "doctor.audit-watch", ok: false, message: `清单无法解析：${list.error ?? "(unknown)"}` };
+  }
+  return { id: "doctor.audit-watch", ok: true, message: `watching ${list.agents.length} agents over ${list.windowDays} days` };
 }
 
 /**
@@ -547,6 +635,8 @@ async function cmdDoctor(ctx: CliCtx, writeManaged: boolean): Promise<CliResult>
   checks.push(doctorFingerprint(ctx));
   // 策略配置（v3）：降级状态必须可见，否则用户忘了自己降级过
   checks.push(doctorPolicyConfig());
+  // 配置遗漏可见性（v3）：缺声明时是 SKIP，不是 PASS
+  checks.push(doctorAuditWatch());
 
   const failing = checks.filter((c) => !c.ok);
   const exit = failing.length === 0 ? 0 : 1;

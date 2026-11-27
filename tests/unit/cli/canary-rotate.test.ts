@@ -9,11 +9,12 @@ import { COMMANDS, assertNoV2Stubs, runCli } from "../../../src/cli/index.ts";
 // @covers AC-V2a-08 AC-V2a-19③
 
 describe("SL-12 canary rotate (AC-V2a-08)", () => {
-  it("COMMANDS 含 canary / fingerprint / policy（v3 扩展 7→8）", () => {
+  it("COMMANDS 含 canary / fingerprint / policy / audit（v3 扩展 8→9）", () => {
     expect(COMMANDS).toContain("canary");
     expect(COMMANDS).toContain("fingerprint");
     expect(COMMANDS).toContain("policy");
-    expect(COMMANDS.length).toBe(8);
+    expect(COMMANDS).toContain("audit");
+    expect(COMMANDS.length).toBe(9);
   });
 
   it("assertNoV2Stubs 允许 canary，仍禁 report", () => {

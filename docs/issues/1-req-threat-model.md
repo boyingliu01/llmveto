@@ -123,7 +123,7 @@ GitHub 同类项目两极分化（2026-09 调研，详见 [REUSE] issue）：
 | T3c 路由波动 | 未缓解 | 无 | 需跨请求观测 + provider 信任分 | v2 | 无 |
 | T4a/b/c/d usage 虚报/假缓存/隐藏系统提示/倍率操纵 | 未缓解（仅取证） | 无判定逻辑 | 对账需官价基准与计费口径，属 v2 计费对账 | v2 | `usage` / `cache` 字段原样落 evidence，供人工对账 |
 | P1 模型目录投毒 | 部分 | `OPENCODE_MODELS_URL` 锁本地模型目录镜像（由 `llmveto doctor --write-managed-config` 负责写入，非用户手工步骤） | 只把上游目录注入移出实时路径，不校验镜像内容真伪 | v2 | doctor 配置快照哈希（v1 仅输出至 `doctor` 结果，不入 evidence 链；@v2 计划登记字段） |
-| P2 配置劫持绕过 | best-effort 部分 | 全局配置 > 项目级配置（v1 内置硬编码优先级）+ `doctor` 配置漂移检测（限定于受管配置封闭枚举） | 流量级"未过闸观测"（审计缺口检测）排 v3 → v1 **无法发现旁路** | v3 | `doctor` 结果输出至 CLI（exit code + 条目 id），v1 不写 evidence 记录 |
+| P2 配置劫持绕过 | best-effort 部分 | 全局配置 > 项目级配置（v1 内置硬编码优先级）+ `doctor` 配置漂移检测（限定于受管配置封闭枚举） | v1 **无法发现旁路**；**v3 提供配置遗漏可见性（`llmveto audit`），仍不检测恶意绕过**——无可信遥测源，见 ROADMAP v3 定位澄清（2026-11-28） | v3 | `doctor` 结果输出至 CLI（exit code + 条目 id），v1 不写 evidence 记录 |
 | P3 evidence 明文本地聚集（缓解手段自身派生面） | 部分 | `body_capture` 默认 `metadata_only`（仅哈希，明文不落盘）+ 单一 `redactSink()` 咽喉点 | 若用户主动开启 `full` 模式，evidence 文件本身成为凭据/上下文的本地聚集目标（T1b 的静态变体）；v1 无静态加密 | v2（静态加密/权限模板评估） | 文件权限依赖 OS；v1 不承诺 evidence-at-rest 机密性 |
 
 ### 当前状态追记（2026-11-24，版本 0.5.1）

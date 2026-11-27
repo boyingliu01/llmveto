@@ -67,6 +67,14 @@ export interface GatewayConfig {
    * 风险必须持续显式呈现，不能仅依赖启动提示）。
    */
   readonly degradedPolicy?: readonly string[];
+  /**
+   * 用户已声明承担风险的规则 id（来自策略配置的 `acceptedRisks`）。
+   *
+   * 与 `degradedPolicy` 的区别：后者是"给报告看的清单"，这个是"给判定用的清单"。
+   * 两者同源，但只有这个真的会改变 action——分开是因为混用会让"报告了但没生效"
+   * 这种缺陷再次隐身。
+   */
+  readonly acceptedRules?: readonly string[];
   readonly clientHeaderName?: string; // 客户端身份头，默认 x-llmveto-client
   readonly providerId?: string;
   /**
@@ -148,6 +156,17 @@ export class GatewayCore {
 
   constructor(private readonly cfg: GatewayConfig) {
     this.canary = createCanaryStore(cfg);
+  }
+
+  /**
+   * 用户已声明承担的风险规则（来自策略配置）。
+   *
+   * 这层访问器存在的理由：`decide()` 在四个模块级函数里被调用，而它们只拿到 `core`。
+   * 没有它，配置就停在 `doctor` 和 evidence 上、到不了真正的判定——
+   * 那正是 delphi 三席一致否决的那个缺口。
+   */
+  acceptedRules(): readonly string[] {
+    return this.cfg.acceptedRules ?? [];
   }
 
   /** 分派序列：REGISTRY + 配置注入的额外 checker（按 side 过滤）。 */
@@ -547,7 +566,7 @@ function handleNonStreamResponse(p: NonStreamResponseParams): ChatOutcome {
   );
   const combinedResp = withDedupScan(p.responseMeta, respInputs, dedupInputs);
   const shapeReason = responseShapeReason(p);
-  const respDecision = decide([...p.requestInputs, ...combinedResp]);
+  const respDecision = decide([...p.requestInputs, ...combinedResp], { acceptedRules: p.core.acceptedRules() });
   const allFindings = [...p.reqFindings, ...flattenFindings(combinedResp)];
   if (respDecision.action === "block" || shapeReason !== undefined) {
     return {
@@ -641,7 +660,7 @@ export async function handleChatCompletions(
   // SL-01/D-12：请求体 tools 声明面（declared_tools/declared_required）提取自请求扫描
   // 单元 meta，下传给响应侧全部扫描单元（非流式 / 流式逐帧 / 归并单元）。
   const declaredMeta = declaredToolsMeta(reqScan.scanUnit.meta);
-  const reqDecision = decide(reqScan.inputs);
+  const reqDecision = decide(reqScan.inputs, { acceptedRules: core.acceptedRules() });
   const reqFindings = flattenFindings(reqScan.inputs);
 
   if (reqDecision.action === "block") {
@@ -787,7 +806,7 @@ function scanDelivered(st: StreamState, text: string): boolean {
   // 流式语义），用逐帧原文另做一遍去重扫描会丢跨帧命中（2026-11-24 实测回归）。
   const inputs = scan.inputs;
   st.allFindings.push(...flattenFindings(inputs));
-  const d = decide([...st.requestInputs, ...inputs]);
+  const d = decide([...st.requestInputs, ...inputs], { acceptedRules: st.core.acceptedRules() });
   if (d.degraded) st.degradedSeen = true;
   return d.action === "block";
 }
@@ -829,7 +848,7 @@ function scanMergedArgs(st: StreamState): boolean {
   const dedupInputs = st.core.scanWithDangerousCommandDedup(mergedUnit, st.cmdDedup);
   const inputs = withDedupScan(st.responseMeta, scan.inputs, dedupInputs);
   st.allFindings.push(...flattenFindings(inputs));
-  const d = decide([...st.requestInputs, ...inputs]);
+  const d = decide([...st.requestInputs, ...inputs], { acceptedRules: st.core.acceptedRules() });
   if (d.degraded) st.degradedSeen = true;
   return d.action === "block";
 }

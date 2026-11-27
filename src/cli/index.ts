@@ -246,7 +246,7 @@ async function cmdStartDaemon(ctx: CliCtx, env: Readonly<Record<string, string |
       // 策略降级状态进 evidence：让每次命中都看得见，不只在 doctor 里
       ...(() => {
         const pol = loadPolicyConfig(globalPolicyPath());
-        return pol.degraded.length === 0 ? {} : { degradedPolicy: pol.degraded };
+        return pol.degraded.length === 0 ? {} : { degradedPolicy: pol.degraded, acceptedRules: pol.acceptedRisks };
       })(),
       ...(parsed.upstreams === undefined ? {} : { upstreams: parsed.upstreams }),
       ...(env.LLMVETO_MODELS_SNAPSHOT === undefined ? {} : { modelsSnapshotPath: env.LLMVETO_MODELS_SNAPSHOT }),
